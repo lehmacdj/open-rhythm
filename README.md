@@ -16,8 +16,11 @@ branding, or reverse-engineered implementation details.
 - Sort and filter the loaded catalog with stock SwiftUI controls.
 - Download complete chart bundles with verified, content-addressed resources.
 - Browse downloaded charts together in a cross-server offline catalog.
+- Decode Sonolus v13 compressed engine and level data.
+- Play LLSIF tap, swing, and hold charts with synchronized audio and scoring.
+- Persist results and show recent scores for each difficulty.
 
-The LLSIF gameplay runtime and local result history are the next milestones.
+Full engine-driven rendering, input semantics, and effects remain in progress.
 
 ## Building
 

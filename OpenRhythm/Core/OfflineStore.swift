@@ -193,6 +193,71 @@ actor OfflineStore {
     .sorted { $0.downloadedAt > $1.downloadedAt }
   }
 
+  func manifest(
+    level: SonolusLevelItem,
+    from server: ServerDescriptor
+  ) throws -> OfflineLevelManifest? {
+    if server.id == "offline" {
+      return try manifests().first { $0.level.id == level.id }
+    }
+    let id = Data("\(server.id):\(level.id)".utf8).sha256Hex
+    let url = manifestsURL.appendingPathComponent("\(id).json")
+    guard fileManager.fileExists(atPath: url.path) else { return nil }
+    return try JSONDecoder.offline.decode(
+      OfflineLevelManifest.self,
+      from: Data(contentsOf: url)
+    )
+  }
+
+  func runtimeBundle(
+    from manifest: OfflineLevelManifest
+  ) throws -> RuntimeBundle {
+    let references = try RuntimeResourceReferences(
+      itemData: manifest.itemData,
+      serverBaseURL: manifest.server.baseURL
+    )
+    guard references.engineVersion == 13 else {
+      throw RuntimeBundleError.unsupportedEngineVersion(
+        references.engineVersion
+      )
+    }
+    guard let engineURL = localURL(
+      for: references.engineDataURL,
+      in: manifest
+    ) else {
+      throw RuntimeBundleError.missingResource("engine play data")
+    }
+    guard let levelURL = localURL(
+      for: references.levelDataURL,
+      in: manifest
+    ) else {
+      throw RuntimeBundleError.missingResource("level data")
+    }
+    guard let storedBGMURL = localURL(
+      for: references.bgmURL,
+      in: manifest
+    ) else {
+      throw RuntimeBundleError.missingResource("music")
+    }
+    let bgmURL = try playableURL(
+      for: storedBGMURL,
+      remoteURL: references.bgmURL
+    )
+
+    return try RuntimeBundle(
+      engine: CompressedJSONDecoder.decode(
+        EnginePlayData.self,
+        from: Data(contentsOf: engineURL)
+      ),
+      level: CompressedJSONDecoder.decode(
+        LevelData.self,
+        from: Data(contentsOf: levelURL)
+      ),
+      bgmURL: bgmURL,
+      isOffline: true
+    )
+  }
+
   func contains(
     level: SonolusLevelItem,
     from server: ServerDescriptor
@@ -265,6 +330,32 @@ actor OfflineStore {
 
   private var manifestsURL: URL {
     rootURL.appendingPathComponent("Manifests", isDirectory: true)
+  }
+
+  private var playbackURL: URL {
+    rootURL.appendingPathComponent("Playback", isDirectory: true)
+  }
+
+  private func playableURL(
+    for storedURL: URL,
+    remoteURL: URL
+  ) throws -> URL {
+    let pathExtension = remoteURL.pathExtension
+    guard storedURL.pathExtension.isEmpty, !pathExtension.isEmpty else {
+      return storedURL
+    }
+
+    try fileManager.createDirectory(
+      at: playbackURL,
+      withIntermediateDirectories: true
+    )
+    let aliasURL = playbackURL
+      .appendingPathComponent(storedURL.lastPathComponent)
+      .appendingPathExtension(pathExtension)
+    if !fileManager.fileExists(atPath: aliasURL.path) {
+      try fileManager.linkItem(at: storedURL, to: aliasURL)
+    }
+    return aliasURL
   }
 
   private func prepareDirectories() throws {

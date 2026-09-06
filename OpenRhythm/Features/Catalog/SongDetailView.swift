@@ -7,6 +7,7 @@ struct SongDetailView: View {
   @State private var isDownloading = false
   @State private var isDownloaded = false
   @State private var downloadError: String?
+  @State private var recentResults = [PlayResult]()
 
   init(song: CatalogSong, isOffline: Bool = false) {
     self.song = song
@@ -46,8 +47,13 @@ struct SongDetailView: View {
       }
 
       Section {
-        Button("Play", systemImage: "play.fill") {}
-          .disabled(true)
+        if let selectedLevel {
+          NavigationLink {
+            GameplayView(song: song, level: selectedLevel)
+          } label: {
+            Label("Play", systemImage: "play.fill")
+          }
+        }
         if !isOffline {
           Button {
             Task { await downloadSelectedLevel() }
@@ -62,14 +68,35 @@ struct SongDetailView: View {
           }
           .disabled(isDownloading || isDownloaded)
         }
-      } footer: {
-        Text("The gameplay runtime is the next implementation stage.")
       }
 
       if let downloadError {
         Section {
           Text(downloadError)
             .foregroundStyle(.red)
+        }
+      }
+
+      if !recentResults.isEmpty {
+        Section("Recent Results") {
+          ForEach(recentResults.prefix(5)) { result in
+            LabeledContent {
+              Text(result.score.formatted())
+                .monospacedDigit()
+            } label: {
+              VStack(alignment: .leading) {
+                Text(
+                  result.playedAt.formatted(
+                    date: .abbreviated,
+                    time: .shortened
+                  )
+                )
+                Text("Max combo \(result.maxCombo)")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
         }
       }
 
@@ -84,11 +111,16 @@ struct SongDetailView: View {
     .navigationTitle("Song")
     .navigationBarTitleDisplayMode(.inline)
     .task(id: selectedLevelID) {
-      guard !isOffline, let selectedLevel else { return }
-      isDownloaded = await OfflineStore.shared.contains(
-        level: selectedLevel,
-        from: song.server
-      )
+      guard let selectedLevel else { return }
+      if !isOffline {
+        isDownloaded = await OfflineStore.shared.contains(
+          level: selectedLevel,
+          from: song.server
+        )
+      }
+      recentResults = (try? await ResultStore.shared.results(
+        for: selectedLevel.id
+      )) ?? []
     }
   }
 

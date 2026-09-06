@@ -19,10 +19,21 @@
 		A0000000000000000000000B /* SongDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000B /* SongDetailView.swift */; };
 		A0000000000000000000000C /* OfflineStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000C /* OfflineStore.swift */; };
 		A0000000000000000000000D /* OfflineCatalogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000D /* OfflineCatalogView.swift */; };
+		A0000000000000000000000E /* GzipDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* GzipDecoder.swift */; };
+		A0000000000000000000000F /* EngineModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000F /* EngineModels.swift */; };
+		A00000000000000000000010 /* LevelModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000010 /* LevelModels.swift */; };
+		A00000000000000000000011 /* EngineInterpreter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* EngineInterpreter.swift */; };
+		A00000000000000000000012 /* RuntimeBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* RuntimeBundle.swift */; };
+		A00000000000000000000013 /* RhythmChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* RhythmChart.swift */; };
+		A00000000000000000000014 /* GameplayModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* GameplayModel.swift */; };
+		A00000000000000000000015 /* GameplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* GameplayView.swift */; };
+		A00000000000000000000016 /* ResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* ResultStore.swift */; };
 		B00000000000000000000001 /* LocalizedTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* LocalizedTextTests.swift */; };
 		B00000000000000000000002 /* CatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* CatalogTests.swift */; };
 		B00000000000000000000003 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* XCTest.framework */; };
 		B00000000000000000000004 /* OfflineStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* OfflineStoreTests.swift */; };
+		B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* RuntimeDecodingTests.swift */; };
+		B00000000000000000000006 /* ResultStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ResultStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -49,10 +60,21 @@
 		A1000000000000000000000B /* SongDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongDetailView.swift; sourceTree = "<group>"; };
 		A1000000000000000000000C /* OfflineStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStore.swift; sourceTree = "<group>"; };
 		A1000000000000000000000D /* OfflineCatalogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineCatalogView.swift; sourceTree = "<group>"; };
+		A1000000000000000000000E /* GzipDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GzipDecoder.swift; sourceTree = "<group>"; };
+		A1000000000000000000000F /* EngineModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineModels.swift; sourceTree = "<group>"; };
+		A10000000000000000000010 /* LevelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LevelModels.swift; sourceTree = "<group>"; };
+		A10000000000000000000011 /* EngineInterpreter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineInterpreter.swift; sourceTree = "<group>"; };
+		A10000000000000000000012 /* RuntimeBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeBundle.swift; sourceTree = "<group>"; };
+		A10000000000000000000013 /* RhythmChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhythmChart.swift; sourceTree = "<group>"; };
+		A10000000000000000000014 /* GameplayModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayModel.swift; sourceTree = "<group>"; };
+		A10000000000000000000015 /* GameplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayView.swift; sourceTree = "<group>"; };
+		A10000000000000000000016 /* ResultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStore.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* LocalizedTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizedTextTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* CatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		B10000000000000000000004 /* OfflineStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStoreTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000005 /* RuntimeDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDecodingTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000006 /* ResultStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStoreTests.swift; sourceTree = "<group>"; };
 		D00000000000000000000001 /* OpenRhythm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenRhythm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D00000000000000000000002 /* OpenRhythmTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OpenRhythmTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -75,10 +97,11 @@
 			sourceTree = "<group>";
 		};
 		F10000000000000000000003 /* App */ = {isa = PBXGroup; children = (A10000000000000000000001, A10000000000000000000002,); path = App; sourceTree = "<group>"; };
-		F10000000000000000000004 /* Core */ = {isa = PBXGroup; children = (A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A1000000000000000000000C,); path = Core; sourceTree = "<group>"; };
-		F10000000000000000000005 /* Features */ = {isa = PBXGroup; children = (F10000000000000000000006 /* Catalog */,); path = Features; sourceTree = "<group>"; };
+		F10000000000000000000004 /* Core */ = {isa = PBXGroup; children = (A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A1000000000000000000000C, A1000000000000000000000E, A1000000000000000000000F, A10000000000000000000010, A10000000000000000000011, A10000000000000000000012, A10000000000000000000013, A10000000000000000000016,); path = Core; sourceTree = "<group>"; };
+		F10000000000000000000005 /* Features */ = {isa = PBXGroup; children = (F10000000000000000000006 /* Catalog */, F1000000000000000000000A /* Gameplay */,); path = Features; sourceTree = "<group>"; };
 		F10000000000000000000006 /* Catalog */ = {isa = PBXGroup; children = (A10000000000000000000009, A1000000000000000000000A, A1000000000000000000000B, A1000000000000000000000D,); path = Catalog; sourceTree = "<group>"; };
-		F10000000000000000000007 /* OpenRhythmTests */ = {isa = PBXGroup; children = (B10000000000000000000001, B10000000000000000000002, B10000000000000000000004,); path = OpenRhythmTests; sourceTree = "<group>"; };
+		F1000000000000000000000A /* Gameplay */ = {isa = PBXGroup; children = (A10000000000000000000014, A10000000000000000000015,); path = Gameplay; sourceTree = "<group>"; };
+		F10000000000000000000007 /* OpenRhythmTests */ = {isa = PBXGroup; children = (B10000000000000000000001, B10000000000000000000002, B10000000000000000000004, B10000000000000000000005, B10000000000000000000006,); path = OpenRhythmTests; sourceTree = "<group>"; };
 		F10000000000000000000008 /* Frameworks */ = {isa = PBXGroup; children = (B10000000000000000000003,); name = Frameworks; sourceTree = "<group>"; };
 		F10000000000000000000009 /* Products */ = {isa = PBXGroup; children = (D00000000000000000000001, D00000000000000000000002,); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
@@ -131,8 +154,8 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		C20000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001, A00000000000000000000002, A00000000000000000000003, A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000008, A00000000000000000000009, A0000000000000000000000A, A0000000000000000000000B, A0000000000000000000000C, A0000000000000000000000D,); runOnlyForDeploymentPostprocessing = 0; };
-		C20000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000004,); runOnlyForDeploymentPostprocessing = 0; };
+		C20000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001, A00000000000000000000002, A00000000000000000000003, A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000008, A00000000000000000000009, A0000000000000000000000A, A0000000000000000000000B, A0000000000000000000000C, A0000000000000000000000D, A0000000000000000000000E, A0000000000000000000000F, A00000000000000000000010, A00000000000000000000011, A00000000000000000000012, A00000000000000000000013, A00000000000000000000014, A00000000000000000000015, A00000000000000000000016,); runOnlyForDeploymentPostprocessing = 0; };
+		C20000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000004, B00000000000000000000005, B00000000000000000000006,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */

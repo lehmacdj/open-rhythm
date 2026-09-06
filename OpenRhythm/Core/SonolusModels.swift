@@ -13,15 +13,9 @@ struct ResourceLocator: Codable, Hashable, Sendable {
       return absoluteURL
     }
 
-    if url.hasPrefix("/") {
-      let baseDirectory = baseURL.appendingPathComponent("")
-      return URL(
-        string: String(url.dropFirst()),
-        relativeTo: baseDirectory
-      )?.absoluteURL
-    }
-
-    return URL(string: url, relativeTo: baseURL)?.absoluteURL
+    let baseDirectory = baseURL.appendingPathComponent("")
+    let relativePath = url.hasPrefix("/") ? String(url.dropFirst()) : url
+    return URL(string: relativePath, relativeTo: baseDirectory)?.absoluteURL
   }
 }
 
