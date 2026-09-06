@@ -16,14 +16,7 @@ struct ContentView: View {
 
         Section {
           NavigationLink {
-            ContentUnavailableView(
-              "No Offline Songs",
-              systemImage: "arrow.down.circle",
-              description: Text(
-                "Downloaded songs from every server will appear here."
-              )
-            )
-            .navigationTitle("Offline")
+            OfflineCatalogView()
           } label: {
             Label("Offline", systemImage: "arrow.down.circle")
           }

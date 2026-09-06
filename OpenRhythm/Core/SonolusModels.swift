@@ -13,21 +13,15 @@ struct ResourceLocator: Codable, Hashable, Sendable {
       return absoluteURL
     }
 
-    guard var components = URLComponents(
-      url: baseURL,
-      resolvingAgainstBaseURL: false
-    ) else {
-      return nil
+    if url.hasPrefix("/") {
+      let baseDirectory = baseURL.appendingPathComponent("")
+      return URL(
+        string: String(url.dropFirst()),
+        relativeTo: baseDirectory
+      )?.absoluteURL
     }
 
-    if url.hasPrefix("/") {
-      components.path = url
-      components.query = URLComponents(string: url)?.query
-    } else {
-      let relative = URL(string: url, relativeTo: baseURL)
-      return relative?.absoluteURL
-    }
-    return components.url
+    return URL(string: url, relativeTo: baseURL)?.absoluteURL
   }
 }
 
@@ -102,4 +96,3 @@ enum Difficulty: String, CaseIterable, Codable, Hashable, Sendable {
     }
   }
 }
-

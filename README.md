@@ -14,11 +14,12 @@ branding, or reverse-engineered implementation details.
 - Search every supplied localization, including transliterated forms.
 - Group chart variants by song and switch difficulty.
 - Sort and filter the loaded catalog with stock SwiftUI controls.
+- Download complete chart bundles with verified, content-addressed resources.
+- Browse downloaded charts together in a cross-server offline catalog.
 
-Gameplay and durable offline bundles are the next milestones.
+The LLSIF gameplay runtime and local result history are the next milestones.
 
 ## Building
 
 Open `OpenRhythm.xcodeproj` in Xcode, select an iPhone simulator, and run the
 `OpenRhythm` scheme.
-

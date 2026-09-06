@@ -116,7 +116,7 @@ struct CatalogView: View {
   }
 }
 
-private struct SongRow: View {
+struct SongRow: View {
   let song: CatalogSong
 
   var body: some View {

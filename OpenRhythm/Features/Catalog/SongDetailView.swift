@@ -2,10 +2,15 @@ import SwiftUI
 
 struct SongDetailView: View {
   let song: CatalogSong
+  let isOffline: Bool
   @State private var selectedLevelID: String
+  @State private var isDownloading = false
+  @State private var isDownloaded = false
+  @State private var downloadError: String?
 
-  init(song: CatalogSong) {
+  init(song: CatalogSong, isOffline: Bool = false) {
     self.song = song
+    self.isOffline = isOffline
     _selectedLevelID = State(initialValue: song.variants.first?.id ?? "")
   }
 
@@ -43,10 +48,29 @@ struct SongDetailView: View {
       Section {
         Button("Play", systemImage: "play.fill") {}
           .disabled(true)
-        Button("Download", systemImage: "arrow.down.circle") {}
-          .disabled(true)
+        if !isOffline {
+          Button {
+            Task { await downloadSelectedLevel() }
+          } label: {
+            if isDownloading {
+              Label("Downloading…", systemImage: "arrow.down.circle")
+            } else if isDownloaded {
+              Label("Downloaded", systemImage: "checkmark.circle")
+            } else {
+              Label("Download", systemImage: "arrow.down.circle")
+            }
+          }
+          .disabled(isDownloading || isDownloaded)
+        }
       } footer: {
-        Text("Gameplay and offline bundles are the next implementation stage.")
+        Text("The gameplay runtime is the next implementation stage.")
+      }
+
+      if let downloadError {
+        Section {
+          Text(downloadError)
+            .foregroundStyle(.red)
+        }
       }
 
       if let selectedLevel {
@@ -59,9 +83,33 @@ struct SongDetailView: View {
     }
     .navigationTitle("Song")
     .navigationBarTitleDisplayMode(.inline)
+    .task(id: selectedLevelID) {
+      guard !isOffline, let selectedLevel else { return }
+      isDownloaded = await OfflineStore.shared.contains(
+        level: selectedLevel,
+        from: song.server
+      )
+    }
   }
 
   private var selectedLevel: SonolusLevelItem? {
     song.variants.first { $0.id == selectedLevelID }
+  }
+
+  private func downloadSelectedLevel() async {
+    guard let selectedLevel else { return }
+    isDownloading = true
+    downloadError = nil
+    defer { isDownloading = false }
+
+    do {
+      _ = try await OfflineStore.shared.download(
+        level: selectedLevel,
+        from: song.server
+      )
+      isDownloaded = true
+    } catch {
+      downloadError = error.localizedDescription
+    }
   }
 }
