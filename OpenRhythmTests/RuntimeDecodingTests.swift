@@ -144,6 +144,7 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(chart.notes[0].lane, -1)
     XCTAssertEqual(chart.notes[1].time, 3)
     XCTAssertEqual(chart.duration, 4)
+    XCTAssertEqual(chart.judgementCount, 3)
   }
 
   private func entity(

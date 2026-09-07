@@ -34,6 +34,10 @@ final class GameplayModel {
   )
   private(set) var hitNoteIDs = Set<String>()
 
+  var activeHoldIDs: Set<String> {
+    Set(activeHolds.values.map(\.id))
+  }
+
   private let loader: RuntimeBundleLoader
   private let resultStore: ResultStore
   private var bgmOffset = 0.0
@@ -42,6 +46,9 @@ final class GameplayModel {
   private var nextMissIndex = 0
   private var resultLevel: SonolusLevelItem?
   private var resultTitle = ""
+  private var pressedLanes = Set<Int>()
+  private var activeHolds = [Int: RhythmNote]()
+  private var resolvedHoldTailIDs = Set<String>()
 
   init(
     loader: RuntimeBundleLoader = RuntimeBundleLoader(),
@@ -78,6 +85,9 @@ final class GameplayModel {
     currentTime = 0
     nextMissIndex = 0
     hitNoteIDs.removeAll()
+    pressedLanes.removeAll()
+    activeHolds.removeAll()
+    resolvedHoldTailIDs.removeAll()
     for judgement in NoteJudgement.allCases {
       judgements[judgement] = 0
     }
@@ -99,8 +109,9 @@ final class GameplayModel {
     }
   }
 
-  func tap(lane: Int) {
+  func press(lane: Int) {
     guard phase == .playing else { return }
+    guard pressedLanes.insert(lane).inserted else { return }
     let window = 0.18
     guard let note = chart.notes
       .filter({
@@ -114,13 +125,26 @@ final class GameplayModel {
     else { return }
 
     hitNoteIDs.insert(note.id)
-    let difference = abs(note.time - currentTime)
-    if difference <= 0.05 {
-      record(.perfect, points: 1_000)
-    } else if difference <= 0.10 {
-      record(.great, points: 700)
+    record(difference: abs(note.time - currentTime))
+    if note.endTime != nil {
+      activeHolds[lane] = note
+    }
+  }
+
+  func release(lane: Int) {
+    pressedLanes.remove(lane)
+    guard
+      phase == .playing,
+      let hold = activeHolds.removeValue(forKey: lane),
+      let endTime = hold.endTime,
+      resolvedHoldTailIDs.insert(hold.id).inserted
+    else { return }
+
+    let difference = abs(endTime - currentTime)
+    if difference <= 0.18 {
+      record(difference: difference)
     } else {
-      record(.good, points: 300)
+      record(.miss, points: 0)
     }
   }
 
@@ -148,6 +172,18 @@ final class GameplayModel {
       nextMissIndex += 1
     }
 
+    for note in chart.notes {
+      guard
+        let endTime = note.endTime,
+        endTime < currentTime - 0.18,
+        resolvedHoldTailIDs.insert(note.id).inserted
+      else { continue }
+      if activeHolds[note.lane]?.id == note.id {
+        activeHolds.removeValue(forKey: note.lane)
+      }
+      record(.miss, points: 0)
+    }
+
     if nextMissIndex == chart.notes.count,
       currentTime > chart.duration + 1
     {
@@ -165,6 +201,16 @@ final class GameplayModel {
     } else {
       combo += 1
       maxCombo = max(maxCombo, combo)
+    }
+  }
+
+  private func record(difference: TimeInterval) {
+    if difference <= 0.05 {
+      record(.perfect, points: 1_000)
+    } else if difference <= 0.10 {
+      record(.great, points: 700)
+    } else {
+      record(.good, points: 300)
     }
   }
 

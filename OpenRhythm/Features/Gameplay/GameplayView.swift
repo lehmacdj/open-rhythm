@@ -42,7 +42,7 @@ struct GameplayView: View {
       Label("Ready", systemImage: "music.note")
     } description: {
       Text(
-        "\(model.chart.notes.count) notes · "
+        "\(model.chart.judgementCount) notes · "
           + "\(level.difficulty.displayName) \(level.rating)"
       )
     } actions: {
@@ -86,7 +86,8 @@ struct GameplayView: View {
           .contentShape(Rectangle())
           .gesture(
             DragGesture(minimumDistance: 0)
-              .onEnded { _ in model.tap(lane: index - 4) }
+              .onChanged { _ in model.press(lane: index - 4) }
+              .onEnded { _ in model.release(lane: index - 4) }
           )
       }
     }
@@ -133,11 +134,17 @@ struct GameplayView: View {
     target.addLine(to: CGPoint(x: size.width, y: targetY))
     context.stroke(target, with: .color(.white), lineWidth: 2)
 
-    for note in model.chart.notes where !model.hitNoteIDs.contains(note.id) {
+    for note in model.chart.notes {
+      let isActiveHold = model.activeHoldIDs.contains(note.id)
+      guard !model.hitNoteIDs.contains(note.id) || isActiveHold else {
+        continue
+      }
       let delta = note.time - model.currentTime
-      guard delta > -0.2, delta < 3 else { continue }
+      guard delta > -0.2 || isActiveHold, delta < 3 else { continue }
       let x = (CGFloat(note.lane + 4) + 0.5) * laneWidth
-      let y = targetY - CGFloat(delta) * pixelsPerSecond
+      let y = isActiveHold
+        ? targetY
+        : targetY - CGFloat(delta) * pixelsPerSecond
       let radius = max(10, laneWidth * 0.32)
 
       if let endTime = note.endTime {

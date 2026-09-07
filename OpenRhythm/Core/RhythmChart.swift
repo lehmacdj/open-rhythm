@@ -67,6 +67,10 @@ struct RhythmChart: Sendable {
   let notes: [RhythmNote]
   let duration: TimeInterval
 
+  var judgementCount: Int {
+    notes.count + notes.filter { $0.endTime != nil }.count
+  }
+
   init(level: LevelData) {
     let timeline = BPMTimeline(level: level)
     let namedEntities = Dictionary(
