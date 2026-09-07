@@ -26,3 +26,27 @@ Full engine-driven rendering, input semantics, and effects remain in progress.
 
 Open `OpenRhythm.xcodeproj` in Xcode, select an iPhone simulator, and run the
 `OpenRhythm` scheme.
+
+## Server configuration
+
+The LLSIF server is built in. To replace the server list without adding UI,
+place `servers.json` in the app's Documents directory:
+
+```json
+[
+  {
+    "id": "llsif",
+    "name": "Love Live! School idol festival",
+    "baseURL": "https://sonolus.milkbun.org/llsif"
+  }
+]
+```
+
+## Compatibility notes
+
+The app parses version 13 engine resources and includes a tested core
+interpreter for the operations used by the LLSIF engine. The current playable
+adapter renders LLSIF chart entities directly while engine-driven skins,
+effects, particles, and arbitrary third-party engine presentation remain in
+progress. No music, charts, artwork, or third-party application code is bundled
+in this repository.
