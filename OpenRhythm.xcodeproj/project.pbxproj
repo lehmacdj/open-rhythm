@@ -1,8 +1,9 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
-	objectVersion = 77;
+	classes = {
+	};
+	objectVersion = 71;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -28,13 +29,13 @@
 		A00000000000000000000014 /* GameplayModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* GameplayModel.swift */; };
 		A00000000000000000000015 /* GameplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* GameplayView.swift */; };
 		A00000000000000000000016 /* ResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* ResultStore.swift */; };
+		A00000000000000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Assets.xcassets */; };
 		B00000000000000000000001 /* LocalizedTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* LocalizedTextTests.swift */; };
 		B00000000000000000000002 /* CatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* CatalogTests.swift */; };
 		B00000000000000000000003 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* XCTest.framework */; };
 		B00000000000000000000004 /* OfflineStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* OfflineStoreTests.swift */; };
 		B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* RuntimeDecodingTests.swift */; };
 		B00000000000000000000006 /* ResultStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ResultStoreTests.swift */; };
-		A00000000000000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -70,65 +71,181 @@
 		A10000000000000000000014 /* GameplayModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayModel.swift; sourceTree = "<group>"; };
 		A10000000000000000000015 /* GameplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayView.swift; sourceTree = "<group>"; };
 		A10000000000000000000016 /* ResultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStore.swift; sourceTree = "<group>"; };
+		A10000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10000000000000000000001 /* LocalizedTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizedTextTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* CatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		B10000000000000000000004 /* OfflineStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStoreTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* RuntimeDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDecodingTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000006 /* ResultStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStoreTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D00000000000000000000001 /* OpenRhythm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenRhythm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D00000000000000000000002 /* OpenRhythmTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OpenRhythmTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		C10000000000000000000001 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		C10000000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000003 /* XCTest.framework in Frameworks */,); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C10000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000003 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		F10000000000000000000001 = {
 			isa = PBXGroup;
-			children = (F10000000000000000000002 /* OpenRhythm */, F10000000000000000000007 /* OpenRhythmTests */, F10000000000000000000008 /* Frameworks */, F10000000000000000000009 /* Products */);
+			children = (
+				F10000000000000000000002 /* OpenRhythm */,
+				F10000000000000000000007 /* OpenRhythmTests */,
+				F10000000000000000000008 /* Frameworks */,
+				F10000000000000000000009 /* Products */,
+			);
 			sourceTree = "<group>";
 		};
 		F10000000000000000000002 /* OpenRhythm */ = {
 			isa = PBXGroup;
-			children = (F10000000000000000000003 /* App */, F10000000000000000000004 /* Core */, F10000000000000000000005 /* Features */, A10000000000000000000017 /* Assets.xcassets */);
+			children = (
+				F10000000000000000000003 /* App */,
+				F10000000000000000000004 /* Core */,
+				F10000000000000000000005 /* Features */,
+				A10000000000000000000017 /* Assets.xcassets */,
+			);
 			path = OpenRhythm;
 			sourceTree = "<group>";
 		};
-		F10000000000000000000003 /* App */ = {isa = PBXGroup; children = (A10000000000000000000001, A10000000000000000000002,); path = App; sourceTree = "<group>"; };
-		F10000000000000000000004 /* Core */ = {isa = PBXGroup; children = (A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A1000000000000000000000C, A1000000000000000000000E, A1000000000000000000000F, A10000000000000000000010, A10000000000000000000011, A10000000000000000000012, A10000000000000000000013, A10000000000000000000016,); path = Core; sourceTree = "<group>"; };
-		F10000000000000000000005 /* Features */ = {isa = PBXGroup; children = (F10000000000000000000006 /* Catalog */, F1000000000000000000000A /* Gameplay */,); path = Features; sourceTree = "<group>"; };
-		F10000000000000000000006 /* Catalog */ = {isa = PBXGroup; children = (A10000000000000000000009, A1000000000000000000000A, A1000000000000000000000B, A1000000000000000000000D,); path = Catalog; sourceTree = "<group>"; };
-		F1000000000000000000000A /* Gameplay */ = {isa = PBXGroup; children = (A10000000000000000000014, A10000000000000000000015,); path = Gameplay; sourceTree = "<group>"; };
-		F10000000000000000000007 /* OpenRhythmTests */ = {isa = PBXGroup; children = (B10000000000000000000001, B10000000000000000000002, B10000000000000000000004, B10000000000000000000005, B10000000000000000000006,); path = OpenRhythmTests; sourceTree = "<group>"; };
-		F10000000000000000000008 /* Frameworks */ = {isa = PBXGroup; children = (B10000000000000000000003,); name = Frameworks; sourceTree = "<group>"; };
-		F10000000000000000000009 /* Products */ = {isa = PBXGroup; children = (D00000000000000000000001, D00000000000000000000002,); name = Products; sourceTree = "<group>"; };
+		F10000000000000000000003 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000001 /* OpenRhythmApp.swift */,
+				A10000000000000000000002 /* ContentView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		F10000000000000000000004 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000003 /* ServerDescriptor.swift */,
+				A10000000000000000000004 /* LocalizedText.swift */,
+				A10000000000000000000005 /* SonolusModels.swift */,
+				A10000000000000000000006 /* SearchNormalizer.swift */,
+				A10000000000000000000007 /* Catalog.swift */,
+				A10000000000000000000008 /* SonolusClient.swift */,
+				A1000000000000000000000C /* OfflineStore.swift */,
+				A1000000000000000000000E /* GzipDecoder.swift */,
+				A1000000000000000000000F /* EngineModels.swift */,
+				A10000000000000000000010 /* LevelModels.swift */,
+				A10000000000000000000011 /* EngineInterpreter.swift */,
+				A10000000000000000000012 /* RuntimeBundle.swift */,
+				A10000000000000000000013 /* RhythmChart.swift */,
+				A10000000000000000000016 /* ResultStore.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		F10000000000000000000005 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				F10000000000000000000006 /* Catalog */,
+				F1000000000000000000000A /* Gameplay */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		F10000000000000000000006 /* Catalog */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000009 /* CatalogModel.swift */,
+				A1000000000000000000000A /* CatalogView.swift */,
+				A1000000000000000000000B /* SongDetailView.swift */,
+				A1000000000000000000000D /* OfflineCatalogView.swift */,
+			);
+			path = Catalog;
+			sourceTree = "<group>";
+		};
+		F10000000000000000000007 /* OpenRhythmTests */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000001 /* LocalizedTextTests.swift */,
+				B10000000000000000000002 /* CatalogTests.swift */,
+				B10000000000000000000004 /* OfflineStoreTests.swift */,
+				B10000000000000000000005 /* RuntimeDecodingTests.swift */,
+				B10000000000000000000006 /* ResultStoreTests.swift */,
+			);
+			path = OpenRhythmTests;
+			sourceTree = "<group>";
+		};
+		F10000000000000000000008 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000003 /* XCTest.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		F10000000000000000000009 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D00000000000000000000001 /* OpenRhythm.app */,
+				D00000000000000000000002 /* OpenRhythmTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F1000000000000000000000A /* Gameplay */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000014 /* GameplayModel.swift */,
+				A10000000000000000000015 /* GameplayView.swift */,
+			);
+			path = Gameplay;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		E00000000000000000000001 /* OpenRhythm */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = E10000000000000000000001;
-			buildPhases = (C20000000000000000000001, C10000000000000000000001, C30000000000000000000001,);
-			buildRules = ();
-			dependencies = ();
+			buildConfigurationList = E10000000000000000000001 /* Build configuration list for PBXNativeTarget "OpenRhythm" */;
+			buildPhases = (
+				C20000000000000000000001 /* Sources */,
+				C10000000000000000000001 /* Frameworks */,
+				C30000000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = OpenRhythm;
 			productName = OpenRhythm;
-			productReference = D00000000000000000000001;
+			productReference = D00000000000000000000001 /* OpenRhythm.app */;
 			productType = "com.apple.product-type.application";
 		};
 		E00000000000000000000002 /* OpenRhythmTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = E10000000000000000000002;
-			buildPhases = (C20000000000000000000002, C10000000000000000000002, C30000000000000000000002,);
-			buildRules = ();
-			dependencies = (C40000000000000000000001,);
+			buildConfigurationList = E10000000000000000000002 /* Build configuration list for PBXNativeTarget "OpenRhythmTests" */;
+			buildPhases = (
+				C20000000000000000000002 /* Sources */,
+				C10000000000000000000002 /* Frameworks */,
+				C30000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C40000000000000000000001 /* PBXTargetDependency */,
+			);
 			name = OpenRhythmTests;
 			productName = OpenRhythmTests;
-			productReference = D00000000000000000000002;
+			productReference = D00000000000000000000002 /* OpenRhythmTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
@@ -136,47 +253,247 @@
 /* Begin PBXProject section */
 		F00000000000000000000001 /* Project object */ = {
 			isa = PBXProject;
-			attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2700; LastUpgradeCheck = 2700; TargetAttributes = {E00000000000000000000001 = {CreatedOnToolsVersion = 27.0;}; E00000000000000000000002 = {CreatedOnToolsVersion = 27.0; TestTargetID = E00000000000000000000001;};};};
-			buildConfigurationList = E10000000000000000000003;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					E00000000000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					E00000000000000000000002 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = E00000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = E10000000000000000000003 /* Build configuration list for PBXProject "OpenRhythm" */;
 			compatibilityVersion = "Xcode 16.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
-			knownRegions = (en, Base,);
+			knownRegions = (
+				en,
+				Base,
+			);
 			mainGroup = F10000000000000000000001;
-			productRefGroup = F10000000000000000000009;
+			productRefGroup = F10000000000000000000009 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (E00000000000000000000001, E00000000000000000000002,);
+			targets = (
+				E00000000000000000000001 /* OpenRhythm */,
+				E00000000000000000000002 /* OpenRhythmTests */,
+			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		C30000000000000000000001 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000017 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		C30000000000000000000002 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C30000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000017 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C30000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		C20000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001, A00000000000000000000002, A00000000000000000000003, A00000000000000000000004, A00000000000000000000005, A00000000000000000000006, A00000000000000000000007, A00000000000000000000008, A00000000000000000000009, A0000000000000000000000A, A0000000000000000000000B, A0000000000000000000000C, A0000000000000000000000D, A0000000000000000000000E, A0000000000000000000000F, A00000000000000000000010, A00000000000000000000011, A00000000000000000000012, A00000000000000000000013, A00000000000000000000014, A00000000000000000000015, A00000000000000000000016,); runOnlyForDeploymentPostprocessing = 0; };
-		C20000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000004, B00000000000000000000005, B00000000000000000000006,); runOnlyForDeploymentPostprocessing = 0; };
+		C20000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000001 /* OpenRhythmApp.swift in Sources */,
+				A00000000000000000000002 /* ContentView.swift in Sources */,
+				A00000000000000000000003 /* ServerDescriptor.swift in Sources */,
+				A00000000000000000000004 /* LocalizedText.swift in Sources */,
+				A00000000000000000000005 /* SonolusModels.swift in Sources */,
+				A00000000000000000000006 /* SearchNormalizer.swift in Sources */,
+				A00000000000000000000007 /* Catalog.swift in Sources */,
+				A00000000000000000000008 /* SonolusClient.swift in Sources */,
+				A00000000000000000000009 /* CatalogModel.swift in Sources */,
+				A0000000000000000000000A /* CatalogView.swift in Sources */,
+				A0000000000000000000000B /* SongDetailView.swift in Sources */,
+				A0000000000000000000000C /* OfflineStore.swift in Sources */,
+				A0000000000000000000000D /* OfflineCatalogView.swift in Sources */,
+				A0000000000000000000000E /* GzipDecoder.swift in Sources */,
+				A0000000000000000000000F /* EngineModels.swift in Sources */,
+				A00000000000000000000010 /* LevelModels.swift in Sources */,
+				A00000000000000000000011 /* EngineInterpreter.swift in Sources */,
+				A00000000000000000000012 /* RuntimeBundle.swift in Sources */,
+				A00000000000000000000013 /* RhythmChart.swift in Sources */,
+				A00000000000000000000014 /* GameplayModel.swift in Sources */,
+				A00000000000000000000015 /* GameplayView.swift in Sources */,
+				A00000000000000000000016 /* ResultStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C20000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000001 /* LocalizedTextTests.swift in Sources */,
+				B00000000000000000000002 /* CatalogTests.swift in Sources */,
+				B00000000000000000000004 /* OfflineStoreTests.swift in Sources */,
+				B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */,
+				B00000000000000000000006 /* ResultStoreTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		C40000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = E00000000000000000000001; targetProxy = C00000000000000000000001; };
+		C40000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E00000000000000000000001 /* OpenRhythm */;
+			targetProxy = C00000000000000000000001 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		E20000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; ENABLE_PREVIEWS = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = OpenRhythm; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music"; INFOPLIST_KEY_UILaunchScreen_Generation = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.devin.openrhythm; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		E20000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = OpenRhythm; INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music"; INFOPLIST_KEY_UILaunchScreen_Generation = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = com.devin.openrhythm; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
-		E20000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.devin.openrhythm.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenRhythm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OpenRhythm"; }; name = Debug; };
-		E20000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.devin.openrhythm.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenRhythm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OpenRhythm"; }; name = Release; };
-		E20000000000000000000005 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_C_LANGUAGE_STANDARD = gnu17; GCC_OPTIMIZATION_LEVEL = 0; ONLY_ACTIVE_ARCH = YES; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
-		E20000000000000000000006 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; GCC_C_LANGUAGE_STANDARD = gnu17; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; VALIDATE_PRODUCT = YES; }; name = Release; };
+		E20000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = SEU3F85UQD;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = OpenRhythm;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.devin.openrhythm;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E20000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = SEU3F85UQD;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = OpenRhythm;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.devin.openrhythm;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E20000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.devin.openrhythm.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenRhythm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OpenRhythm";
+			};
+			name = Debug;
+		};
+		E20000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.devin.openrhythm.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OpenRhythm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OpenRhythm";
+			};
+			name = Release;
+		};
+		E20000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		E20000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		E10000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (E20000000000000000000001, E20000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		E10000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (E20000000000000000000003, E20000000000000000000004,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		E10000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (E20000000000000000000005, E20000000000000000000006,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		E10000000000000000000001 /* Build configuration list for PBXNativeTarget "OpenRhythm" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E20000000000000000000001 /* Debug */,
+				E20000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000000000000000000002 /* Build configuration list for PBXNativeTarget "OpenRhythmTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E20000000000000000000003 /* Debug */,
+				E20000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E10000000000000000000003 /* Build configuration list for PBXProject "OpenRhythm" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E20000000000000000000005 /* Debug */,
+				E20000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 	};
 	rootObject = F00000000000000000000001 /* Project object */;
