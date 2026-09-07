@@ -1,8 +1,8 @@
 import SwiftUI
+import UIKit
 
 struct CatalogView: View {
   @State private var model: CatalogModel
-  @State private var searchTask: Task<Void, Never>?
   private let server: ServerDescriptor
 
   init(server: ServerDescriptor) {
@@ -83,15 +83,7 @@ struct CatalogView: View {
   private var queryBinding: Binding<String> {
     Binding(
       get: { model.filter.query },
-      set: { value in
-        model.filter.query = value
-        searchTask?.cancel()
-        searchTask = Task {
-          try? await Task.sleep(for: .milliseconds(350))
-          guard !Task.isCancelled else { return }
-          await model.refresh()
-        }
-      }
+      set: { model.filter.query = $0 }
     )
   }
 
@@ -121,11 +113,7 @@ struct SongRow: View {
 
   var body: some View {
     HStack(spacing: 12) {
-      AsyncImage(url: song.coverURL) { image in
-        image.resizable().scaledToFill()
-      } placeholder: {
-        Color.secondary.opacity(0.15)
-      }
+      SongArtwork(url: song.coverURL, contentMode: .fill)
       .frame(width: 56, height: 56)
       .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -147,5 +135,32 @@ struct SongRow: View {
     song.variants
       .map { "\($0.difficulty.displayName) \($0.rating)" }
       .joined(separator: " · ")
+  }
+}
+
+struct SongArtwork: View {
+  let url: URL?
+  let contentMode: ContentMode
+
+  var body: some View {
+    if let url, url.isFileURL {
+      if let image = UIImage(contentsOfFile: url.path) {
+        Image(uiImage: image)
+          .resizable()
+          .aspectRatio(contentMode: contentMode)
+      } else {
+        placeholder
+      }
+    } else {
+      AsyncImage(url: url) { image in
+        image.resizable().aspectRatio(contentMode: contentMode)
+      } placeholder: {
+        placeholder
+      }
+    }
+  }
+
+  private var placeholder: some View {
+    Color.secondary.opacity(0.15)
   }
 }

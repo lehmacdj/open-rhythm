@@ -42,6 +42,11 @@ struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
     Difficulty(tags: tags)
   }
 
+  func resultKey(server: ServerDescriptor) -> String {
+    let origin = source ?? server.baseURL.absoluteString
+    return "\(origin)\u{0}\(id)"
+  }
+
   func songKey(server: ServerDescriptor) -> String {
     if let bgmURL = bgm.resolved(against: server.baseURL) {
       return bgmURL.absoluteString

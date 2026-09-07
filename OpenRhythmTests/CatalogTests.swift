@@ -39,14 +39,34 @@ final class CatalogTests: XCTestCase {
     XCTAssertTrue(filter.apply(to: [song]).isEmpty)
   }
 
+  func testResultKeysIncludeServerOrigin() {
+    let value = level(
+      name: "shared",
+      rating: 9,
+      difficulty: "#EXPERT",
+      source: nil
+    )
+    let otherServer = ServerDescriptor(
+      id: "other",
+      name: "Other",
+      baseURL: URL(string: "https://other.example")!
+    )
+
+    XCTAssertNotEqual(
+      value.resultKey(server: server),
+      value.resultKey(server: otherServer)
+    )
+  }
+
   private func level(
     name: String,
     rating: Int,
-    difficulty: String
+    difficulty: String,
+    source: String? = "https://sonolus.milkbun.org/llsif"
   ) -> SonolusLevelItem {
     SonolusLevelItem(
       name: name,
-      source: server.baseURL.absoluteString,
+      source: source,
       version: 1,
       rating: rating,
       title: LocalizedText(
@@ -63,4 +83,3 @@ final class CatalogTests: XCTestCase {
     )
   }
 }
-

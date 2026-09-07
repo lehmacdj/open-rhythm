@@ -53,8 +53,12 @@ actor ResultStore {
   }
 
   func results(for levelID: String) throws -> [PlayResult] {
+    try results(forAnyLevelID: [levelID])
+  }
+
+  func results(forAnyLevelID levelIDs: Set<String>) throws -> [PlayResult] {
     try allResults()
-      .filter { $0.levelID == levelID }
+      .filter { levelIDs.contains($0.levelID) }
       .sorted { $0.playedAt > $1.playedAt }
   }
 

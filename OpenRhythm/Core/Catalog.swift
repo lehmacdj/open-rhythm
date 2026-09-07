@@ -7,6 +7,16 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
   let artists: LocalizedText
   let coverURL: URL?
   let variants: [SonolusLevelItem]
+  let levelOrigins: [CatalogLevelOrigin]
+
+  func server(for level: SonolusLevelItem) -> ServerDescriptor {
+    if let exact = levelOrigins.first(where: { $0.matches(level) }) {
+      return exact.server
+    }
+
+    let matchingIDs = levelOrigins.filter { $0.levelID == level.id }
+    return matchingIDs.count == 1 ? matchingIDs[0].server : server
+  }
 
   var difficulties: Set<Difficulty> {
     Set(variants.map(\.difficulty))
@@ -29,6 +39,22 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
     return tokens.allSatisfy { token in
       searchIndex.contains { $0.contains(token) }
     }
+  }
+}
+
+struct CatalogLevelOrigin: Hashable, Sendable {
+  let levelID: String
+  let source: String?
+  let server: ServerDescriptor
+
+  init(level: SonolusLevelItem, server: ServerDescriptor) {
+    levelID = level.id
+    source = level.source
+    self.server = server
+  }
+
+  func matches(_ level: SonolusLevelItem) -> Bool {
+    levelID == level.id && source == level.source
   }
 }
 
@@ -107,9 +133,11 @@ enum CatalogBuilder {
           title: first.title,
           artists: first.artists,
           coverURL: first.cover.resolved(against: server.baseURL),
-          variants: ordered
+          variants: ordered,
+          levelOrigins: ordered.map {
+            CatalogLevelOrigin(level: $0, server: server)
+          }
         )
       }
   }
 }
-

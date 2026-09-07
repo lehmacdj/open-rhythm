@@ -43,31 +43,59 @@ final class CatalogModel {
     do {
       let first = try await client.levels(
         on: server,
-        page: 0,
-        query: filter.query
+        page: 0
       )
       guard currentGeneration == generation else { return }
       merge(first.items)
       totalPageCount = first.pageCount
       loadedPageCount = 1
 
-      if first.pageCount > 1 {
-        for page in 1..<first.pageCount {
-          let response = try await client.levels(
-            on: server,
-            page: page,
-            query: filter.query
-          )
-          guard currentGeneration == generation else { return }
-          merge(response.items)
-          loadedPageCount = page + 1
-        }
-      }
+      try await loadRemainingPages(
+        in: first.pageCount,
+        generation: currentGeneration
+      )
     } catch is CancellationError {
       return
     } catch {
       guard currentGeneration == generation else { return }
       errorMessage = error.localizedDescription
+    }
+  }
+
+  private func loadRemainingPages(
+    in pageCount: Int,
+    generation currentGeneration: Int
+  ) async throws {
+    guard pageCount > 1 else { return }
+
+    try await withThrowingTaskGroup(
+      of: [SonolusLevelItem].self
+    ) { group in
+      let maximumConcurrentRequests = 6
+      var nextPage = 1
+
+      func addNextPage() {
+        guard nextPage < pageCount else { return }
+        let page = nextPage
+        nextPage += 1
+        group.addTask { [client, server] in
+          try await client.levels(on: server, page: page).items
+        }
+      }
+
+      for _ in 0..<min(maximumConcurrentRequests, pageCount - 1) {
+        addNextPage()
+      }
+
+      while let items = try await group.next() {
+        guard currentGeneration == generation else {
+          group.cancelAll()
+          return
+        }
+        merge(items)
+        loadedPageCount += 1
+        addNextPage()
+      }
     }
   }
 
@@ -81,4 +109,3 @@ final class CatalogModel {
     )
   }
 }
-

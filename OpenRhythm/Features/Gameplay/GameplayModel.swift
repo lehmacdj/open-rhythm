@@ -45,6 +45,7 @@ final class GameplayModel {
   private var timeObserver: Any?
   private var nextMissIndex = 0
   private var resultLevel: SonolusLevelItem?
+  private var resultLevelID = ""
   private var resultTitle = ""
   private var pressedLanes = Set<Int>()
   private var activeHolds = [Int: RhythmNote]()
@@ -69,6 +70,7 @@ final class GameplayModel {
       chart = RhythmChart(level: bundle.level)
       bgmOffset = bundle.level.bgmOffset
       resultLevel = level
+      resultLevelID = level.resultKey(server: server)
       resultTitle = title
       player = AVPlayer(url: bundle.bgmURL)
       phase = .ready
@@ -218,7 +220,7 @@ final class GameplayModel {
     guard let level = resultLevel else { return }
     let result = PlayResult(
       id: UUID(),
-      levelID: level.id,
+      levelID: resultLevelID,
       title: resultTitle,
       difficulty: level.difficulty,
       rating: level.rating,

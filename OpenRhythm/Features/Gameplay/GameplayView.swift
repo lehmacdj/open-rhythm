@@ -30,7 +30,7 @@ struct GameplayView: View {
     .task {
       await model.prepare(
         level: level,
-        server: song.server,
+        server: song.server(for: level),
         title: song.title.displayValue()
       )
     }

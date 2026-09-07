@@ -23,12 +23,18 @@ private struct OfflineResourceDownload: Sendable {
 
 enum OfflineStoreError: LocalizedError {
   case malformedLevelDetails
+  case invalidResourceHash(String)
+  case missingCachedResource(URL)
   case checksumMismatch(URL)
 
   var errorDescription: String? {
     switch self {
     case .malformedLevelDetails:
       "The server returned malformed level details."
+    case .invalidResourceHash(let hash):
+      "The server supplied an invalid resource hash: \(hash)"
+    case .missingCachedResource(let url):
+      "A downloaded resource is missing: \(url.absoluteString)"
     case .checksumMismatch(let url):
       "The downloaded resource failed verification: \(url.absoluteString)"
     }
@@ -122,6 +128,15 @@ actor OfflineStore {
       withJSONObject: item,
       options: [.sortedKeys]
     )
+    let references = try RuntimeResourceReferences(
+      itemData: itemData,
+      serverBaseURL: server.baseURL
+    )
+    guard references.engineVersion == 13 else {
+      throw RuntimeBundleError.unsupportedEngineVersion(
+        references.engineVersion
+      )
+    }
     let locators = try ResourceLocatorCollector.collect(
       from: itemData,
       baseURL: server.baseURL
@@ -133,9 +148,10 @@ actor OfflineStore {
     for locator in locators.sorted(by: {
       $0.url.absoluteString < $1.url.absoluteString
     }) {
-      if let hash = locator.hash {
+      let hash = try locator.hash.map(ContentAddress.normalizedSHA1)
+      if let hash {
         let objectURL = objectsURL.appendingPathComponent(hash)
-        if fileManager.fileExists(atPath: objectURL.path) {
+        if cachedObjectIsValid(at: objectURL, expectedSHA1: hash) {
           resources.append(
             OfflineResource(
               remoteURL: locator.url,
@@ -146,7 +162,7 @@ actor OfflineStore {
           continue
         }
       }
-      pending.append(locator)
+      pending.append((url: locator.url, hash: hash))
     }
 
     let downloads = try await downloadResources(pending)
@@ -154,9 +170,7 @@ actor OfflineStore {
       let objectURL = objectsURL.appendingPathComponent(
         download.resource.objectName
       )
-      if !fileManager.fileExists(atPath: objectURL.path) {
-        try download.data.write(to: objectURL, options: [.atomic])
-      }
+      try download.data.write(to: objectURL, options: [.atomic])
       resources.append(download.resource)
     }
     resources.sort { $0.remoteURL.absoluteString < $1.remoteURL.absoluteString }
@@ -198,20 +212,28 @@ actor OfflineStore {
     from server: ServerDescriptor
   ) throws -> OfflineLevelManifest? {
     if server.id == "offline" {
-      return try manifests().first { $0.level.id == level.id }
+      let candidates = try manifests().filter { $0.level.id == level.id }
+      if let exact = candidates.first(where: {
+        $0.level.source == level.source
+      }) {
+        return exact
+      }
+      return candidates.count == 1 ? candidates[0] : nil
     }
     let id = Data("\(server.id):\(level.id)".utf8).sha256Hex
     let url = manifestsURL.appendingPathComponent("\(id).json")
     guard fileManager.fileExists(atPath: url.path) else { return nil }
-    return try JSONDecoder.offline.decode(
+    let manifest = try JSONDecoder.offline.decode(
       OfflineLevelManifest.self,
       from: Data(contentsOf: url)
     )
+    return resourcesAreValid(in: manifest) ? manifest : nil
   }
 
   func runtimeBundle(
     from manifest: OfflineLevelManifest
   ) throws -> RuntimeBundle {
+    try validateResources(in: manifest)
     let references = try RuntimeResourceReferences(
       itemData: manifest.itemData,
       serverBaseURL: manifest.server.baseURL
@@ -263,9 +285,15 @@ actor OfflineStore {
     from server: ServerDescriptor
   ) -> Bool {
     let id = Data("\(server.id):\(level.id)".utf8).sha256Hex
-    return fileManager.fileExists(
-      atPath: manifestsURL.appendingPathComponent("\(id).json").path
-    )
+    let url = manifestsURL.appendingPathComponent("\(id).json")
+    guard
+      let data = try? Data(contentsOf: url),
+      let manifest = try? JSONDecoder.offline.decode(
+        OfflineLevelManifest.self,
+        from: data
+      )
+    else { return false }
+    return resourcesAreValid(in: manifest)
   }
 
   func catalogSongs() throws -> [CatalogSong] {
@@ -300,7 +328,10 @@ actor OfflineStore {
         title: first.level.title,
         artists: first.level.artists,
         coverURL: coverURL,
-        variants: ordered.map(\.level)
+        variants: ordered.map(\.level),
+        levelOrigins: ordered.map {
+          CatalogLevelOrigin(level: $0.level, server: $0.server)
+        }
       )
     }
   }
@@ -311,7 +342,7 @@ actor OfflineStore {
   ) -> URL? {
     guard let resource = manifest.resources.first(where: {
       $0.remoteURL == remoteURL
-    }) else {
+    }), ContentAddress.isSafeObjectName(resource.objectName) else {
       return nil
     }
     return objectsURL.appendingPathComponent(resource.objectName)
@@ -380,8 +411,7 @@ actor OfflineStore {
         group.addTask { [client] in
           let data = try await client.resource(at: locator.url)
           if let expected = locator.hash,
-            data.sha1Hex.caseInsensitiveCompare(expected) != .orderedSame
-          {
+            data.sha1Hex != expected {
             throw OfflineStoreError.checksumMismatch(locator.url)
           }
 
@@ -403,9 +433,75 @@ actor OfflineStore {
       return downloads
     }
   }
+
+  private func cachedObjectIsValid(
+    at url: URL,
+    expectedSHA1: String
+  ) -> Bool {
+    guard let data = try? Data(contentsOf: url) else { return false }
+    return data.sha1Hex == expectedSHA1
+  }
+
+  private func resourcesAreValid(in manifest: OfflineLevelManifest) -> Bool {
+    manifest.resources.allSatisfy { resource in
+      guard ContentAddress.isSafeObjectName(resource.objectName) else {
+        return false
+      }
+      let url = objectsURL.appendingPathComponent(resource.objectName)
+      guard let data = try? Data(contentsOf: url) else { return false }
+      return ContentAddress.validates(data, as: resource)
+    }
+  }
+
+  private func validateResources(
+    in manifest: OfflineLevelManifest
+  ) throws {
+    for resource in manifest.resources {
+      guard ContentAddress.isSafeObjectName(resource.objectName) else {
+        throw OfflineStoreError.checksumMismatch(resource.remoteURL)
+      }
+      let url = objectsURL.appendingPathComponent(resource.objectName)
+      guard let data = try? Data(contentsOf: url) else {
+        throw OfflineStoreError.missingCachedResource(resource.remoteURL)
+      }
+      guard ContentAddress.validates(data, as: resource) else {
+        throw OfflineStoreError.checksumMismatch(resource.remoteURL)
+      }
+    }
+  }
 }
 
-private extension Data {
+enum ContentAddress {
+  static func isSafeObjectName(_ value: String) -> Bool {
+    let hexadecimal = CharacterSet(charactersIn: "0123456789abcdef")
+    return (value.utf8.count == 40 || value.utf8.count == 64)
+      && value.unicodeScalars.allSatisfy(hexadecimal.contains)
+  }
+
+  static func normalizedSHA1(_ hash: String) throws -> String {
+    let normalized = hash.lowercased()
+    guard
+      normalized.utf8.count == 40,
+      isSafeObjectName(normalized)
+    else {
+      throw OfflineStoreError.invalidResourceHash(hash)
+    }
+    return normalized
+  }
+
+  static func validates(_ data: Data, as resource: OfflineResource) -> Bool {
+    guard isSafeObjectName(resource.objectName) else { return false }
+    if let expectedSHA1 = resource.expectedSHA1 {
+      guard let normalized = try? normalizedSHA1(expectedSHA1) else {
+        return false
+      }
+      return resource.objectName == normalized && data.sha1Hex == normalized
+    }
+    return data.sha256Hex == resource.objectName.lowercased()
+  }
+}
+
+extension Data {
   var sha1Hex: String {
     Insecure.SHA1.hash(data: self).map { String(format: "%02x", $0) }.joined()
   }

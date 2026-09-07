@@ -19,11 +19,7 @@ struct SongDetailView: View {
     Form {
       Section {
         HStack(alignment: .top, spacing: 16) {
-          AsyncImage(url: song.coverURL) { image in
-            image.resizable().scaledToFit()
-          } placeholder: {
-            Color.secondary.opacity(0.15)
-          }
+          SongArtwork(url: song.coverURL, contentMode: .fit)
           .frame(width: 96, height: 96)
           .clipShape(RoundedRectangle(cornerRadius: 12))
 
@@ -39,7 +35,7 @@ struct SongDetailView: View {
       Section("Chart") {
         Picker("Difficulty", selection: $selectedLevelID) {
           ForEach(song.variants) { level in
-            Text("\(level.difficulty.displayName) · \(level.rating)")
+            Text(levelLabel(level))
               .tag(level.id)
           }
         }
@@ -115,17 +111,35 @@ struct SongDetailView: View {
       if !isOffline {
         isDownloaded = await OfflineStore.shared.contains(
           level: selectedLevel,
-          from: song.server
+          from: selectedServer
         )
       }
       recentResults = (try? await ResultStore.shared.results(
-        for: selectedLevel.id
+        forAnyLevelID: [
+          selectedLevel.resultKey(server: selectedServer),
+          selectedLevel.id
+        ]
       )) ?? []
     }
   }
 
   private var selectedLevel: SonolusLevelItem? {
     song.variants.first { $0.id == selectedLevelID }
+  }
+
+  private var selectedServer: ServerDescriptor {
+    selectedLevel.map(song.server(for:)) ?? song.server
+  }
+
+  private func levelLabel(_ level: SonolusLevelItem) -> String {
+    let base = "\(level.difficulty.displayName) · \(level.rating)"
+    let matching = song.variants.filter {
+      $0.difficulty == level.difficulty && $0.rating == level.rating
+    }
+    guard matching.count > 1,
+      let index = matching.firstIndex(where: { $0.id == level.id })
+    else { return base }
+    return "\(base) · Chart \(index + 1)"
   }
 
   private func downloadSelectedLevel() async {
@@ -137,7 +151,7 @@ struct SongDetailView: View {
     do {
       _ = try await OfflineStore.shared.download(
         level: selectedLevel,
-        from: song.server
+        from: selectedServer
       )
       isDownloaded = true
     } catch {
