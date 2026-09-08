@@ -40,9 +40,21 @@ struct CatalogView: View {
         }
       }
     }
-    .navigationTitle(server.name)
+    .navigationTitle("Songs")
     .searchable(text: queryBinding, prompt: "Title or artist")
     .toolbar {
+      ToolbarItem(placement: .principal) {
+        VStack(spacing: 0) {
+          Text("Songs")
+            .font(.headline)
+          Text(server.name)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+        }
+        .accessibilityElement(children: .combine)
+      }
       ToolbarItem(placement: .topBarTrailing) {
         Menu("Filter", systemImage: "line.3.horizontal.decrease.circle") {
           Picker("Sort", selection: sortBinding) {

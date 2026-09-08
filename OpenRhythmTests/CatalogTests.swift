@@ -28,6 +28,20 @@ final class CatalogTests: XCTestCase {
     XCTAssertFalse(song.matches(query: "Aqours"))
   }
 
+  func testSearchesJapaneseOnlyTextByJapaneseRomanization() {
+    let song = CatalogBuilder.group(
+      levels: [level(
+        name: "expert",
+        rating: 9,
+        difficulty: "#EXPERT",
+        title: LocalizedText(#"##LOCALIZE:{"ja":"僕ら"}"#)
+      )],
+      server: server
+    )[0]
+
+    XCTAssertTrue(song.matches(query: "bokura"))
+  }
+
   func testDifficultyFilter() {
     let song = CatalogBuilder.group(
       levels: [level(name: "expert", rating: 9, difficulty: "#EXPERT")],
@@ -62,6 +76,7 @@ final class CatalogTests: XCTestCase {
     name: String,
     rating: Int,
     difficulty: String,
+    title: LocalizedText? = nil,
     source: String? = "https://sonolus.milkbun.org/llsif"
   ) -> SonolusLevelItem {
     SonolusLevelItem(
@@ -69,7 +84,7 @@ final class CatalogTests: XCTestCase {
       source: source,
       version: 1,
       rating: rating,
-      title: LocalizedText(
+      title: title ?? LocalizedText(
         #"##LOCALIZE:{"ja":"僕らのLIVE 君とのLIFE","en":"Bokura no LIVE Kimi to no LIFE"}"#
       ),
       artists: LocalizedText(

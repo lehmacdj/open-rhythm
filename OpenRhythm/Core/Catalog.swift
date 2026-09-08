@@ -29,8 +29,17 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
 
   var searchIndex: Set<String> {
     Set(
-      (title.searchValues + artists.searchValues)
-        .flatMap(SearchNormalizer.searchableForms)
+      title.values.flatMap { language, value in
+        SearchNormalizer.searchableForms(
+          of: value,
+          languageCode: language
+        )
+      } + artists.values.flatMap { language, value in
+        SearchNormalizer.searchableForms(
+          of: value,
+          languageCode: language
+        )
+      }
     )
   }
 
