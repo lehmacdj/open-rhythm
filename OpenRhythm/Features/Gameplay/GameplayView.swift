@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct GameplayView: View {
   let song: CatalogSong
   let level: SonolusLevelItem
   @State private var model = GameplayModel()
   @Environment(\.dismiss) private var dismiss
+  @Environment(\.scenePhase) private var scenePhase
 
   var body: some View {
     Group {
@@ -35,6 +37,9 @@ struct GameplayView: View {
       )
     }
     .onDisappear { model.stop() }
+    .onChange(of: scenePhase) { _, phase in
+      if phase != .active { model.stop() }
+    }
   }
 
   private var readyView: some View {
@@ -74,23 +79,14 @@ struct GameplayView: View {
           .padding()
           Spacer()
         }
+        .allowsHitTesting(false)
       }
       .frame(width: geometry.size.width, height: geometry.size.height)
     }
   }
 
   private var laneInput: some View {
-    HStack(spacing: 0) {
-      ForEach(0..<9) { index in
-        Color.clear
-          .contentShape(Rectangle())
-          .gesture(
-            DragGesture(minimumDistance: 0)
-              .onChanged { _ in model.press(lane: index - 4) }
-              .onEnded { _ in model.release(lane: index - 4) }
-          )
-      }
-    }
+    LaneInput(model: model)
   }
 
   private var resultView: some View {
@@ -108,7 +104,17 @@ struct GameplayView: View {
         }
       }
       Section {
-        Button("Done") { dismiss() }
+        Button("Done") {
+          Task {
+            await model.resultSaveTask?.value
+            if model.resultSaveError == nil { dismiss() }
+          }
+        }
+      }
+      if let error = model.resultSaveError {
+        Section("Couldn’t Save Result") {
+          Text(error)
+        }
       }
     }
   }
@@ -178,5 +184,71 @@ struct GameplayView: View {
         lineWidth: 2
       )
     }
+  }
+}
+
+private struct LaneInput: UIViewRepresentable {
+  let model: GameplayModel
+
+  func makeUIView(context: Context) -> LaneInputView {
+    let view = LaneInputView()
+    view.isMultipleTouchEnabled = true
+    view.backgroundColor = .clear
+    view.model = model
+    return view
+  }
+
+  func updateUIView(_ view: LaneInputView, context: Context) {
+    view.model = model
+  }
+}
+
+private final class LaneInputView: UIView {
+  var model: GameplayModel?
+  private var lanes = [ObjectIdentifier: Int]()
+
+  private func lane(for touch: UITouch) -> Int? {
+    let point = touch.location(in: self)
+    guard bounds.width > 0, bounds.contains(point) else { return nil }
+    return min(8, Int(point.x / bounds.width * 9)) - 4
+  }
+
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    for touch in touches {
+      guard let lane = lane(for: touch) else { continue }
+      let occupied = lanes.values.contains(lane)
+      lanes[ObjectIdentifier(touch)] = lane
+      if !occupied { model?.press(lane: lane) }
+    }
+  }
+
+  override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+    for touch in touches {
+      let id = ObjectIdentifier(touch)
+      let next = lane(for: touch)
+      guard lanes[id] != next else { continue }
+      release(id)
+      if let next {
+        lanes[id] = next
+        model?.slide(lane: next)
+      }
+    }
+  }
+
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    for touch in touches { release(ObjectIdentifier(touch)) }
+  }
+
+  override func touchesCancelled(
+    _ touches: Set<UITouch>, with event: UIEvent?
+  ) {
+    for touch in touches { release(ObjectIdentifier(touch)) }
+  }
+
+  private func release(_ id: ObjectIdentifier) {
+    guard let lane = lanes.removeValue(forKey: id),
+      !lanes.values.contains(lane)
+    else { return }
+    model?.release(lane: lane)
   }
 }

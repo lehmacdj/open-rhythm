@@ -147,6 +147,133 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(chart.judgementCount, 3)
   }
 
+  @MainActor
+  func testGameplayScoresTapsSlidesAndHoldReleaseOnce() throws {
+    let model = try gameplayModel()
+    defer { model.stop() }
+    model.start()
+
+    model.update(mediaTime: 1.05)
+    model.press(lane: 0)
+    model.press(lane: 0)
+    XCTAssertEqual(model.score, 1_000)
+    model.release(lane: 0)
+
+    model.update(mediaTime: 2.05)
+    model.slide(lane: 1)
+    XCTAssertEqual(model.score, 2_000)
+    model.release(lane: 1)
+
+    model.update(mediaTime: 3.05)
+    model.slide(lane: 2)
+    XCTAssertEqual(model.score, 2_000, "Sliding cannot hit a tap note")
+    model.release(lane: 2)
+    model.press(lane: 2)
+    model.release(lane: 2)
+
+    model.update(mediaTime: 4.05)
+    model.press(lane: 3)
+    XCTAssertEqual(model.activeHoldIDs.count, 1)
+    model.update(mediaTime: 5.05)
+    model.release(lane: 3)
+    model.release(lane: 3)
+
+    XCTAssertEqual(model.score, 5_000)
+    XCTAssertEqual(model.maxCombo, 5)
+    XCTAssertEqual(model.judgements[.perfect], 5)
+    XCTAssertEqual(model.judgements[.miss], 0)
+  }
+
+  @MainActor
+  func testGameplayCompletesAndSavesAfterAudioEnds() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ResultStore(rootURL: root)
+    let model = try gameplayModel(resultStore: store)
+    model.start()
+    model.update(mediaTime: 1.05)
+    model.press(lane: 0)
+    model.release(lane: 0)
+    model.playbackEnded(uptime: 100)
+    model.advanceAfterAudioEnd(uptime: 106)
+
+    XCTAssertEqual(model.phase, .finished)
+    XCTAssertEqual(model.score, 1_000)
+    XCTAssertEqual(model.judgements[.miss], 4)
+    await model.resultSaveTask?.value
+    let results = try await store.results(
+      for: "https://example.com\u{0}gameplay"
+    )
+    XCTAssertEqual(results.count, 1)
+    XCTAssertEqual(results.first?.score, 1_000)
+    XCTAssertEqual(results.first?.miss, 4)
+    model.advanceAfterAudioEnd(uptime: 200)
+    XCTAssertEqual(model.judgements[.miss], 4)
+  }
+
+  @MainActor
+  func testEarlyHoldReleaseAndCancelledPlayback() throws {
+    let model = try gameplayModel()
+    model.start()
+    model.update(mediaTime: 4.05)
+    model.press(lane: 3)
+    model.release(lane: 3)
+    XCTAssertEqual(model.judgements[.miss], 4)
+    model.update(mediaTime: 5.5)
+    XCTAssertEqual(model.judgements[.miss], 4)
+    model.stop()
+    XCTAssertEqual(model.phase, .ready)
+    model.update(mediaTime: 100)
+    XCTAssertNil(model.resultSaveTask)
+  }
+
+  @MainActor
+  private func gameplayModel(
+    resultStore: ResultStore = ResultStore()
+  ) throws -> GameplayModel {
+    let engine = try JSONDecoder().decode(
+      EnginePlayData.self,
+      from: Data(#"""
+        {"skin":{"sprites":[]},"effect":{"clips":[]},
+         "particle":{"effects":[]},"archetypes":[],"nodes":[],
+         "buckets":[]}
+        """#.utf8)
+    )
+    let data = LevelData(bgmOffset: -0.05, entities: [
+      entity("TapNote", values: ["#BEAT": 1, "lane": 0]),
+      entity("SwingNote", values: ["#BEAT": 2, "lane": 1]),
+      entity("TapNote", values: ["#BEAT": 3, "lane": 2]),
+      entity("TapNote", name: "head", values: ["#BEAT": 4, "lane": 3]),
+      entity("HoldNote", name: "tail", values: ["#BEAT": 5]),
+      LevelEntity(archetype: "HoldConnector", name: nil, data: [
+        LevelEntityData(name: "head", value: nil, ref: "head"),
+        LevelEntityData(name: "tail", value: nil, ref: "tail")
+      ])
+    ])
+    let server = ServerDescriptor(
+      id: "example", name: "Example",
+      baseURL: URL(string: "https://example.com")!
+    )
+    let resource = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(
+      name: "gameplay", source: nil, version: 1, rating: 1,
+      title: LocalizedText("Gameplay"), artists: LocalizedText("Artist"),
+      author: "Test", tags: [SonolusTag(title: "#EASY")],
+      cover: resource, bgm: resource, data: resource
+    )
+    let model = GameplayModel(resultStore: resultStore)
+    model.prepare(
+      bundle: RuntimeBundle(
+        engine: engine, level: data,
+        bgmURL: URL(fileURLWithPath: "/nonexistent-test-audio.wav"),
+        isOffline: true
+      ),
+      level: level, server: server, title: "Gameplay"
+    )
+    return model
+  }
+
   private func entity(
     _ archetype: String,
     name: String? = nil,

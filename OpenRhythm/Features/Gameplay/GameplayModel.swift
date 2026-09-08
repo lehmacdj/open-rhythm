@@ -43,6 +43,12 @@ final class GameplayModel {
   private var bgmOffset = 0.0
   private var player: AVPlayer?
   private var timeObserver: Any?
+  private var endObserver: NSObjectProtocol?
+  private var statusObserver: NSKeyValueObservation?
+  private var tailTimer: Timer?
+  private var tailStart: (mediaTime: TimeInterval, uptime: TimeInterval)?
+  private(set) var resultSaveTask: Task<Void, Never>?
+  private(set) var resultSaveError: String?
   private var nextMissIndex = 0
   private var resultLevel: SonolusLevelItem?
   private var resultLevelID = ""
@@ -67,16 +73,29 @@ final class GameplayModel {
     guard phase == .loading else { return }
     do {
       let bundle = try await loader.load(level: level, from: server)
-      chart = RhythmChart(level: bundle.level)
-      bgmOffset = bundle.level.bgmOffset
-      resultLevel = level
-      resultLevelID = level.resultKey(server: server)
-      resultTitle = title
-      player = AVPlayer(url: bundle.bgmURL)
-      phase = .ready
+      try Task.checkCancellation()
+      prepare(bundle: bundle, level: level, server: server, title: title)
+    } catch is CancellationError {
+      return
     } catch {
       phase = .failed(error.localizedDescription)
     }
+  }
+
+  func prepare(
+    bundle: RuntimeBundle,
+    level: SonolusLevelItem,
+    server: ServerDescriptor,
+    title: String
+  ) {
+    guard phase == .loading else { return }
+    chart = RhythmChart(level: bundle.level)
+    bgmOffset = bundle.level.bgmOffset
+    resultLevel = level
+    resultLevelID = level.resultKey(server: server)
+    resultTitle = title
+    player = AVPlayer(url: bundle.bgmURL)
+    phase = .ready
   }
 
   func start() {
@@ -84,7 +103,7 @@ final class GameplayModel {
     score = 0
     combo = 0
     maxCombo = 0
-    currentTime = 0
+    currentTime = bgmOffset
     nextMissIndex = 0
     hitNoteIDs.removeAll()
     pressedLanes.removeAll()
@@ -96,11 +115,34 @@ final class GameplayModel {
 
     player.seek(to: .zero)
     phase = .playing
+    if let item = player.currentItem {
+      endObserver = NotificationCenter.default.addObserver(
+        forName: AVPlayerItem.didPlayToEndTimeNotification,
+        object: item,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor in
+          self?.playbackEnded()
+        }
+      }
+      statusObserver = item.observe(\.status, options: [.initial, .new]) {
+        [weak self] item, _ in
+        guard item.status == .failed else { return }
+        let message = item.error?.localizedDescription
+          ?? "The music could not be played."
+        Task { @MainActor in
+          guard let self, self.phase == .playing else { return }
+          self.stop()
+          self.phase = .failed(message)
+        }
+      }
+    }
     timeObserver = player.addPeriodicTimeObserver(
       forInterval: CMTime(value: 1, timescale: 60),
       queue: .main
     ) { [weak self] time in
       Task { @MainActor in
+        guard self?.tailStart == nil else { return }
         self?.update(mediaTime: time.seconds)
       }
     }
@@ -114,10 +156,21 @@ final class GameplayModel {
   func press(lane: Int) {
     guard phase == .playing else { return }
     guard pressedLanes.insert(lane).inserted else { return }
+    hit(lane: lane, swingsOnly: false)
+  }
+
+  func slide(lane: Int) {
+    guard phase == .playing else { return }
+    pressedLanes.insert(lane)
+    hit(lane: lane, swingsOnly: true)
+  }
+
+  private func hit(lane: Int, swingsOnly: Bool) {
     let window = 0.18
     guard let note = chart.notes
       .filter({
         $0.lane == lane
+          && (!swingsOnly || $0.kind == .swing)
           && !hitNoteIDs.contains($0.id)
           && abs($0.time - currentTime) <= window
       })
@@ -156,12 +209,56 @@ final class GameplayModel {
       player?.removeTimeObserver(timeObserver)
       self.timeObserver = nil
     }
+    if let endObserver {
+      NotificationCenter.default.removeObserver(endObserver)
+      self.endObserver = nil
+    }
+    statusObserver = nil
+    tailTimer?.invalidate()
+    tailTimer = nil
+    tailStart = nil
+    pressedLanes.removeAll()
+    activeHolds.removeAll()
+    if phase == .playing { phase = .ready }
     Task { await Self.setAudioSession(active: false) }
   }
 
-  private func update(mediaTime: TimeInterval) {
+  func playbackEnded(
+    uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+  ) {
+    guard phase == .playing, tailStart == nil else { return }
+    let mediaTime = player?.currentTime().seconds ?? (currentTime - bgmOffset)
+    tailStart = (
+      mediaTime: max(
+        mediaTime.isFinite ? mediaTime : 0, currentTime - bgmOffset
+      ),
+      uptime: uptime
+    )
+    // AVPlayer stops its clock at EOF. Continue the chart's remaining notes
+    // and final judgement window using a monotonic clock.
+    tailTimer = Timer.scheduledTimer(
+      withTimeInterval: 1.0 / 60, repeats: true
+    ) { [weak self] _ in
+      Task { @MainActor in
+        self?.advanceAfterAudioEnd()
+      }
+    }
+  }
+
+  func advanceAfterAudioEnd(
+    uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
+  ) {
+    guard let tailStart else { return }
+    update(mediaTime: tailStart.mediaTime + max(0, uptime - tailStart.uptime))
+  }
+
+  func update(mediaTime: TimeInterval) {
     guard phase == .playing, mediaTime.isFinite else { return }
     currentTime = mediaTime + bgmOffset
+
+    for lane in pressedLanes {
+      hit(lane: lane, swingsOnly: true)
+    }
 
     while nextMissIndex < chart.notes.count,
       chart.notes[nextMissIndex].time < currentTime - 0.18
@@ -232,7 +329,13 @@ final class GameplayModel {
       good: judgements[.good, default: 0],
       miss: judgements[.miss, default: 0]
     )
-    Task { try? await resultStore.record(result) }
+    resultSaveTask = Task {
+      do {
+        try await resultStore.record(result)
+      } catch {
+        resultSaveError = error.localizedDescription
+      }
+    }
   }
 
   private nonisolated static func setAudioSession(active: Bool) async {
