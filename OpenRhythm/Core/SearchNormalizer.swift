@@ -19,10 +19,13 @@ enum SearchNormalizer {
     languageCode: String? = nil
   ) -> Set<String> {
     var forms = [normalize(value)]
-    if let latin = value.applyingTransform(.toLatin, reverse: false) {
+    let japanese = isJapanese(value, languageCode: languageCode)
+    if !japanese,
+      let latin = value.applyingTransform(.toLatin, reverse: false)
+    {
       forms.append(normalize(latin))
     }
-    if isJapanese(value, languageCode: languageCode),
+    if japanese,
       let transcription = japaneseLatinTranscription(of: value)
     {
       let normalized = normalize(transcription)

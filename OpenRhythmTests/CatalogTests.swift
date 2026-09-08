@@ -40,6 +40,7 @@ final class CatalogTests: XCTestCase {
     )[0]
 
     XCTAssertTrue(song.matches(query: "bokura"))
+    XCTAssertFalse(song.matches(query: "pura"))
   }
 
   func testDifficultyFilter() {

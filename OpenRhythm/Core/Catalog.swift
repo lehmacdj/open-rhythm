@@ -45,8 +45,9 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
 
   func matches(query: String) -> Bool {
     let tokens = SearchNormalizer.tokens(in: query)
+    let index = searchIndex
     return tokens.allSatisfy { token in
-      searchIndex.contains { $0.contains(token) }
+      index.contains { $0.contains(token) }
     }
   }
 }

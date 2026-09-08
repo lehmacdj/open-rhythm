@@ -40,6 +40,7 @@ struct SongDetailView: View {
           }
         }
         .pickerStyle(.navigationLink)
+        .disabled(isDownloading)
       }
 
       Section {
@@ -108,18 +109,25 @@ struct SongDetailView: View {
     .navigationBarTitleDisplayMode(.inline)
     .task(id: selectedLevelID) {
       guard let selectedLevel else { return }
+      let selection = selectedLevelID
+      let server = selectedServer
+      downloadError = nil
       if !isOffline {
-        isDownloaded = await OfflineStore.shared.contains(
+        let downloaded = await OfflineStore.shared.contains(
           level: selectedLevel,
-          from: selectedServer
+          from: server
         )
+        guard !Task.isCancelled, selectedLevelID == selection else { return }
+        isDownloaded = downloaded
       }
-      recentResults = (try? await ResultStore.shared.results(
+      let results = (try? await ResultStore.shared.results(
         forAnyLevelID: [
-          selectedLevel.resultKey(server: selectedServer),
+          selectedLevel.resultKey(server: server),
           selectedLevel.id
         ]
       )) ?? []
+      guard !Task.isCancelled, selectedLevelID == selection else { return }
+      recentResults = results
     }
   }
 
@@ -144,6 +152,8 @@ struct SongDetailView: View {
 
   private func downloadSelectedLevel() async {
     guard let selectedLevel else { return }
+    let selection = selectedLevelID
+    let server = selectedServer
     isDownloading = true
     downloadError = nil
     defer { isDownloading = false }
@@ -151,10 +161,12 @@ struct SongDetailView: View {
     do {
       _ = try await OfflineStore.shared.download(
         level: selectedLevel,
-        from: selectedServer
+        from: server
       )
+      guard selectedLevelID == selection else { return }
       isDownloaded = true
     } catch {
+      guard selectedLevelID == selection else { return }
       downloadError = error.localizedDescription
     }
   }
