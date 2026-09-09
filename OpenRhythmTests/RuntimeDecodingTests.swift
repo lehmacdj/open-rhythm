@@ -178,7 +178,7 @@ final class RuntimeDecodingTests: XCTestCase {
     model.release(lane: 3)
     model.release(lane: 3)
 
-    XCTAssertEqual(model.score, GameplayModel.maximumScore)
+    XCTAssertEqual(model.score, NoteJudgement.maximumScore)
     XCTAssertEqual(model.maxCombo, 5)
     XCTAssertEqual(model.judgements[.perfect], 5)
     XCTAssertEqual(model.judgements[.miss], 0)

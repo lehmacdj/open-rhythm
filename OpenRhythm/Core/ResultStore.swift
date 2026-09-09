@@ -7,12 +7,24 @@ struct PlayResult: Codable, Identifiable, Sendable {
   let difficulty: Difficulty
   let rating: Int
   let playedAt: Date
-  let score: Int
   let maxCombo: Int
   let perfect: Int
   let great: Int
   let good: Int
   let miss: Int
+
+  /// Derived, never stored: every note earns exactly one judgement, so the
+  /// counts carry the note total too. Results written before scoring was
+  /// normalized read back on today's scale, and a change to the weights
+  /// rescales history rather than stranding it.
+  var score: Int {
+    let counts: [NoteJudgement: Int] = [
+      .perfect: perfect, .great: great, .good: good, .miss: miss
+    ]
+    return NoteJudgement.score(
+      for: counts, noteCount: counts.values.reduce(0, +)
+    )
+  }
 }
 
 actor ResultStore {

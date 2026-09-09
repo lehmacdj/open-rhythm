@@ -18,7 +18,7 @@ enum NoteJudgement: String, CaseIterable, Sendable {
   var displayName: String { rawValue.capitalized }
 
   /// Relative worth of one note. A chart judged entirely `perfect` scores
-  /// `GameplayModel.maximumScore`, whatever its length.
+  /// `maximumScore`, whatever its length.
   var weight: Int {
     switch self {
     case .perfect: 1_000
@@ -26,6 +26,19 @@ enum NoteJudgement: String, CaseIterable, Sendable {
     case .good: 300
     case .miss: 0
     }
+  }
+
+  /// Score a flawless play awards, so results compare across charts.
+  static let maximumScore = 1_000_000
+
+  /// Score for `counts` over a chart of `noteCount` notes. Judgements are
+  /// the only tally worth keeping: a score is a pure function of them, and
+  /// summing four terms is cheap enough to derive wherever it is shown.
+  static func score(for counts: [NoteJudgement: Int], noteCount: Int) -> Int {
+    let maximum = noteCount * NoteJudgement.perfect.weight
+    guard maximum > 0 else { return 0 }
+    let earned = counts.reduce(0) { $0 + $1.key.weight * $1.value }
+    return (earned * maximumScore + maximum / 2) / maximum
   }
 }
 
@@ -37,7 +50,6 @@ final class GameplayModel {
     level: LevelData(bgmOffset: 0, entities: [])
   )
   private(set) var currentTime: TimeInterval = 0
-  private(set) var earnedPoints = 0
   private(set) var combo = 0
   private(set) var maxCombo = 0
   private(set) var judgements = Dictionary(
@@ -52,18 +64,12 @@ final class GameplayModel {
   private var engineAudio: EngineAudioPlayback?
   private var engineAspectRatio: Double?
 
-  /// Score a flawless play awards, so results compare across charts.
-  static let maximumScore = 1_000_000
-
   var noteCount: Int { engineRuntime?.inputCount ?? chart.judgementCount }
 
-  /// Points earned so far, scaled so a full chart of perfects is
-  /// `maximumScore`. Partway through a play this is the score kept, not the
-  /// score projected: unjudged notes count as nothing yet.
+  /// Partway through a play this is the score kept, not the score projected:
+  /// notes still unjudged count as nothing yet.
   var score: Int {
-    let maximum = noteCount * NoteJudgement.perfect.weight
-    guard maximum > 0 else { return 0 }
-    return (earnedPoints * Self.maximumScore + maximum / 2) / maximum
+    NoteJudgement.score(for: judgements, noteCount: noteCount)
   }
 
   var playbackTime: TimeInterval {
@@ -159,7 +165,6 @@ final class GameplayModel {
     playbackGeneration += 1
     let generation = playbackGeneration
     isStartingPlayback = true
-    earnedPoints = 0
     combo = 0
     maxCombo = 0
     currentTime = bgmOffset
@@ -426,7 +431,6 @@ final class GameplayModel {
 
   private func record(_ judgement: NoteJudgement) {
     judgements[judgement, default: 0] += 1
-    earnedPoints += judgement.weight
     if judgement == .miss {
       combo = 0
     } else {
@@ -454,7 +458,6 @@ final class GameplayModel {
       difficulty: level.difficulty,
       rating: level.rating,
       playedAt: Date(),
-      score: score,
       maxCombo: maxCombo,
       perfect: judgements[.perfect, default: 0],
       great: judgements[.great, default: 0],
