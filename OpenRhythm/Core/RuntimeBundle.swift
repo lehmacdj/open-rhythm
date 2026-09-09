@@ -26,12 +26,31 @@ private struct RuntimeLevelItem: Decodable {
   let bgm: ResourceLocator
   let data: ResourceLocator
   let engine: RuntimeEngineItem
+  let useSkin: RuntimeResourceSelection?
+  let useEffect: RuntimeResourceSelection?
+  let useParticle: RuntimeResourceSelection?
+}
+
+private struct RuntimeResourceSelection: Decodable {
+  let useDefault: Bool
+  let item: RuntimePresentationItem?
+}
+
+private struct RuntimePresentationItem: Decodable {
+  let source: String?
+  let data: ResourceLocator
+  let texture: ResourceLocator?
+  let audio: ResourceLocator?
 }
 
 private struct RuntimeEngineItem: Decodable {
   let source: String?
   let version: Int
   let playData: ResourceLocator
+  let configuration: ResourceLocator?
+  let skin: RuntimePresentationItem?
+  let effect: RuntimePresentationItem?
+  let particle: RuntimePresentationItem?
 }
 
 struct RuntimeResourceReferences: Sendable {
@@ -39,6 +58,7 @@ struct RuntimeResourceReferences: Sendable {
   let engineDataURL: URL
   let levelDataURL: URL
   let bgmURL: URL
+  let presentationURLs: [String: URL]
 
   init(itemData: Data, serverBaseURL: URL) throws {
     let item = try JSONDecoder().decode(RuntimeLevelItem.self, from: itemData)
@@ -74,6 +94,26 @@ struct RuntimeResourceReferences: Sendable {
     self.engineDataURL = engineDataURL
     self.levelDataURL = levelDataURL
     self.bgmURL = bgmURL
+    var urls = [String: URL]()
+    urls["configuration"] = item.engine.configuration?.resolved(
+      against: engineBaseURL
+    )
+    for (name, selection, fallback) in [
+      ("skin", item.useSkin, item.engine.skin),
+      ("effect", item.useEffect, item.engine.effect),
+      ("particle", item.useParticle, item.engine.particle)
+    ] {
+      let usesDefault = selection?.useDefault ?? true
+      let selected = usesDefault ? fallback : selection?.item
+      if let selected {
+        let base = selected.source.flatMap(URL.init(string:))
+          ?? (usesDefault ? engineBaseURL : levelBaseURL)
+        urls[name + "Data"] = selected.data.resolved(against: base)
+        urls[name + "Texture"] = selected.texture?.resolved(against: base)
+        urls[name + "Audio"] = selected.audio?.resolved(against: base)
+      }
+    }
+    presentationURLs = urls
   }
 }
 
@@ -82,6 +122,18 @@ struct RuntimeBundle: Sendable {
   let level: LevelData
   let bgmURL: URL
   let isOffline: Bool
+  var presentation: RuntimePresentation? = nil
+}
+
+struct RuntimePresentation: Sendable {
+  let resources: [String: Data]
+
+  func data(_ name: String) throws -> Data {
+    guard let data = resources[name] else {
+      throw RuntimeBundleError.missingResource(name)
+    }
+    return data
+  }
 }
 
 actor RuntimeBundleLoader {
@@ -116,6 +168,16 @@ actor RuntimeBundleLoader {
 
     async let engineData = client.resource(at: references.engineDataURL)
     async let levelData = client.resource(at: references.levelDataURL)
+    let presentation = try await withThrowingTaskGroup(
+      of: (String, Data).self
+    ) { group in
+      for (name, url) in references.presentationURLs {
+        group.addTask { (name, try await self.client.resource(at: url)) }
+      }
+      var resources = [String: Data]()
+      for try await (name, data) in group { resources[name] = data }
+      return resources.isEmpty ? nil : RuntimePresentation(resources: resources)
+    }
     return try await RuntimeBundle(
       engine: CompressedJSONDecoder.decode(
         EnginePlayData.self,
@@ -123,7 +185,8 @@ actor RuntimeBundleLoader {
       ),
       level: CompressedJSONDecoder.decode(LevelData.self, from: levelData),
       bgmURL: references.bgmURL,
-      isOffline: false
+      isOffline: false,
+      presentation: presentation
     )
   }
 

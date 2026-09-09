@@ -266,6 +266,13 @@ actor OfflineStore {
       remoteURL: references.bgmURL
     )
 
+    var presentation = [String: Data]()
+    for (name, remoteURL) in references.presentationURLs {
+      guard let url = localURL(for: remoteURL, in: manifest) else {
+        throw RuntimeBundleError.missingResource(name)
+      }
+      presentation[name] = try Data(contentsOf: url)
+    }
     return try RuntimeBundle(
       engine: CompressedJSONDecoder.decode(
         EnginePlayData.self,
@@ -276,7 +283,9 @@ actor OfflineStore {
         from: Data(contentsOf: levelURL)
       ),
       bgmURL: bgmURL,
-      isOffline: true
+      isOffline: true,
+      presentation: presentation.isEmpty ? nil
+        : RuntimePresentation(resources: presentation)
     )
   }
 

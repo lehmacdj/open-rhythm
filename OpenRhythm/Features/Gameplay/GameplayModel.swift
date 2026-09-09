@@ -33,6 +33,22 @@ final class GameplayModel {
     uniqueKeysWithValues: NoteJudgement.allCases.map { ($0, 0) }
   )
   private(set) var hitNoteIDs = Set<String>()
+  private(set) var engineRuntime: EnginePlayRuntime?
+  private(set) var presentationAssets: EnginePresentationAssets?
+  private var runtimeBundle: RuntimeBundle?
+  private var engineAudio: EngineAudioPlayback?
+  private var engineAspectRatio: Double?
+
+  var noteCount: Int { engineRuntime?.inputCount ?? chart.judgementCount }
+
+  var playbackTime: TimeInterval {
+    if let tailStart {
+      return tailStart.mediaTime + bgmOffset
+        + max(0, ProcessInfo.processInfo.systemUptime - tailStart.uptime)
+    }
+    let mediaTime = player?.currentTime().seconds ?? 0
+    return mediaTime.isFinite ? mediaTime + bgmOffset : currentTime
+  }
 
   var activeHoldIDs: Set<String> {
     Set(activeHolds.values.map(\.id))
@@ -89,6 +105,20 @@ final class GameplayModel {
     title: String
   ) {
     guard phase == .loading else { return }
+    do {
+      if let presentation = bundle.presentation {
+        presentationAssets = try EnginePresentationAssets(
+          engine: bundle.engine, presentation: presentation
+        )
+        engineAudio = try EngineAudioPlayback(
+          engine: bundle.engine, presentation: presentation
+        )
+        runtimeBundle = bundle
+      }
+    } catch {
+      phase = .failed(error.localizedDescription)
+      return
+    }
     chart = RhythmChart(level: bundle.level)
     bgmOffset = bundle.level.bgmOffset
     resultLevel = level
@@ -104,6 +134,8 @@ final class GameplayModel {
     combo = 0
     maxCombo = 0
     currentTime = bgmOffset
+    engineRuntime = nil
+    engineAspectRatio = nil
     nextMissIndex = 0
     hitNoteIDs.removeAll()
     pressedLanes.removeAll()
@@ -142,7 +174,7 @@ final class GameplayModel {
       queue: .main
     ) { [weak self] time in
       Task { @MainActor in
-        guard self?.tailStart == nil else { return }
+        guard self?.tailStart == nil, self?.presentationAssets == nil else { return }
         self?.update(mediaTime: time.seconds)
       }
     }
@@ -205,6 +237,7 @@ final class GameplayModel {
 
   func stop() {
     player?.pause()
+    engineAudio?.stop()
     if let timeObserver {
       player?.removeTimeObserver(timeObserver)
       self.timeObserver = nil
@@ -248,7 +281,7 @@ final class GameplayModel {
   func advanceAfterAudioEnd(
     uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
   ) {
-    guard let tailStart else { return }
+    guard let tailStart, presentationAssets == nil else { return }
     update(mediaTime: tailStart.mediaTime + max(0, uptime - tailStart.uptime))
   }
 
@@ -289,6 +322,49 @@ final class GameplayModel {
       stop()
       phase = .finished
       saveResult()
+    }
+  }
+
+  func engineFrame(size: CGSize, touches: [EngineTouch]) {
+    guard phase == .playing, size.width > 0, size.height > 0,
+      let bundle = runtimeBundle, let assets = presentationAssets else { return }
+    do {
+      let aspect = Double(size.width / size.height)
+      if let engineAspectRatio, abs(engineAspectRatio - aspect) > 0.001 {
+        stop()
+        return
+      }
+      if engineRuntime == nil {
+        engineAspectRatio = aspect
+        engineRuntime = try EnginePlayRuntime(
+          engine: bundle.engine, level: bundle.level, options: assets.options,
+          aspectRatio: aspect, skinSpriteIDs: Set(assets.skin.keys),
+          effectClipIDs: engineAudio?.clipIDs ?? [],
+          particleEffectIDs: Set(assets.particles.keys)
+        )
+      }
+      guard let runtime = engineRuntime else { return }
+      currentTime = playbackTime
+      try runtime.update(at: currentTime, touches: touches)
+      for judgment in runtime.judgments {
+        switch judgment.grade {
+        case 1: record(.perfect, points: 1_000)
+        case 2: record(.great, points: 700)
+        case 3: record(.good, points: 300)
+        default: record(.miss, points: 0)
+        }
+      }
+      try engineAudio?.update(runtime.host.takeAudioCommands(), at: currentTime,
+        advancing: tailStart != nil || player?.timeControlStatus == .playing)
+      if runtime.resolvedInputCount == runtime.inputCount,
+        currentTime > chart.duration + 1 {
+        stop()
+        phase = .finished
+        saveResult()
+      }
+    } catch {
+      stop()
+      phase = .failed(error.localizedDescription)
     }
   }
 

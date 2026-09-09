@@ -9,7 +9,8 @@ struct EngineDrawCommand: Equatable, Sendable {
   let spriteID: Int
   // Bottom-left, top-left, top-right, bottom-right, in engine coordinates.
   let points: [EnginePoint]
-  let z: Double
+  let zValues: [Double]
+  var z: Double { zValues[0] }
   let alpha: Double
   let transform: [Double]
 }
@@ -131,12 +132,16 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       }
       return available.contains(id) ? 1 : 0
     case "Draw":
-      try validate(a, count: 11, function: function)
+      guard (11...14).contains(a.count), a.allSatisfy(\.isFinite) else {
+        throw EngineInterpreterError.invalidArguments(function)
+      }
       let id = try identifier(a[0], function: function)
       guard skinSpriteIDs.contains(id) else { return 0 }
       try checkLimit(draws.count)
       draws.append(EngineDrawCommand(
-        spriteID: id, points: points(a), z: a[9],
+        spriteID: id, points: points(a),
+        zValues: [a[9]] + Array(a.dropFirst(11))
+          + Array(repeating: 0, count: 14 - a.count),
         alpha: min(1, max(0, a[10])), transform: transform(block: 1003)
       ))
       return 0
@@ -237,7 +242,10 @@ struct EngineAudioScheduler {
   private var pending = [EngineAudioCommand]()
   private var lastPlayed = [Int: TimeInterval]()
 
-  mutating func enqueue(_ commands: [EngineAudioCommand]) {
+  mutating func enqueue(_ commands: [EngineAudioCommand]) throws {
+    guard commands.count <= 16_384 - pending.count else {
+      throw EngineInterpreterError.operationLimitExceeded
+    }
     pending.append(contentsOf: commands)
     pending = pending.enumerated().sorted {
       if $0.element.time == $1.element.time { return $0.offset < $1.offset }

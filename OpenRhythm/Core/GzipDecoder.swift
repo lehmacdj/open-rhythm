@@ -23,11 +23,17 @@ enum GzipDecoder {
     return try decompress(data)
   }
 
-  private static func decompress(_ data: Data) throws -> Data {
+  static func decompress(
+    _ data: Data, windowBits: Int32 = MAX_WBITS + 16,
+    maximumSize: Int = 64 * 1024 * 1024
+  ) throws -> Data {
+    guard data.count <= Int(UInt32.max) else {
+      throw GzipDecoderError.decompressionFailed(Z_MEM_ERROR)
+    }
     var stream = z_stream()
     let initialization = inflateInit2_(
       &stream,
-      MAX_WBITS + 16,
+      windowBits,
       ZLIB_VERSION,
       Int32(MemoryLayout<z_stream>.size)
     )
@@ -55,6 +61,9 @@ enum GzipDecoder {
             throw GzipDecoderError.decompressionFailed(status)
           }
           return output.count - Int(stream.avail_out)
+        }
+        guard result.count + written <= maximumSize else {
+          throw GzipDecoderError.decompressionFailed(Z_MEM_ERROR)
         }
         result.append(contentsOf: chunk.prefix(written))
       } while status != Z_STREAM_END

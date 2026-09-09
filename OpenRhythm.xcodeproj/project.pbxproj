@@ -7,8 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		B00000000000000000000007 /* EngineHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* EngineHostTests.swift */; };
-		A00000000000000000000018 /* EngineHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* EngineHost.swift */; };
 		A00000000000000000000001 /* OpenRhythmApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OpenRhythmApp.swift */; };
 		A00000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* ContentView.swift */; };
 		A00000000000000000000003 /* ServerDescriptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* ServerDescriptor.swift */; };
@@ -32,12 +30,17 @@
 		A00000000000000000000015 /* GameplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* GameplayView.swift */; };
 		A00000000000000000000016 /* ResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* ResultStore.swift */; };
 		A00000000000000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Assets.xcassets */; };
+		A00000000000000000000018 /* EngineHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* EngineHost.swift */; };
+		A00000000000000000000019 /* EnginePlayRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* EnginePlayRuntime.swift */; };
+		A0000000000000000000001A /* EnginePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* EnginePresentation.swift */; };
+		A0000000000000000000001B /* EngineAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* EngineAudio.swift */; };
 		B00000000000000000000001 /* LocalizedTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* LocalizedTextTests.swift */; };
 		B00000000000000000000002 /* CatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* CatalogTests.swift */; };
 		B00000000000000000000003 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* XCTest.framework */; };
 		B00000000000000000000004 /* OfflineStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* OfflineStoreTests.swift */; };
 		B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* RuntimeDecodingTests.swift */; };
 		B00000000000000000000006 /* ResultStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ResultStoreTests.swift */; };
+		B00000000000000000000007 /* EngineHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* EngineHostTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,8 +54,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		B10000000000000000000007 /* EngineHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHostTests.swift; sourceTree = "<group>"; };
-		A10000000000000000000018 /* EngineHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHost.swift; sourceTree = "<group>"; };
 		A10000000000000000000001 /* OpenRhythmApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenRhythmApp.swift; sourceTree = "<group>"; };
 		A10000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A10000000000000000000003 /* ServerDescriptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDescriptor.swift; sourceTree = "<group>"; };
@@ -76,12 +77,17 @@
 		A10000000000000000000015 /* GameplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayView.swift; sourceTree = "<group>"; };
 		A10000000000000000000016 /* ResultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStore.swift; sourceTree = "<group>"; };
 		A10000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A10000000000000000000018 /* EngineHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHost.swift; sourceTree = "<group>"; };
+		A10000000000000000000019 /* EnginePlayRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePlayRuntime.swift; sourceTree = "<group>"; };
+		A1000000000000000000001A /* EnginePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePresentation.swift; sourceTree = "<group>"; };
+		A1000000000000000000001B /* EngineAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineAudio.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* LocalizedTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizedTextTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* CatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		B10000000000000000000004 /* OfflineStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStoreTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* RuntimeDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDecodingTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000006 /* ResultStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStoreTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000007 /* EngineHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHostTests.swift; sourceTree = "<group>"; };
 		D00000000000000000000001 /* OpenRhythm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenRhythm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D00000000000000000000002 /* OpenRhythmTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OpenRhythmTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -150,6 +156,9 @@
 				A10000000000000000000010 /* LevelModels.swift */,
 				A10000000000000000000011 /* EngineInterpreter.swift */,
 				A10000000000000000000018 /* EngineHost.swift */,
+				A10000000000000000000019 /* EnginePlayRuntime.swift */,
+				A1000000000000000000001A /* EnginePresentation.swift */,
+				A1000000000000000000001B /* EngineAudio.swift */,
 				A10000000000000000000012 /* RuntimeBundle.swift */,
 				A10000000000000000000013 /* RhythmChart.swift */,
 				A10000000000000000000016 /* ResultStore.swift */,
@@ -333,6 +342,9 @@
 				A00000000000000000000010 /* LevelModels.swift in Sources */,
 				A00000000000000000000011 /* EngineInterpreter.swift in Sources */,
 				A00000000000000000000018 /* EngineHost.swift in Sources */,
+				A00000000000000000000019 /* EnginePlayRuntime.swift in Sources */,
+				A0000000000000000000001A /* EnginePresentation.swift in Sources */,
+				A0000000000000000000001B /* EngineAudio.swift in Sources */,
 				A00000000000000000000012 /* RuntimeBundle.swift in Sources */,
 				A00000000000000000000013 /* RhythmChart.swift in Sources */,
 				A00000000000000000000014 /* GameplayModel.swift in Sources */,
@@ -383,7 +395,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = is.devin.OpenRhythm;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = OpenRhythm;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -406,7 +418,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = is.devin.OpenRhythm;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = OpenRhythm;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

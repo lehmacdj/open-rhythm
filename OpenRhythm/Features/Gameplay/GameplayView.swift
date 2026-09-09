@@ -47,7 +47,7 @@ struct GameplayView: View {
       Label("Ready", systemImage: "music.note")
     } description: {
       Text(
-        "\(model.chart.judgementCount) notes · "
+        "\(model.noteCount) notes · "
           + "\(level.difficulty.displayName) \(level.rating)"
       )
     } actions: {
@@ -62,12 +62,16 @@ struct GameplayView: View {
     GeometryReader { geometry in
       ZStack {
         Color.black.ignoresSafeArea()
-        TimelineView(.animation) { _ in
-          Canvas { context, size in
-            drawPlayfield(context: &context, size: size)
+        if model.presentationAssets != nil {
+          EnginePlayfield(model: model)
+        } else {
+          TimelineView(.animation) { _ in
+            Canvas { context, size in
+              drawPlayfield(context: &context, size: size)
+            }
           }
+          laneInput
         }
-        laneInput
         VStack {
           HStack {
             Text("Score \(model.score)")
@@ -184,6 +188,105 @@ struct GameplayView: View {
         lineWidth: 2
       )
     }
+  }
+}
+
+private struct EnginePlayfield: UIViewRepresentable {
+  let model: GameplayModel
+
+  func makeUIView(context: Context) -> EnginePlayfieldView {
+    let view = EnginePlayfieldView()
+    view.model = model
+    view.isMultipleTouchEnabled = true
+    view.backgroundColor = .black
+    view.isOpaque = true
+    return view
+  }
+
+  func updateUIView(_ view: EnginePlayfieldView, context: Context) {
+    view.model = model
+  }
+}
+
+private final class EnginePlayfieldView: UIView {
+  weak var model: GameplayModel?
+  private var displayLink: CADisplayLink?
+  private var touchesByID = [ObjectIdentifier: EngineTouch]()
+  private var nextTouchID = 1
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    displayLink?.invalidate()
+    displayLink = nil
+    if window != nil {
+      let link = CADisplayLink(target: self, selector: #selector(updateFrame))
+      link.add(to: .main, forMode: .common)
+      displayLink = link
+    }
+  }
+
+  @objc private func updateFrame() {
+    model?.engineFrame(size: bounds.size,
+      touches: touchesByID.values.sorted { $0.id < $1.id })
+    touchesByID = touchesByID.filter { !$0.value.ended }.mapValues {
+      EngineTouch(id: $0.id, started: false, ended: false, time: $0.time,
+        startTime: $0.startTime, position: $0.position,
+        startPosition: $0.startPosition, delta: EnginePoint(x: 0, y: 0))
+    }
+    setNeedsDisplay()
+  }
+
+  override func draw(_ rect: CGRect) {
+    guard let runtime = model?.engineRuntime,
+      let assets = model?.presentationAssets,
+      let context = UIGraphicsGetCurrentContext() else { return }
+    UIColor.black.setFill()
+    context.fill(bounds)
+    EngineRenderer.draw(host: runtime.host, assets: assets,
+      context: context, size: bounds.size)
+  }
+
+  private func receive(_ touches: Set<UITouch>, started: Bool, ended: Bool) {
+    guard bounds.height > 0, let model else { return }
+    for touch in touches {
+      let key = ObjectIdentifier(touch)
+      let previous = touchesByID[key]
+      guard started || previous != nil else { continue }
+      let point = touch.location(in: self)
+      let position = EnginePoint(
+        x: (point.x - bounds.midX) * 2 / bounds.height,
+        y: (bounds.midY - point.y) * 2 / bounds.height
+      )
+      let time = model.playbackTime
+        + touch.timestamp - ProcessInfo.processInfo.systemUptime
+      let id = previous?.id ?? nextTouchID
+      if previous == nil { nextTouchID += 1 }
+      touchesByID[key] = EngineTouch(
+        id: id, started: started, ended: ended, time: time,
+        startTime: previous?.startTime ?? time, position: position,
+        startPosition: previous?.startPosition ?? position,
+        delta: EnginePoint(x: position.x - (previous?.position.x ?? position.x),
+          y: position.y - (previous?.position.y ?? position.y))
+      )
+    }
+    // Preserve brief taps that begin and end between display refreshes.
+    updateFrame()
+  }
+
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    receive(touches, started: true, ended: false)
+  }
+
+  override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+    receive(touches, started: false, ended: false)
+  }
+
+  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    receive(touches, started: false, ended: true)
+  }
+
+  override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+    receive(touches, started: false, ended: true)
   }
 }
 

@@ -32,15 +32,56 @@ struct EmptyEngineRuntimeHost: EngineRuntimeHost {
 
 final class EngineMemory {
   private var blocks = [Int: [Int: Double]]()
+  private var entityBlocks = [Int: [Int: [Int: Double]]]()
+  private var entityKey: Int?
+  private var entityIndex: Int?
+
+  func selectEntity(key: Int, index: Int?) {
+    entityKey = key
+    entityIndex = index
+    blocks[10000] = nil
+  }
+
+  func removeEntity(key: Int) {
+    entityBlocks[key] = nil
+  }
+
+  private func arrayAddress(block: Int, index: Int) -> (Int, Int)? {
+    guard let entityIndex else { return nil }
+    let size: Int
+    switch block {
+    case 4001, 4002: size = 32
+    case 4003: size = 3
+    case 4006: size = 1
+    case 4007: size = 4
+    default: return nil
+    }
+    guard index < size else { return nil }
+    return (block + 100, entityIndex * size + index)
+  }
 
   func value(block: Int, index: Int) -> Double {
     guard index >= 0 else { return 0 }
+    if let (array, offset) = arrayAddress(block: block, index: index) {
+      return blocks[array]?[offset] ?? 0
+    }
+    if (4000...4007).contains(block), let entityKey {
+      return entityBlocks[entityKey]?[block]?[index] ?? 0
+    }
     return blocks[block]?[index] ?? 0
   }
 
   @discardableResult
   func set(block: Int, index: Int, value: Double) -> Double {
     guard index >= 0 else { return value }
+    if let (array, offset) = arrayAddress(block: block, index: index) {
+      blocks[array, default: [:]][offset] = value
+      return value
+    }
+    if (4000...4007).contains(block), let entityKey {
+      entityBlocks[entityKey, default: [:]][block, default: [:]][index] = value
+      return value
+    }
     blocks[block, default: [:]][index] = value
     return value
   }
@@ -58,6 +99,7 @@ final class EngineInterpreter {
   private let host: any EngineRuntimeHost
   private let operationLimit: Int
   private var operationCount = 0
+  private var depth = 0
 
   init(
     nodes: [EngineDataNode],
@@ -84,7 +126,9 @@ final class EngineInterpreter {
 
   private func evaluate(_ index: Int) throws -> Double {
     operationCount += 1
-    guard operationCount <= operationLimit else {
+    depth += 1
+    defer { depth -= 1 }
+    guard operationCount <= operationLimit, depth <= 256 else {
       throw EngineInterpreterError.operationLimitExceeded
     }
     guard nodes.indices.contains(index) else {
@@ -126,7 +170,7 @@ final class EngineInterpreter {
       }
     case "Break":
       try require(arguments, count: 2, function: function)
-      let count = Int(try evaluate(arguments[0]))
+      let count = try integer(evaluate(arguments[0]), function: function)
       let value = try evaluate(arguments[1])
       throw EngineBreak(count: count, value: value)
     case "Cos": return try unary(arguments, cos)
@@ -145,8 +189,8 @@ final class EngineInterpreter {
       try require(arguments, count: 4, function: function)
       let values = try values(arguments)
       return memory.value(
-        block: Int(values[0]),
-        index: Int(values[1] + values[2] * values[3])
+        block: try integer(values[0], function: function),
+        index: try integer(values[1] + values[2] * values[3], function: function)
       )
     case "Greater": return try comparison(arguments, >)
     case "GreaterOr": return try comparison(arguments, >=)
@@ -260,8 +304,8 @@ final class EngineInterpreter {
   ) throws -> (block: Int, index: Int) {
     try require(arguments, count: 2, function: function)
     return (
-      block: Int(try evaluate(arguments[0])),
-      index: Int(try evaluate(arguments[1]))
+      block: try integer(evaluate(arguments[0]), function: function),
+      index: try integer(evaluate(arguments[1]), function: function)
     )
   }
 
@@ -275,7 +319,7 @@ final class EngineInterpreter {
       throw EngineInterpreterError.invalidArguments(function)
     }
 
-    let discriminant = Int(try evaluate(arguments[0]))
+    let discriminant = try integer(evaluate(arguments[0]), function: function)
     let branchCount = arguments.count - (hasDefault ? 2 : 1)
     if discriminant >= 0, discriminant < branchCount {
       return try evaluate(arguments[discriminant + 1])
@@ -291,5 +335,12 @@ final class EngineInterpreter {
     guard arguments.count == count else {
       throw EngineInterpreterError.invalidArguments(function)
     }
+  }
+
+  private func integer(_ value: Double, function: String) throws -> Int {
+    guard let result = Int(exactly: value.rounded(.towardZero)) else {
+      throw EngineInterpreterError.invalidArguments(function)
+    }
+    return result
   }
 }

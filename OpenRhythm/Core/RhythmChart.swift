@@ -73,11 +73,9 @@ struct RhythmChart: Sendable {
 
   init(level: LevelData) {
     let timeline = BPMTimeline(level: level)
-    let namedEntities = Dictionary(
-      uniqueKeysWithValues: level.entities.compactMap { entity in
-        entity.name.map { ($0, entity) }
-      }
-    )
+    let namedEntities = level.entities.reduce(into: [String: LevelEntity]()) {
+      if let name = $1.name { $0[name] = $1 }
+    }
     let holdPairs: [(String, LevelEntity)] = level.entities.compactMap {
       entity in
         guard
@@ -88,14 +86,15 @@ struct RhythmChart: Sendable {
         else { return nil }
         return (head, tailEntity)
       }
-    let holdTails = Dictionary(uniqueKeysWithValues: holdPairs)
+    let holdTails = Dictionary(holdPairs, uniquingKeysWith: { _, last in last })
 
     notes = level.entities.enumerated().compactMap {
       (index, entity) -> RhythmNote? in
       guard
         entity.archetype == "TapNote" || entity.archetype == "SwingNote",
         let beat = entity.value(named: "#BEAT"),
-        let laneValue = entity.value(named: "lane")
+        let laneValue = entity.value(named: "lane"),
+        let lane = Int(exactly: laneValue), (-4...4).contains(lane)
       else { return nil }
 
       let endBeat = entity.name
@@ -112,7 +111,7 @@ struct RhythmChart: Sendable {
         id: entity.name ?? "entity-\(index)",
         beat: beat,
         time: timeline.time(at: beat),
-        lane: Int(laneValue),
+        lane: lane,
         kind: kind,
         endTime: endBeat.map(timeline.time)
       )
