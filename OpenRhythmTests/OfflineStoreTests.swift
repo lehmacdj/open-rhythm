@@ -2,6 +2,58 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  func testSongDownloadDiscoversAllDifficultiesAndReusesSharedResources() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://server.example")!)
+    let locator = ResourceLocator(
+      hash: "043c442d55264f4fb778fc32b387254d6dc40f92",
+      url: "https://assets.example/data")
+    let levels = ["#EASY", "#EXPERT"].enumerated().map { index, difficulty in
+      SonolusLevelItem(name: "level-\(index)", source: nil, version: 1,
+        rating: index + 1, title: LocalizedText("Song"),
+        artists: LocalizedText("Artist"), author: "Fixture",
+        tags: [SonolusTag(title: difficulty)],
+        cover: ResourceLocator(hash: nil, url: nil), bgm: locator, data: locator)
+    }
+    let song = CatalogBuilder.group(levels: [levels[0]], server: server)[0]
+    let list = try JSONEncoder().encode(SonolusLevelList(pageCount: 1, items: levels))
+    let details = Data(#"""
+      {"item":{"source":"https://server.example",
+      "bgm":{"url":"https://assets.example/data",
+      "hash":"043c442d55264f4fb778fc32b387254d6dc40f92"},
+      "data":{"url":"https://assets.example/data",
+      "hash":"043c442d55264f4fb778fc32b387254d6dc40f92"},
+      "engine":{"version":13,"playData":{"url":"https://assets.example/data",
+      "hash":"043c442d55264f4fb778fc32b387254d6dc40f92"}}}}
+      """#.utf8)
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      if request.url?.host == "assets.example" { return Data("valid data".utf8) }
+      return request.url?.lastPathComponent == "list" ? list : details
+    }
+    defer { StubURLProtocol.handler = nil }
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel() }
+    let client = SonolusClient(session: session,
+      cache: SonolusResponseCache(rootURL: root.appendingPathComponent("Responses")))
+    let store = OfflineStore(rootURL: root.appendingPathComponent("Offline"),
+      client: client)
+    let complete = try await store.download(song: song)
+    XCTAssertEqual(Set(complete.variants.map(\.id)), Set(levels.map(\.id)))
+    let manifests = try await store.manifests()
+    XCTAssertEqual(manifests.count, 2)
+    XCTAssertEqual(recorder.urls.filter { $0.host == "assets.example" }.count, 1)
+    let count = recorder.urls.count
+    _ = try await store.download(song: song)
+    XCTAssertEqual(recorder.urls.count, count, "Retry reuses complete downloads")
+  }
+
   @MainActor
   func testCatalogLoadsOnlyRequestedPagesAndCancelsDebouncedSearch() async throws {
     let recorder = RequestRecorder()

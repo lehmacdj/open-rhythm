@@ -1,16 +1,18 @@
 import SwiftUI
 
 struct SongDetailView: View {
-  let song: CatalogSong
+  @State private var song: CatalogSong
   let isOffline: Bool
   @State private var selectedLevelID: String
   @State private var isDownloading = false
   @State private var isDownloaded = false
   @State private var downloadError: String?
   @State private var recentResults = [PlayResult]()
+  @State private var downloadProgress = ""
+  @State private var isLoadingVariants = false
 
   init(song: CatalogSong, isOffline: Bool = false) {
-    self.song = song
+    _song = State(initialValue: song)
     self.isOffline = isOffline
     _selectedLevelID = State(initialValue: song.variants.first?.id ?? "")
   }
@@ -40,7 +42,8 @@ struct SongDetailView: View {
           }
         }
         .pickerStyle(.navigationLink)
-        .disabled(isDownloading)
+        .disabled(isDownloading || isLoadingVariants)
+        if isLoadingVariants { ProgressView("Finding difficulties…") }
       }
 
       Section {
@@ -53,17 +56,17 @@ struct SongDetailView: View {
         }
         if !isOffline {
           Button {
-            Task { await downloadSelectedLevel() }
+            Task { await downloadSong() }
           } label: {
             if isDownloading {
-              Label("Downloading…", systemImage: "arrow.down.circle")
+              Label(downloadProgress, systemImage: "arrow.down.circle")
             } else if isDownloaded {
               Label("Downloaded", systemImage: "checkmark.circle")
             } else {
-              Label("Download", systemImage: "arrow.down.circle")
+              Label("Download All Difficulties", systemImage: "arrow.down.circle")
             }
           }
-          .disabled(isDownloading || isDownloaded)
+          .disabled(isDownloading || isDownloaded || isLoadingVariants)
         }
       }
 
@@ -76,7 +79,10 @@ struct SongDetailView: View {
 
       if !recentResults.isEmpty {
         Section("Recent Results") {
-          ForEach(recentResults.prefix(5)) { result in
+          ForEach(recentResults) { result in
+            NavigationLink {
+              ResultDetailView(result: result)
+            } label: {
             LabeledContent {
               Text(result.score.formatted())
                 .monospacedDigit()
@@ -93,6 +99,7 @@ struct SongDetailView: View {
                   .foregroundStyle(.secondary)
               }
             }
+            }
           }
         }
       }
@@ -107,18 +114,28 @@ struct SongDetailView: View {
     }
     .navigationTitle("Song")
     .navigationBarTitleDisplayMode(.inline)
+    .task {
+      guard !isOffline else { return }
+      isLoadingVariants = true
+      defer { isLoadingVariants = false }
+      do {
+        let complete = try await SonolusClient().completeSong(song)
+        try Task.checkCancellation()
+        song = complete
+        await updateDownloadStatus()
+      } catch is CancellationError {
+        return
+      } catch {
+        downloadError = error.localizedDescription
+      }
+    }
     .task(id: selectedLevelID) {
       guard let selectedLevel else { return }
       let selection = selectedLevelID
       let server = selectedServer
       downloadError = nil
       if !isOffline {
-        let downloaded = await OfflineStore.shared.contains(
-          level: selectedLevel,
-          from: server
-        )
-        guard !Task.isCancelled, selectedLevelID == selection else { return }
-        isDownloaded = downloaded
+        await updateDownloadStatus()
       }
       let results = (try? await ResultStore.shared.results(
         forAnyLevelID: [
@@ -150,24 +167,60 @@ struct SongDetailView: View {
     return "\(base) · Chart \(index + 1)"
   }
 
-  private func downloadSelectedLevel() async {
-    guard let selectedLevel else { return }
-    let selection = selectedLevelID
-    let server = selectedServer
+  private func updateDownloadStatus() async {
+    let snapshot = song
+    var downloaded = !snapshot.variants.isEmpty
+    for level in snapshot.variants {
+      if !(await OfflineStore.shared.contains(level: level,
+        from: snapshot.server(for: level))) {
+        downloaded = false
+        break
+      }
+    }
+    guard !Task.isCancelled, song == snapshot else { return }
+    isDownloaded = downloaded
+  }
+
+  private func downloadSong() async {
     isDownloading = true
+    downloadProgress = "Finding difficulties…"
     downloadError = nil
     defer { isDownloading = false }
 
     do {
-      _ = try await OfflineStore.shared.download(
-        level: selectedLevel,
-        from: server
-      )
-      guard selectedLevelID == selection else { return }
+      song = try await OfflineStore.shared.download(song: song) { done, total in
+        await MainActor.run { downloadProgress = "Downloading \(done)/\(total)…" }
+      }
       isDownloaded = true
     } catch {
-      guard selectedLevelID == selection else { return }
       downloadError = error.localizedDescription
     }
+  }
+}
+
+struct ResultDetailView: View {
+  let result: PlayResult
+
+  var body: some View {
+    Form {
+      Section("Song") {
+        Text(result.title).font(.headline)
+        LabeledContent("Difficulty",
+          value: "\(result.difficulty.displayName) \(result.rating)")
+        LabeledContent("Played", value: result.playedAt.formatted())
+      }
+      Section("Result") {
+        LabeledContent("Score", value: result.score.formatted())
+        LabeledContent("Max Combo", value: result.maxCombo.formatted())
+      }
+      Section("Judgements") {
+        LabeledContent("Perfect", value: result.perfect.formatted())
+        LabeledContent("Great", value: result.great.formatted())
+        LabeledContent("Good", value: result.good.formatted())
+        LabeledContent("Miss", value: result.miss.formatted())
+      }
+    }
+    .navigationTitle("Result")
+    .navigationBarTitleDisplayMode(.inline)
   }
 }

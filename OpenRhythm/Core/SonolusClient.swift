@@ -80,6 +80,42 @@ actor SonolusClient {
     try await requestData(from: url, accept: "*/*")
   }
 
+  func completeSong(_ song: CatalogSong) async throws -> CatalogSong {
+    guard let first = song.variants.first else { return song }
+    let server = song.server(for: first)
+    let key = first.songKey(server: server)
+    let query = song.title.displayValue()
+    guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw SonolusClientError.invalidResponse
+    }
+    var variants = Dictionary(song.variants.map { ($0.id, $0) },
+      uniquingKeysWith: { first, _ in first })
+    let firstPage = try await levels(on: server, page: 0, query: query)
+    // Do not accidentally crawl a whole server if it ignores keyword search.
+    guard firstPage.pageCount <= 20 else {
+      throw RuntimeBundleError.missingResource("a bounded song difficulty search")
+    }
+    var found = false
+    func merge(_ items: [SonolusLevelItem]) {
+      for level in items where level.songKey(server: server) == key {
+        found = true
+        variants[level.id] = level
+      }
+    }
+    merge(firstPage.items)
+    if firstPage.pageCount > 1 {
+      for page in 1..<firstPage.pageCount {
+        try Task.checkCancellation()
+        merge(try await levels(on: server, page: page, query: query).items)
+      }
+    }
+    guard found else {
+      throw RuntimeBundleError.missingResource("the song's difficulty list")
+    }
+    return CatalogBuilder.group(levels: Array(variants.values), server: server)
+      .first { $0.variants.contains { $0.id == first.id } } ?? song
+  }
+
   private func requestData(
     from url: URL,
     accept: String = "application/json",

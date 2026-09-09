@@ -115,6 +115,7 @@ actor OfflineStore {
     level: SonolusLevelItem,
     from server: ServerDescriptor
   ) async throws -> OfflineLevelManifest {
+    if let existing = try manifest(level: level, from: server) { return existing }
     let detailsData = try await client.levelDetails(for: level, on: server)
     guard
       let details = try JSONSerialization.jsonObject(with: detailsData)
@@ -190,6 +191,21 @@ actor OfflineStore {
       options: [.atomic]
     )
     return manifest
+  }
+
+  func download(
+    song: CatalogSong,
+    progress: @Sendable (Int, Int) async -> Void = { _, _ in }
+  ) async throws -> CatalogSong {
+    let complete = try await client.completeSong(song)
+    await progress(0, complete.variants.count)
+    // Sequential charts reuse the first chart's cached common resources.
+    for (index, level) in complete.variants.enumerated() {
+      try Task.checkCancellation()
+      _ = try await download(level: level, from: complete.server(for: level))
+      await progress(index + 1, complete.variants.count)
+    }
+    return complete
   }
 
   func manifests() throws -> [OfflineLevelManifest] {

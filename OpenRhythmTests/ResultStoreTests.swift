@@ -16,6 +16,14 @@ final class ResultStoreTests: XCTestCase {
     let values = try await store.results(for: "first")
     XCTAssertEqual(values.map(\.id), [first.id])
     XCTAssertEqual(values[0].score, 12_000)
+    XCTAssertEqual(values[0].maxCombo, first.maxCombo)
+    XCTAssertEqual(values[0].perfect, first.perfect)
+    XCTAssertEqual(values[0].great, first.great)
+    XCTAssertEqual(values[0].good, first.good)
+    XCTAssertEqual(values[0].miss, first.miss)
+    XCTAssertEqual(values[0].title, first.title)
+    XCTAssertEqual(values[0].difficulty, first.difficulty)
+    XCTAssertEqual(values[0].rating, first.rating)
   }
 
   func testFiltersCurrentAndLegacyLevelIdentities() async throws {
