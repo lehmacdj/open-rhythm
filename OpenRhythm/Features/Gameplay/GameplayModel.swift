@@ -33,6 +33,8 @@ final class GameplayModel {
     uniqueKeysWithValues: NoteJudgement.allCases.map { ($0, 0) }
   )
   private(set) var hitNoteIDs = Set<String>()
+  private(set) var playbackGeneration = 0
+  private var isStartingPlayback = false
   private(set) var engineRuntime: EnginePlayRuntime?
   private(set) var presentationAssets: EnginePresentationAssets?
   private var runtimeBundle: RuntimeBundle?
@@ -42,6 +44,7 @@ final class GameplayModel {
   var noteCount: Int { engineRuntime?.inputCount ?? chart.judgementCount }
 
   var playbackTime: TimeInterval {
+    if isStartingPlayback { return bgmOffset }
     if let tailStart {
       return tailStart.mediaTime + bgmOffset
         + max(0, ProcessInfo.processInfo.systemUptime - tailStart.uptime)
@@ -130,6 +133,9 @@ final class GameplayModel {
 
   func start() {
     guard phase == .ready, let player else { return }
+    playbackGeneration += 1
+    let generation = playbackGeneration
+    isStartingPlayback = true
     score = 0
     combo = 0
     maxCombo = 0
@@ -145,7 +151,6 @@ final class GameplayModel {
       judgements[judgement] = 0
     }
 
-    player.seek(to: .zero)
     phase = .playing
     if let item = player.currentItem {
       endObserver = NotificationCenter.default.addObserver(
@@ -154,6 +159,7 @@ final class GameplayModel {
         queue: .main
       ) { [weak self] _ in
         Task { @MainActor in
+          guard self?.playbackGeneration == generation else { return }
           self?.playbackEnded()
         }
       }
@@ -163,7 +169,8 @@ final class GameplayModel {
         let message = item.error?.localizedDescription
           ?? "The music could not be played."
         Task { @MainActor in
-          guard let self, self.phase == .playing else { return }
+          guard let self, self.phase == .playing,
+            self.playbackGeneration == generation else { return }
           self.stop()
           self.phase = .failed(message)
         }
@@ -174,13 +181,26 @@ final class GameplayModel {
       queue: .main
     ) { [weak self] time in
       Task { @MainActor in
-        guard self?.tailStart == nil, self?.presentationAssets == nil else { return }
+        guard self?.tailStart == nil, self?.presentationAssets == nil,
+          self?.playbackGeneration == generation,
+          self?.isStartingPlayback == false else { return }
         self?.update(mediaTime: time.seconds)
       }
     }
     Task {
+      let sought = await player.seek(to: .zero,
+        toleranceBefore: .zero, toleranceAfter: .zero)
+      guard sought, phase == .playing, playbackGeneration == generation else { return }
       await Self.setAudioSession(active: true)
-      guard phase == .playing else { return }
+      guard phase == .playing, playbackGeneration == generation else { return }
+      do {
+        try engineAudio?.start()
+      } catch {
+        stop()
+        phase = .failed(error.localizedDescription)
+        return
+      }
+      isStartingPlayback = false
       player.play()
     }
   }
@@ -235,7 +255,14 @@ final class GameplayModel {
     }
   }
 
-  func stop() {
+  func restart() {
+    stop(deactivateAudio: false)
+    start()
+  }
+
+  func stop(deactivateAudio: Bool = true) {
+    playbackGeneration += 1
+    isStartingPlayback = false
     player?.pause()
     engineAudio?.stop()
     if let timeObserver {
@@ -253,7 +280,12 @@ final class GameplayModel {
     pressedLanes.removeAll()
     activeHolds.removeAll()
     if phase == .playing { phase = .ready }
-    Task { await Self.setAudioSession(active: false) }
+    if deactivateAudio {
+      Task {
+        guard phase != .playing else { return }
+        await Self.setAudioSession(active: false)
+      }
+    }
   }
 
   func playbackEnded(
@@ -326,7 +358,8 @@ final class GameplayModel {
   }
 
   func engineFrame(size: CGSize, touches: [EngineTouch]) {
-    guard phase == .playing, size.width > 0, size.height > 0,
+    guard phase == .playing, !isStartingPlayback,
+      size.width > 0, size.height > 0,
       let bundle = runtimeBundle, let assets = presentationAssets else { return }
     do {
       let aspect = Double(size.width / size.height)

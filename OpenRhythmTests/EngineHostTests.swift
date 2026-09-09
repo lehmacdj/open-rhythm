@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
@@ -85,6 +86,77 @@ final class EngineHostTests: XCTestCase {
     XCTAssertTrue(scheduler.due(at: 1.5).isEmpty)
     XCTAssertEqual(scheduler.due(at: 2).map(\.clipID), [8])
     XCTAssertTrue(scheduler.due(at: 3).isEmpty)
+  }
+
+  @MainActor
+  func testAudioPrewarmsAndReusesVoicesAcrossHitsAndRestart() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    XCTAssertEqual(voices.count, 8)
+    for time in 0..<30 {
+      try audio.update([EngineAudioCommand(clipID: 1,
+        time: Double(time), minimumDistance: 0)], at: Double(time))
+      for voice in voices { voice.isPlaying = false }
+    }
+    XCTAssertEqual(voices.count, 8, "Hits must reuse prewarmed decoders")
+    XCTAssertEqual(voices.flatMap(\.delays).count, 30)
+    audio.stop()
+    try audio.update([EngineAudioCommand(clipID: 1,
+      time: 0, minimumDistance: 0)], at: 0)
+    XCTAssertEqual(voices.count, 8, "Restart must retain the prepared pool")
+  }
+
+  @MainActor
+  func testSuppressedFutureAudioIsReconsideredAfterEarlierClipIsCancelled() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([
+      EngineAudioCommand(clipID: 1, time: 0.25, minimumDistance: 0.25),
+      EngineAudioCommand(clipID: 1, time: 0.375, minimumDistance: 0.25)
+    ], at: 0)
+    XCTAssertEqual(voices.flatMap(\.delays), [0.25])
+    try audio.update([
+      EngineAudioCommand(clipID: 1, time: 0.125, minimumDistance: 0.25)
+    ], at: 0.125)
+    XCTAssertEqual(voices.reduce(0) { $0 + $1.stopCount }, 1)
+    XCTAssertEqual(voices.flatMap(\.delays).sorted(), [0, 0.25, 0.25],
+      "The later clip becomes valid after the middle clip is cancelled")
+    try audio.update([], at: 0.375)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 3)
+    audio.stop()
+  }
+
+  @MainActor
+  func testScheduledVoicesRemainReservedAndRescheduleAfterBuffering() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([
+      EngineAudioCommand(clipID: 1, time: 0.3, minimumDistance: 0),
+      EngineAudioCommand(clipID: 1, time: 0.4, minimumDistance: 0)
+    ], at: 0)
+    XCTAssertEqual(voices.filter { !$0.delays.isEmpty }.count, 2)
+    // A scheduled native player need not report isPlaying before it starts.
+    for voice in voices { voice.isPlaying = false }
+    try audio.update([], at: 0.1)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 2)
+    try audio.update([], at: 0.1, advancing: false)
+    XCTAssertEqual(voices.reduce(0) { $0 + $1.stopCount }, 2)
+    try audio.update([], at: 0.1)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 4)
+    XCTAssertEqual(audio.allocatedVoiceCount, 8)
+    audio.stop()
   }
 
   func testParticlesHaveUniqueHandlesExpireAndCanBeDestroyed() throws {
@@ -320,6 +392,119 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testMetalRendersUprightSpritesAndSeamlessTranslucentConnectors() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("Metal is unavailable on this test device")
+    }
+    let renderer = try EngineMetalRenderer(device: device)
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm, width: 20, height: 20, mipmapped: false)
+    descriptor.storageMode = .shared
+    descriptor.usage = [.renderTarget]
+    let target = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2),
+      format: format).image {
+      UIColor.red.setFill()
+      $0.fill(CGRect(x: 0, y: 0, width: 2, height: 1))
+      UIColor.blue.setFill()
+      $0.fill(CGRect(x: 0, y: 1, width: 2, height: 1))
+    }
+    func render(_ image: UIImage, points: [EnginePoint]) throws -> [UInt8] {
+      let command = try XCTUnwrap(renderer.queue.makeCommandBuffer())
+      try renderer.encode([EngineRenderSprite(image: image, points: points,
+        matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+        alpha: 0.5, interpolation: false)],
+        size: CGSize(width: 20, height: 20), target: target, commandBuffer: command)
+      command.commit()
+      command.waitUntilCompleted()
+      XCTAssertNil(command.error)
+      var bytes = [UInt8](repeating: 0, count: 20 * 20 * 4)
+      target.getBytes(&bytes, bytesPerRow: 80,
+        from: MTLRegionMake2D(0, 0, 20, 20), mipmapLevel: 0)
+      return bytes
+    }
+    let quad = [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
+      EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)]
+    let pixels = try render(image, points: quad)
+    XCTAssertEqual(Double(pixels[(2 * 20 + 10) * 4 + 2]), 128, accuracy: 1)
+    XCTAssertEqual(Double(pixels[(17 * 20 + 10) * 4]), 128, accuracy: 1)
+    let white = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2),
+      format: format).image {
+      UIColor.white.setFill()
+      $0.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+    }
+    let connector = try render(white, points: [
+      EnginePoint(x: -1, y: -1), EnginePoint(x: -0.5, y: 1),
+      EnginePoint(x: 0.5, y: 1), EnginePoint(x: 1, y: -1)
+    ])
+    for row in 2..<18 {
+      for column in 8..<12 {
+        XCTAssertEqual(Double(connector[(row * 20 + column) * 4]),
+          128, accuracy: 1, "Shared triangle edges must not create alpha seams")
+      }
+    }
+  }
+
+  @MainActor
+  func testConnectorTessellationAdaptsToWarpWithinBoundedBudget() {
+    for (warp, divisions) in [(0.0, 1), (1, 1), (4, 2), (16, 4), (64, 8)] {
+      XCTAssertEqual(EngineRenderer.tessellationDivisions(warp: warp), divisions)
+      XCTAssertLessThanOrEqual(warp / (4 * Double(divisions * divisions)), 0.25)
+    }
+    XCTAssertEqual(EngineRenderer.tessellationDivisions(warp: .infinity), 8)
+    XCTAssertEqual(EngineRenderer.tessellationDivisions(warp: 1e300), 8)
+  }
+
+  @MainActor
+  func testParticleTintPreservesTransparencyAndDrawRespectsAlpha() throws {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let size = CGSize(width: 20, height: 20)
+    let original = UIGraphicsImageRenderer(size: size, format: format).image {
+      UIColor.white.setFill()
+      $0.fill(CGRect(x: 5, y: 5, width: 10, height: 10))
+    }
+    let tinted = EnginePresentationAssets.tinted(original, color: .red)
+    let rendered = UIGraphicsImageRenderer(size: size, format: format).image {
+      EngineRenderer.drawImage(tinted,
+        points: [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
+          EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)],
+        matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+        alpha: 0.5, context: $0.cgContext, size: size)
+    }
+    var pixels = [UInt8](repeating: 0, count: 20 * 20 * 4)
+    let context = try XCTUnwrap(CGContext(data: &pixels,
+      width: 20, height: 20, bitsPerComponent: 8, bytesPerRow: 80,
+      space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.draw(try XCTUnwrap(rendered.cgImage),
+      in: CGRect(origin: .zero, size: size))
+    XCTAssertEqual(pixels[(2 * 20 + 2) * 4 + 3], 0,
+      "Tinting must not replace transparent pixels with an opaque square")
+    let center = (10 * 20 + 10) * 4
+    XCTAssertEqual(Double(pixels[center]), 128, accuracy: 1)
+    XCTAssertEqual(pixels[center + 1], 0)
+    XCTAssertEqual(pixels[center + 2], 0)
+    XCTAssertEqual(Double(pixels[center + 3]), 128, accuracy: 1,
+      "Sprite drawing must preserve the engine's fade alpha")
+    let translucent = UIGraphicsImageRenderer(size: size, format: format).image {
+      UIColor.red.withAlphaComponent(0.5).setFill()
+      $0.cgContext.fill(CGRect(origin: .zero, size: size))
+    }
+    let unchanged = EnginePresentationAssets.tinted(translucent, color: .white)
+    context.clear(CGRect(origin: .zero, size: size))
+    context.draw(try XCTUnwrap(unchanged.cgImage),
+      in: CGRect(origin: .zero, size: size))
+    XCTAssertEqual(Double(pixels[center]), 128, accuracy: 1)
+    XCTAssertEqual(pixels[center + 1], 0,
+      "White tint must not bleach translucent red to pink")
+    XCTAssertEqual(pixels[center + 2], 0)
+    XCTAssertEqual(Double(pixels[center + 3]), 128, accuracy: 1)
+  }
+
+  @MainActor
   func testRendererPlacesAnAsymmetricSpriteWithoutFlipping() throws {
     let format = UIGraphicsImageRendererFormat()
     format.scale = 1
@@ -355,6 +540,23 @@ final class EngineHostTests: XCTestCase {
       LevelEntityData(name: "#BEAT", value: beat, ref: nil),
       LevelEntityData(name: "#BPM", value: value, ref: nil)
     ])
+  }
+}
+
+@MainActor
+private final class MockEffectVoice: EngineEffectVoice {
+  var isPlaying = false
+  var delays = [Double]()
+  var stopCount = 0
+
+  func play(after delay: Double) {
+    delays.append(delay)
+    isPlaying = true
+  }
+
+  func stop() {
+    stopCount += 1
+    isPlaying = false
   }
 }
 

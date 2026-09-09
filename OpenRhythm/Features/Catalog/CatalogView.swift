@@ -162,21 +162,39 @@ struct SongRow: View {
 struct SongArtwork: View {
   let url: URL?
   let contentMode: ContentMode
+  @State private var loadedImage: UIImage?
 
   var body: some View {
-    if let url, url.isFileURL {
-      if let image = UIImage(contentsOfFile: url.path) {
+    Group {
+      if let image = loadedImage {
         Image(uiImage: image)
           .resizable()
           .aspectRatio(contentMode: contentMode)
       } else {
         placeholder
       }
-    } else {
-      AsyncImage(url: url) { image in
-        image.resizable().aspectRatio(contentMode: contentMode)
-      } placeholder: {
-        placeholder
+    }
+    .task(id: url) {
+      loadedImage = nil
+      guard let url else { return }
+      do {
+        let bytes: Data
+        if url.isFileURL {
+          bytes = try await Task.detached(priority: .utility) {
+            try Data(contentsOf: url)
+          }.value
+        } else {
+          // Artwork shares the same persistent, coalescing response cache as
+          // catalog pages and downloads, even if HTTP cache headers are absent.
+          bytes = try await SonolusClient().resource(at: url)
+        }
+        let image = await Task.detached(priority: .utility) {
+          UIImage(data: bytes)?.preparingForDisplay()
+        }.value
+        try Task.checkCancellation()
+        loadedImage = image
+      } catch {
+        // Missing artwork is nonfatal; keep the row's placeholder.
       }
     }
   }

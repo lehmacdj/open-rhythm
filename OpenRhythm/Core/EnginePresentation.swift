@@ -223,23 +223,56 @@ final class EnginePresentationAssets {
       effects[definition.id] = effect
     }
     particles = effects
+    // Build color variants while preparing the chart, not during a first hit.
+    for effect in effects.values {
+      for group in effect.groups {
+        for particle in group.particles where particleImages.indices.contains(particle.sprite) {
+          _ = particleImage(index: particle.sprite,
+            color: EngineRenderer.color(particle.color), key: particle.color)
+        }
+      }
+    }
+  }
+
+  var preparedImages: [UIImage] {
+    skin.values.map(\.image) + Array(tintedParticles.values)
   }
 
   func particleImage(index: Int, color: UIColor, key: String) -> UIImage {
     let cacheKey = "\(index):\(key)"
     if let image = tintedParticles[cacheKey] { return image }
     let original = particleImages[index]
-    let image = UIGraphicsImageRenderer(size: original.size).image { output in
-      let rect = CGRect(origin: .zero, size: original.size)
-      original.draw(in: rect)
-      output.cgContext.setBlendMode(.multiply)
-      color.setFill()
-      output.fill(rect)
-      output.cgContext.setBlendMode(.destinationIn)
-      original.draw(in: rect)
-    }
+    let image = Self.tinted(original, color: color)
     tintedParticles[cacheKey] = image
     return image
+  }
+
+  static func tinted(_ original: UIImage, color: UIColor) -> UIImage {
+    guard let source = original.cgImage else { return original }
+    var red: CGFloat = 1, green: CGFloat = 1, blue: CGFloat = 1, alpha: CGFloat = 1
+    guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha),
+      let context = CGContext(data: nil, width: source.width,
+        height: source.height, bitsPerComponent: 8, bytesPerRow: source.width * 4,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo:
+          CGImageAlphaInfo.premultipliedLast.rawValue
+            | CGBitmapInfo.byteOrder32Big.rawValue),
+      let buffer = context.data else { return original }
+    context.draw(source, in: CGRect(x: 0, y: 0,
+      width: source.width, height: source.height))
+    // Multiply premultiplied RGB directly, leaving alpha unchanged. Compositing
+    // an opaque tint then masking it bleaches semitransparent colored pixels.
+    let bytes = buffer.bindMemory(to: UInt8.self,
+      capacity: context.bytesPerRow * source.height)
+    let multipliers = [red, green, blue].map { min(1, max(0, $0)) }
+    for offset in stride(from: 0, to: context.bytesPerRow * source.height, by: 4) {
+      for (channel, multiplier) in multipliers.enumerated() {
+        bytes[offset + channel] = UInt8(
+          (CGFloat(bytes[offset + channel]) * multiplier).rounded())
+      }
+    }
+    guard let result = context.makeImage() else { return original }
+    return UIImage(cgImage: result, scale: original.scale,
+      orientation: original.imageOrientation)
   }
 
   private static func crop(
@@ -255,12 +288,31 @@ final class EnginePresentationAssets {
 }
 
 @MainActor
+struct EngineRenderSprite {
+  let image: UIImage
+  let points: [EnginePoint]
+  let matrix: [Double]
+  let alpha: Double
+  let interpolation: Bool
+}
+
+@MainActor
 enum EngineRenderer {
   static func draw(
     host: CommandEngineRuntimeHost, assets: EnginePresentationAssets,
     context: CGContext, size: CGSize
   ) {
-    context.interpolationQuality = assets.interpolation ? .medium : .none
+    for sprite in sprites(host: host, assets: assets) {
+      context.interpolationQuality = sprite.interpolation ? .medium : .none
+      drawImage(sprite.image, points: sprite.points, matrix: sprite.matrix,
+        alpha: sprite.alpha, context: context, size: size)
+    }
+  }
+
+  static func sprites(
+    host: CommandEngineRuntimeHost, assets: EnginePresentationAssets
+  ) -> [EngineRenderSprite] {
+    var result = [EngineRenderSprite]()
     let ordered = host.draws.enumerated().sorted {
       if $0.element.zValues == $1.element.zValues { return $0.offset < $1.offset }
       return $0.element.zValues.lexicographicallyPrecedes($1.element.zValues)
@@ -268,11 +320,11 @@ enum EngineRenderer {
     for (_, command) in ordered {
       guard let sprite = assets.skin[command.spriteID] else { continue }
       let points = EngineGeometry.transformed(command.points, by: sprite.transform)
-      drawImage(sprite.image, points: points, matrix: command.transform,
-        alpha: command.alpha, context: context, size: size)
+      result.append(EngineRenderSprite(image: sprite.image, points: points,
+        matrix: command.transform, alpha: command.alpha,
+        interpolation: assets.interpolation))
     }
     for instance in host.particles.values.sorted(by: { $0.id < $1.id }) {
-      context.interpolationQuality = assets.particleInterpolation ? .medium : .none
       guard let effect = assets.particles[instance.effectID] else { continue }
       let elapsed = (host.time - instance.startTime) / instance.duration
       let progress = instance.isLooped ? elapsed - floor(elapsed) : elapsed
@@ -308,15 +360,17 @@ enum EngineRenderer {
             let image = assets.particleImage(index: particle.sprite,
               color: color(particle.color), key: particle.color)
             let matrix = (0..<16).map { host.memory.value(block: 1004, index: $0) }
-            drawImage(image, points: points, matrix: matrix,
-              alpha: alpha, context: context, size: size)
+            result.append(EngineRenderSprite(image: image, points: points,
+              matrix: matrix, alpha: alpha,
+              interpolation: assets.particleInterpolation))
           }
         }
       }
     }
+    return result
   }
 
-  private static func color(_ hex: String) -> UIColor {
+  static func color(_ hex: String) -> UIColor {
     var text = String(hex.dropFirst())
     if text.count == 3 { text = text.map { "\($0)\($0)" }.joined() }
     guard let value = UInt32(text, radix: 16) else { return .white }
@@ -334,6 +388,7 @@ enum EngineRenderer {
     guard quad.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return }
     let error = hypot(quad[0].x + quad[2].x - quad[1].x - quad[3].x,
       quad[0].y + quad[2].y - quad[1].y - quad[3].y)
+    guard error.isFinite else { return }
     context.saveGState()
     defer { context.restoreGState() }
     context.setAlpha(min(1, alpha))
@@ -346,16 +401,19 @@ enum EngineRenderer {
         d: (quad[0].y - quad[1].y) / image.size.height,
         tx: quad[1].x, ty: quad[1].y
       ))
-      image.draw(in: CGRect(origin: .zero, size: image.size))
+      drawUpright(image, context: context)
       return
     }
-    // Bilinear tessellation preserves connector proportions on non-affine quads.
+    // A bilinear patch's triangle error is at most warp / (4 * divisions²).
+    // Target 0.25 points, capped at the previous 8x8 quality/budget. Mildly
+    // warped hold connectors do not need 128 clipped image draws each frame.
+    let divisions = tessellationDivisions(warp: error)
     let converted = quad.map { EnginePoint(x: $0.x, y: $0.y) }
     context.setShouldAntialias(false)
-    for row in 0..<8 {
-      for column in 0..<8 {
+    for row in 0..<divisions {
+      for column in 0..<divisions {
         let uv = [(column,row), (column,row+1), (column+1,row+1), (column+1,row)]
-          .map { (Double($0.0) / 8, Double($0.1) / 8) }
+          .map { (Double($0.0) / Double(divisions), Double($0.1) / Double(divisions)) }
         let destination = uv.map {
           EngineGeometry.bilinear(converted, u: $0.0, v: $0.1)
         }.map { CGPoint(x: $0.x, y: $0.y) }
@@ -368,6 +426,11 @@ enum EngineRenderer {
         }
       }
     }
+  }
+
+  static func tessellationDivisions(warp: Double) -> Int {
+    guard warp.isFinite else { return 8 }
+    return max(1, Int(ceil(sqrt(min(64, max(0, warp))))))
   }
 
   private static func triangle(
@@ -384,6 +447,15 @@ enum EngineRenderer {
     context.closePath()
     context.clip()
     context.concatenate(basis(source).inverted().concatenating(basis(destination)))
-    image.draw(in: CGRect(origin: .zero, size: image.size))
+    drawUpright(image, context: context)
+  }
+
+  private static func drawUpright(_ image: UIImage, context: CGContext) {
+    guard let cgImage = image.cgImage else { return }
+    context.saveGState()
+    defer { context.restoreGState() }
+    context.translateBy(x: 0, y: image.size.height)
+    context.scaleBy(x: 1, y: -1)
+    context.draw(cgImage, in: CGRect(origin: .zero, size: image.size))
   }
 }

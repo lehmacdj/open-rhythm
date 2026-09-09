@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Metal
 
 struct GameplayView: View {
   let song: CatalogSong
@@ -29,6 +30,9 @@ struct GameplayView: View {
     }
     .navigationTitle(song.title.displayValue())
     .navigationBarTitleDisplayMode(.inline)
+    .toolbar(model.phase == .playing ? .hidden : .visible, for: .navigationBar)
+    .statusBarHidden(model.phase == .playing)
+    .persistentSystemOverlays(model.phase == .playing ? .hidden : .automatic)
     .task {
       await model.prepare(
         level: level,
@@ -59,33 +63,56 @@ struct GameplayView: View {
   }
 
   private var playfield: some View {
-    GeometryReader { geometry in
-      ZStack {
-        Color.black.ignoresSafeArea()
-        if model.presentationAssets != nil {
-          EnginePlayfield(model: model)
-        } else {
-          TimelineView(.animation) { _ in
-            Canvas { context, size in
-              drawPlayfield(context: &context, size: size)
+    ZStack(alignment: .top) {
+      GeometryReader { geometry in
+        ZStack {
+          Color.black
+          if model.presentationAssets != nil {
+            EnginePlayfield(model: model).id(model.playbackGeneration)
+          } else {
+            TimelineView(.animation) { _ in
+              Canvas { context, size in
+                drawPlayfield(context: &context, size: size)
+              }
             }
+            laneInput
           }
-          laneInput
         }
-        VStack {
-          HStack {
-            Text("Score \(model.score)")
-            Spacer()
-            Text("Combo \(model.combo)")
-          }
-          .font(.headline.monospacedDigit())
-          .foregroundStyle(.white)
-          .padding()
-          Spacer()
+        .frame(width: geometry.size.width, height: geometry.size.height)
+      }
+      .ignoresSafeArea()
+      // Controls inherit the outer safe area; only the playfield expands
+      // beneath the notch and home indicator.
+      HStack {
+        Button {
+          model.stop()
+          dismiss()
+        } label: {
+          Image(systemName: "xmark")
+            .frame(width: 44, height: 44)
+            .background(.black.opacity(0.55), in: Circle())
+        }
+        .accessibilityLabel("Exit Song")
+        Spacer()
+        VStack(spacing: 2) {
+          Text("Score \(model.score)")
+          Text("Combo \(model.combo)")
         }
         .allowsHitTesting(false)
+        Spacer()
+        Button {
+          model.restart()
+        } label: {
+          Image(systemName: "arrow.counterclockwise")
+            .frame(width: 44, height: 44)
+            .background(.black.opacity(0.55), in: Circle())
+        }
+        .accessibilityLabel("Restart Song")
       }
-      .frame(width: geometry.size.width, height: geometry.size.height)
+      .font(.headline.monospacedDigit())
+      .foregroundStyle(.white)
+      .padding(.horizontal, 12)
+      .padding(.top, 8)
     }
   }
 
@@ -197,6 +224,7 @@ private struct EnginePlayfield: UIViewRepresentable {
   func makeUIView(context: Context) -> EnginePlayfieldView {
     let view = EnginePlayfieldView()
     view.model = model
+    view.prepareAssets()
     view.isMultipleTouchEnabled = true
     view.backgroundColor = .black
     view.isOpaque = true
@@ -213,6 +241,33 @@ private final class EnginePlayfieldView: UIView {
   private var displayLink: CADisplayLink?
   private var touchesByID = [ObjectIdentifier: EngineTouch]()
   private var nextTouchID = 1
+  private var metal: EngineMetalRenderer?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    if let device = MTLCreateSystemDefaultDevice(),
+      let renderer = try? EngineMetalRenderer(device: device) {
+      metal = renderer
+      layer.addSublayer(renderer.layer)
+    }
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+  func prepareAssets() {
+    guard let assets = model?.presentationAssets else { return }
+    do {
+      try metal?.prepare(assets)
+    } catch {
+      metal?.layer.removeFromSuperlayer()
+      metal = nil
+    }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    metal?.resize(to: bounds.size, scale: window?.screen.scale ?? contentScaleFactor)
+  }
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
@@ -226,6 +281,10 @@ private final class EnginePlayfieldView: UIView {
   }
 
   @objc private func updateFrame() {
+    advanceFrame(present: true)
+  }
+
+  private func advanceFrame(present: Bool) {
     model?.engineFrame(size: bounds.size,
       touches: touchesByID.values.sorted { $0.id < $1.id })
     touchesByID = touchesByID.filter { !$0.value.ended }.mapValues {
@@ -233,11 +292,24 @@ private final class EnginePlayfieldView: UIView {
         startTime: $0.startTime, position: $0.position,
         startPosition: $0.startPosition, delta: EnginePoint(x: 0, y: 0))
     }
-    setNeedsDisplay()
+    guard present else { return }
+    if let metal, let runtime = model?.engineRuntime,
+      let assets = model?.presentationAssets {
+      do {
+        try metal.draw(host: runtime.host, assets: assets, size: bounds.size)
+      } catch {
+        // Keep a functioning software path if this device cannot render Metal.
+        metal.layer.removeFromSuperlayer()
+        self.metal = nil
+        setNeedsDisplay()
+      }
+    } else if metal == nil {
+      setNeedsDisplay()
+    }
   }
 
   override func draw(_ rect: CGRect) {
-    guard let runtime = model?.engineRuntime,
+    guard metal == nil, let runtime = model?.engineRuntime,
       let assets = model?.presentationAssets,
       let context = UIGraphicsGetCurrentContext() else { return }
     UIColor.black.setFill()
@@ -270,7 +342,10 @@ private final class EnginePlayfieldView: UIView {
       )
     }
     // Preserve brief taps that begin and end between display refreshes.
-    updateFrame()
+    // Process every input transition immediately, but acquire/present a Metal
+    // drawable only on display-link ticks. Multitouch must not wait for an
+    // additional drawable to become available between screen refreshes.
+    advanceFrame(present: false)
   }
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {

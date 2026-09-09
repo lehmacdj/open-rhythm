@@ -213,6 +213,32 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
+  func testRestartClearsJudgementsTouchesAndAudioTail() throws {
+    let model = try gameplayModel()
+    model.start()
+    model.update(mediaTime: 4.05)
+    model.press(lane: 3)
+    XCTAssertFalse(model.activeHoldIDs.isEmpty)
+    model.playbackEnded(uptime: 100)
+    let generation = model.playbackGeneration
+    model.restart()
+    defer { model.stop() }
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertGreaterThan(model.playbackGeneration, generation)
+    XCTAssertEqual(model.score, 0)
+    XCTAssertEqual(model.combo, 0)
+    XCTAssertEqual(model.maxCombo, 0)
+    XCTAssertTrue(model.activeHoldIDs.isEmpty)
+    XCTAssertTrue(model.hitNoteIDs.isEmpty)
+    XCTAssertEqual(model.playbackTime, -0.05)
+    model.advanceAfterAudioEnd(uptime: 200)
+    XCTAssertEqual(model.phase, .playing, "An old audio tail cannot finish a restart")
+    model.release(lane: 3)
+    XCTAssertEqual(model.judgements[.miss], 0)
+    XCTAssertNil(model.resultSaveTask)
+  }
+
+  @MainActor
   func testEarlyHoldReleaseAndCancelledPlayback() throws {
     let model = try gameplayModel()
     model.start()

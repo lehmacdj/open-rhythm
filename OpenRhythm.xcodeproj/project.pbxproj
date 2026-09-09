@@ -34,6 +34,7 @@
 		A00000000000000000000019 /* EnginePlayRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* EnginePlayRuntime.swift */; };
 		A0000000000000000000001A /* EnginePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* EnginePresentation.swift */; };
 		A0000000000000000000001B /* EngineAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* EngineAudio.swift */; };
+		A0000000000000000000001C /* EngineMetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001C /* EngineMetalRenderer.swift */; };
 		B00000000000000000000001 /* LocalizedTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* LocalizedTextTests.swift */; };
 		B00000000000000000000002 /* CatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* CatalogTests.swift */; };
 		B00000000000000000000003 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* XCTest.framework */; };
@@ -81,6 +82,7 @@
 		A10000000000000000000019 /* EnginePlayRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePlayRuntime.swift; sourceTree = "<group>"; };
 		A1000000000000000000001A /* EnginePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePresentation.swift; sourceTree = "<group>"; };
 		A1000000000000000000001B /* EngineAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineAudio.swift; sourceTree = "<group>"; };
+		A1000000000000000000001C /* EngineMetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineMetalRenderer.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* LocalizedTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizedTextTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* CatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -159,6 +161,7 @@
 				A10000000000000000000019 /* EnginePlayRuntime.swift */,
 				A1000000000000000000001A /* EnginePresentation.swift */,
 				A1000000000000000000001B /* EngineAudio.swift */,
+				A1000000000000000000001C /* EngineMetalRenderer.swift */,
 				A10000000000000000000012 /* RuntimeBundle.swift */,
 				A10000000000000000000013 /* RhythmChart.swift */,
 				A10000000000000000000016 /* ResultStore.swift */,
@@ -345,6 +348,7 @@
 				A00000000000000000000019 /* EnginePlayRuntime.swift in Sources */,
 				A0000000000000000000001A /* EnginePresentation.swift in Sources */,
 				A0000000000000000000001B /* EngineAudio.swift in Sources */,
+				A0000000000000000000001C /* EngineMetalRenderer.swift in Sources */,
 				A00000000000000000000012 /* RuntimeBundle.swift in Sources */,
 				A00000000000000000000013 /* RhythmChart.swift in Sources */,
 				A00000000000000000000014 /* GameplayModel.swift in Sources */,
