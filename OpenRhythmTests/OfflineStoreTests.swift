@@ -44,14 +44,62 @@ final class OfflineStoreTests: XCTestCase {
       cache: SonolusResponseCache(rootURL: root.appendingPathComponent("Responses")))
     let store = OfflineStore(rootURL: root.appendingPathComponent("Offline"),
       client: client)
+    try await store.download(level: levels[0], from: server)
+    let partialStatus = await store.containsAllDifficulties(
+      of: song, discoverySucceeded: false)
+    XCTAssertFalse(partialStatus,
+      "A cached known chart is not a complete song if discovery failed")
     let complete = try await store.download(song: song)
     XCTAssertEqual(Set(complete.variants.map(\.id)), Set(levels.map(\.id)))
     let manifests = try await store.manifests()
     XCTAssertEqual(manifests.count, 2)
+    let completeStatus = await store.containsAllDifficulties(
+      of: complete, discoverySucceeded: true)
+    XCTAssertTrue(completeStatus)
     XCTAssertEqual(recorder.urls.filter { $0.host == "assets.example" }.count, 1)
     let count = recorder.urls.count
     _ = try await store.download(song: song)
     XCTAssertEqual(recorder.urls.count, count, "Retry reuses complete downloads")
+  }
+
+  @MainActor
+  func testScrollingLoadsOneNextPageAndIgnoresStaleSearchRows() async throws {
+    let recorder = RequestRecorder()
+    let levels = (0..<10).map { index in
+      SonolusLevelItem(name: "song-\(index)", source: nil, version: 1,
+        rating: 1, title: LocalizedText("Song \(index)"),
+        artists: LocalizedText("Artist"), author: "Fixture",
+        tags: [SonolusTag(title: "#EASY")],
+        cover: ResourceLocator(hash: nil, url: nil),
+        bgm: ResourceLocator(hash: nil, url: "bgm-\(index)"),
+        data: ResourceLocator(hash: nil, url: "data-\(index)"))
+    }
+    let data = try JSONEncoder().encode(SonolusLevelList(pageCount: 96,
+      items: levels))
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      return data
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    await model.refresh()
+    await model.loadMoreIfNeeded(after: try XCTUnwrap(model.visibleSongs.first).id)
+    XCTAssertEqual(recorder.urls.count, 1, "Top rows must not prefetch pages")
+    let last = try XCTUnwrap(model.visibleSongs.last).id
+    async let first: Void = model.loadMoreIfNeeded(after: last)
+    async let duplicate: Void = model.loadMoreIfNeeded(after: last)
+    _ = await (first, duplicate)
+    XCTAssertEqual(recorder.urls.count, 2, "Concurrent appearances share a load")
+    XCTAssertEqual(model.loadedPageCount, 2)
+    model.query = "new search"
+    await model.loadMoreIfNeeded(after: last)
+    XCTAssertEqual(recorder.urls.count, 2,
+      "Do not paginate the old search while the new query is debouncing")
   }
 
   @MainActor
@@ -75,6 +123,10 @@ final class OfflineStoreTests: XCTestCase {
     await model.loadNextPage()
     XCTAssertEqual(recorder.urls.count, 2)
     XCTAssertEqual(model.loadedPageCount, 2)
+    await model.searchAfterDelay()
+    XCTAssertEqual(model.loadedPageCount, 2,
+      "Returning from details must preserve previously loaded pages")
+    XCTAssertEqual(recorder.urls.count, 2)
     model.query = "b"
     let cancelled = Task { await model.searchAfterDelay() }
     cancelled.cancel()

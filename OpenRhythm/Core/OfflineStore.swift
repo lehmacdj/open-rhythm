@@ -305,6 +305,17 @@ actor OfflineStore {
     )
   }
 
+  func containsAllDifficulties(
+    of song: CatalogSong, discoverySucceeded: Bool
+  ) -> Bool {
+    // A catalog page can contain only some variants of a song. Even if every
+    // known chart is cached, that does not establish a complete song download.
+    guard discoverySucceeded, !song.variants.isEmpty else { return false }
+    return song.variants.allSatisfy {
+      contains(level: $0, from: song.server(for: $0))
+    }
+  }
+
   func contains(
     level: SonolusLevelItem,
     from server: ServerDescriptor

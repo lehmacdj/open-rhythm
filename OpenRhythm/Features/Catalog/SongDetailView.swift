@@ -10,6 +10,7 @@ struct SongDetailView: View {
   @State private var recentResults = [PlayResult]()
   @State private var downloadProgress = ""
   @State private var isLoadingVariants = false
+  @State private var discoverySucceeded = false
 
   init(song: CatalogSong, isOffline: Bool = false) {
     _song = State(initialValue: song)
@@ -115,13 +116,14 @@ struct SongDetailView: View {
     .navigationTitle("Song")
     .navigationBarTitleDisplayMode(.inline)
     .task {
-      guard !isOffline else { return }
+      guard !isOffline, !discoverySucceeded else { return }
       isLoadingVariants = true
       defer { isLoadingVariants = false }
       do {
         let complete = try await SonolusClient().completeSong(song)
         try Task.checkCancellation()
         song = complete
+        discoverySucceeded = true
         await updateDownloadStatus()
       } catch is CancellationError {
         return
@@ -133,7 +135,6 @@ struct SongDetailView: View {
       guard let selectedLevel else { return }
       let selection = selectedLevelID
       let server = selectedServer
-      downloadError = nil
       if !isOffline {
         await updateDownloadStatus()
       }
@@ -169,15 +170,11 @@ struct SongDetailView: View {
 
   private func updateDownloadStatus() async {
     let snapshot = song
-    var downloaded = !snapshot.variants.isEmpty
-    for level in snapshot.variants {
-      if !(await OfflineStore.shared.contains(level: level,
-        from: snapshot.server(for: level))) {
-        downloaded = false
-        break
-      }
-    }
-    guard !Task.isCancelled, song == snapshot else { return }
+    let discovered = discoverySucceeded
+    let downloaded = await OfflineStore.shared.containsAllDifficulties(
+      of: snapshot, discoverySucceeded: discovered)
+    guard !Task.isCancelled, song == snapshot,
+      discoverySucceeded == discovered else { return }
     isDownloaded = downloaded
   }
 
@@ -191,6 +188,7 @@ struct SongDetailView: View {
       song = try await OfflineStore.shared.download(song: song) { done, total in
         await MainActor.run { downloadProgress = "Downloading \(done)/\(total)…" }
       }
+      discoverySucceeded = true
       isDownloaded = true
     } catch {
       downloadError = error.localizedDescription

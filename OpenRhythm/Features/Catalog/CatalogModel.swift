@@ -44,8 +44,21 @@ final class CatalogModel {
     do {
       try await Task.sleep(for: .milliseconds(300))
       try Task.checkCancellation()
+      guard loadedPageCount == 0 || normalizedQuery != activeQuery else { return }
       await refresh()
     } catch { }
+  }
+
+  private var normalizedQuery: String {
+    query.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  func loadMoreIfNeeded(after songID: String) async {
+    // Ignore appearances from old search results during the debounce interval.
+    // An error requires an explicit retry, not repeated scroll-driven requests.
+    guard normalizedQuery == activeQuery, errorMessage == nil,
+      visibleSongs.suffix(3).contains(where: { $0.id == songID }) else { return }
+    await loadNextPage()
   }
 
   func loadNextPage(forceReload: Bool = false) async {

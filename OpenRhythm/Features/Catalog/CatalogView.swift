@@ -38,16 +38,17 @@ struct CatalogView: View {
         } label: {
           SongRow(song: song)
         }
+        .onAppear {
+          Task { await model.loadMoreIfNeeded(after: song.id) }
+        }
       }
-    }
-    .safeAreaInset(edge: .bottom) {
+      // Keep a manual fallback when local filters hide the next-page trigger,
+      // and when a failed request needs retrying. This is part of the list,
+      // rather than an overlay that takes up screen space while browsing.
       if model.hasMorePages && !model.isLoading {
         Button(model.errorMessage == nil ? "Load More Songs" : "Retry") {
           Task { await model.loadNextPage() }
         }
-        .padding(8)
-        .frame(maxWidth: .infinity)
-        .background(.regularMaterial)
       }
     }
     .navigationTitle("Songs")
@@ -97,7 +98,7 @@ struct CatalogView: View {
     guard model.totalPageCount > 0 else {
       return "Loading songs…"
     }
-    return "Loading page \(model.loadedPageCount) of \(model.totalPageCount)…"
+    return "Loading page \(model.loadedPageCount + 1) of \(model.totalPageCount)…"
   }
 
   private var queryBinding: Binding<String> {
