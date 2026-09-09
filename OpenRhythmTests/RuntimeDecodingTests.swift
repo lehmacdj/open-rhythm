@@ -156,17 +156,17 @@ final class RuntimeDecodingTests: XCTestCase {
     model.update(mediaTime: 1.05)
     model.press(lane: 0)
     model.press(lane: 0)
-    XCTAssertEqual(model.score, 1_000)
+    XCTAssertEqual(model.score, 200_000)
     model.release(lane: 0)
 
     model.update(mediaTime: 2.05)
     model.slide(lane: 1)
-    XCTAssertEqual(model.score, 2_000)
+    XCTAssertEqual(model.score, 400_000)
     model.release(lane: 1)
 
     model.update(mediaTime: 3.05)
     model.slide(lane: 2)
-    XCTAssertEqual(model.score, 2_000, "Sliding cannot hit a tap note")
+    XCTAssertEqual(model.score, 400_000, "Sliding cannot hit a tap note")
     model.release(lane: 2)
     model.press(lane: 2)
     model.release(lane: 2)
@@ -178,7 +178,7 @@ final class RuntimeDecodingTests: XCTestCase {
     model.release(lane: 3)
     model.release(lane: 3)
 
-    XCTAssertEqual(model.score, 5_000)
+    XCTAssertEqual(model.score, GameplayModel.maximumScore)
     XCTAssertEqual(model.maxCombo, 5)
     XCTAssertEqual(model.judgements[.perfect], 5)
     XCTAssertEqual(model.judgements[.miss], 0)
@@ -199,14 +199,14 @@ final class RuntimeDecodingTests: XCTestCase {
     model.advanceAfterAudioEnd(uptime: 106)
 
     XCTAssertEqual(model.phase, .finished)
-    XCTAssertEqual(model.score, 1_000)
+    XCTAssertEqual(model.score, 200_000)
     XCTAssertEqual(model.judgements[.miss], 4)
     await model.resultSaveTask?.value
     let results = try await store.results(
       for: "https://example.com\u{0}gameplay"
     )
     XCTAssertEqual(results.count, 1)
-    XCTAssertEqual(results.first?.score, 1_000)
+    XCTAssertEqual(results.first?.score, 200_000)
     XCTAssertEqual(results.first?.miss, 4)
     model.advanceAfterAudioEnd(uptime: 200)
     XCTAssertEqual(model.judgements[.miss], 4)

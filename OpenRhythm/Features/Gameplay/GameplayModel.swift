@@ -16,6 +16,17 @@ enum NoteJudgement: String, CaseIterable, Sendable {
   case miss
 
   var displayName: String { rawValue.capitalized }
+
+  /// Relative worth of one note. A chart judged entirely `perfect` scores
+  /// `GameplayModel.maximumScore`, whatever its length.
+  var weight: Int {
+    switch self {
+    case .perfect: 1_000
+    case .great: 700
+    case .good: 300
+    case .miss: 0
+    }
+  }
 }
 
 @MainActor
@@ -26,7 +37,7 @@ final class GameplayModel {
     level: LevelData(bgmOffset: 0, entities: [])
   )
   private(set) var currentTime: TimeInterval = 0
-  private(set) var score = 0
+  private(set) var earnedPoints = 0
   private(set) var combo = 0
   private(set) var maxCombo = 0
   private(set) var judgements = Dictionary(
@@ -41,7 +52,19 @@ final class GameplayModel {
   private var engineAudio: EngineAudioPlayback?
   private var engineAspectRatio: Double?
 
+  /// Score a flawless play awards, so results compare across charts.
+  static let maximumScore = 1_000_000
+
   var noteCount: Int { engineRuntime?.inputCount ?? chart.judgementCount }
+
+  /// Points earned so far, scaled so a full chart of perfects is
+  /// `maximumScore`. Partway through a play this is the score kept, not the
+  /// score projected: unjudged notes count as nothing yet.
+  var score: Int {
+    let maximum = noteCount * NoteJudgement.perfect.weight
+    guard maximum > 0 else { return 0 }
+    return (earnedPoints * Self.maximumScore + maximum / 2) / maximum
+  }
 
   var playbackTime: TimeInterval {
     if isStartingPlayback { return bgmOffset }
@@ -136,7 +159,7 @@ final class GameplayModel {
     playbackGeneration += 1
     let generation = playbackGeneration
     isStartingPlayback = true
-    score = 0
+    earnedPoints = 0
     combo = 0
     maxCombo = 0
     currentTime = bgmOffset
@@ -251,7 +274,7 @@ final class GameplayModel {
     if difference <= 0.18 {
       record(difference: difference)
     } else {
-      record(.miss, points: 0)
+      record(.miss)
     }
   }
 
@@ -331,7 +354,7 @@ final class GameplayModel {
       let note = chart.notes[nextMissIndex]
       if !hitNoteIDs.contains(note.id) {
         hitNoteIDs.insert(note.id)
-        record(.miss, points: 0)
+        record(.miss)
       }
       nextMissIndex += 1
     }
@@ -345,7 +368,7 @@ final class GameplayModel {
       if activeHolds[note.lane]?.id == note.id {
         activeHolds.removeValue(forKey: note.lane)
       }
-      record(.miss, points: 0)
+      record(.miss)
     }
 
     if nextMissIndex == chart.notes.count,
@@ -381,10 +404,10 @@ final class GameplayModel {
       try runtime.update(at: currentTime, touches: touches)
       for judgment in runtime.judgments {
         switch judgment.grade {
-        case 1: record(.perfect, points: 1_000)
-        case 2: record(.great, points: 700)
-        case 3: record(.good, points: 300)
-        default: record(.miss, points: 0)
+        case 1: record(.perfect)
+        case 2: record(.great)
+        case 3: record(.good)
+        default: record(.miss)
         }
       }
       try engineAudio?.update(runtime.host.takeAudioCommands(), at: currentTime,
@@ -401,9 +424,9 @@ final class GameplayModel {
     }
   }
 
-  private func record(_ judgement: NoteJudgement, points: Int) {
+  private func record(_ judgement: NoteJudgement) {
     judgements[judgement, default: 0] += 1
-    score += points
+    earnedPoints += judgement.weight
     if judgement == .miss {
       combo = 0
     } else {
@@ -414,11 +437,11 @@ final class GameplayModel {
 
   private func record(difference: TimeInterval) {
     if difference <= 0.05 {
-      record(.perfect, points: 1_000)
+      record(.perfect)
     } else if difference <= 0.10 {
-      record(.great, points: 700)
+      record(.great)
     } else {
-      record(.good, points: 300)
+      record(.good)
     }
   }
 
