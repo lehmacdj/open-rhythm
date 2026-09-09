@@ -3,6 +3,7 @@ import SwiftUI
 struct SongDetailView: View {
   @State private var song: CatalogSong
   let isOffline: Bool
+  private let filter: CatalogFilter
   @State private var selectedLevelID: String
   @State private var isDownloading = false
   @State private var isDownloaded = false
@@ -12,10 +13,12 @@ struct SongDetailView: View {
   @State private var isLoadingVariants = false
   @State private var discoverySucceeded = false
 
-  init(song: CatalogSong, isOffline: Bool = false) {
+  init(song: CatalogSong, isOffline: Bool = false, filter: CatalogFilter = CatalogFilter()) {
     _song = State(initialValue: song)
     self.isOffline = isOffline
-    _selectedLevelID = State(initialValue: song.variants.first?.id ?? "")
+    self.filter = filter
+    _selectedLevelID = State(initialValue:
+      filter.matchingVariants(in: song).first?.id ?? song.variants.first?.id ?? "")
   }
 
   var body: some View {
@@ -64,7 +67,7 @@ struct SongDetailView: View {
             } else if isDownloaded {
               Label("Downloaded", systemImage: "checkmark.circle")
             } else {
-              Label("Download All Difficulties", systemImage: "arrow.down.circle")
+              Label("Download", systemImage: "arrow.down.circle")
             }
           }
           .disabled(isDownloading || isDownloaded || isLoadingVariants)
@@ -123,6 +126,8 @@ struct SongDetailView: View {
         let complete = try await SonolusClient().completeSong(song)
         try Task.checkCancellation()
         song = complete
+        selectedLevelID = filter.matchingVariants(in: complete).first?.id
+          ?? selectedLevelID
         discoverySucceeded = true
         await updateDownloadStatus()
       } catch is CancellationError {

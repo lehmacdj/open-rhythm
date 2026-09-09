@@ -6,6 +6,7 @@ struct GameplayView: View {
   let song: CatalogSong
   let level: SonolusLevelItem
   @State private var model = GameplayModel()
+  @State private var showsSettings = false
   @Environment(\.dismiss) private var dismiss
   @Environment(\.scenePhase) private var scenePhase
 
@@ -33,6 +34,11 @@ struct GameplayView: View {
     .toolbar(model.phase == .playing ? .hidden : .visible, for: .navigationBar)
     .statusBarHidden(model.phase == .playing)
     .persistentSystemOverlays(model.phase == .playing ? .hidden : .automatic)
+    .sheet(isPresented: $showsSettings) {
+      GameplaySettingsPanel(settings: $model.settings,
+        noteSpeed: model.presentationAssets?.noteSpeedOption,
+        engineName: song.engineName)
+    }
     .task {
       await model.prepare(
         level: level,
@@ -59,6 +65,9 @@ struct GameplayView: View {
         model.start()
       }
       .buttonStyle(.borderedProminent)
+      Button("Gameplay Settings", systemImage: "slider.horizontal.3") {
+        showsSettings = true
+      }
     }
   }
 
@@ -95,7 +104,7 @@ struct GameplayView: View {
         .accessibilityLabel("Exit Song")
         Spacer()
         VStack(spacing: 2) {
-          Text("Score \(model.score)")
+          Text("Score \(model.displayedScore)")
           Text("Combo \(model.combo)")
         }
         .allowsHitTesting(false)
@@ -214,6 +223,47 @@ struct GameplayView: View {
         with: .color(.white),
         lineWidth: 2
       )
+    }
+  }
+}
+
+private struct GameplaySettingsPanel: View {
+  @Binding var settings: GameplayPreferences
+  let noteSpeed: EngineConfiguration.Option?
+  let engineName: String
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section {
+          Text(engineName)
+          Text("These preferences are saved for this engine.")
+            .foregroundStyle(.secondary)
+        }
+        Section("Score Display") {
+          Picker("Direction", selection: $settings.scoreDisplay) {
+            ForEach(ScoreDisplayMode.allCases) { Text($0.title).tag($0) }
+          }
+          Text("Count up shows points earned toward 1,000,000. Count down starts at 1,000,000 and subtracts lost points. Final results are unchanged.")
+            .font(.footnote).foregroundStyle(.secondary)
+        }
+        Section("Note Speed") {
+          if let noteSpeed, let range = noteSpeed.sliderRange {
+            let value = noteSpeed.clamped(settings.noteSpeed ?? noteSpeed.def)
+            LabeledContent("Speed", value: value.formatted(.number.precision(.fractionLength(1))))
+            Slider(value: Binding(get: { value }, set: { settings.noteSpeed = $0 }),
+              in: range, step: (noteSpeed.step ?? 0.1) > 0 ? (noteSpeed.step ?? 0.1) : 0.1)
+              .accessibilityLabel("Note Speed")
+            Button("Use Engine Default") { settings.noteSpeed = nil }
+          } else {
+            Text("This engine does not expose a note-speed control.")
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
+      .navigationTitle("Gameplay Settings")
+      .toolbar { Button("Done") { dismiss() } }
     }
   }
 }

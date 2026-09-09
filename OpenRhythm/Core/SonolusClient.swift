@@ -80,6 +80,12 @@ actor SonolusClient {
     try await requestData(from: url, accept: "*/*")
   }
 
+  func serverTitle(at baseURL: URL) async throws -> String {
+    struct Info: Decodable { let title: LocalizedText }
+    let data = try await requestData(from: baseURL.appendingPathComponent("sonolus/info"))
+    return try decoder.decode(Info.self, from: data).title.displayValue()
+  }
+
   func completeSong(_ song: CatalogSong) async throws -> CatalogSong {
     guard let first = song.variants.first else { return song }
     let server = song.server(for: first)

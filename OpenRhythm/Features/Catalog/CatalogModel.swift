@@ -6,15 +6,25 @@ import Observation
 final class CatalogModel {
   private let server: ServerDescriptor
   private let client: SonolusClient
-  private var levelsByID = [String: SonolusLevelItem]()
+  private let preferences: UserPreferences
   private var generation = 0
   private var activeQuery = ""
 
   private(set) var songs = [CatalogSong]()
   var query = ""
   var filter = CatalogFilter() {
-    didSet { visibleSongs = filter.apply(to: songs) }
+    didSet {
+      preferences.save(filter, for: selectedEngineKey)
+      updateVisibleSongs()
+    }
   }
+  var selectedEngineKey: String {
+    didSet {
+      guard oldValue != selectedEngineKey else { return }
+      filter = preferences.filter(for: selectedEngineKey)
+    }
+  }
+  var engines: [CatalogEngineChoice] { CatalogEngineChoice.choices(in: songs) }
   private(set) var visibleSongs = [CatalogSong]()
   private(set) var isLoading = false
   private(set) var loadedPageCount = 0
@@ -23,15 +33,23 @@ final class CatalogModel {
 
   var hasMorePages: Bool { loadedPageCount < totalPageCount }
 
-  init(server: ServerDescriptor, client: SonolusClient = SonolusClient()) {
+  init(server: ServerDescriptor, client: SonolusClient = SonolusClient(),
+    preferences: UserPreferences = .shared
+  ) {
     self.server = server
     self.client = client
+    self.preferences = preferences
+    selectedEngineKey = server.preferenceKey
+    filter = preferences.filter(for: server.preferenceKey)
+  }
+
+  private func updateVisibleSongs() {
+    visibleSongs = filter.apply(to: songs.filter { $0.engineKey == selectedEngineKey })
   }
 
   func refresh(forceReload: Bool = false) async {
     generation += 1
     activeQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    levelsByID.removeAll()
     songs.removeAll()
     visibleSongs.removeAll()
     loadedPageCount = 0
@@ -76,18 +94,21 @@ final class CatalogModel {
         query: requestedQuery, forceReload: forceReload)
       try Task.checkCancellation()
       guard currentGeneration == generation else { return }
-      for level in response.items { levelsByID[level.id] = level }
-      let levels = Array(levelsByID.values)
+      let previous = songs
       let server = server
       let grouped = await Task.detached(priority: .userInitiated) {
-        CatalogBuilder.group(levels: levels, server: server)
+        CatalogBuilder.merge(songs: previous, levels: response.items, server: server)
       }.value
       try Task.checkCancellation()
       guard currentGeneration == generation else { return }
       songs = grouped
+      if !engines.contains(where: { $0.id == selectedEngineKey }),
+        let first = engines.first {
+        selectedEngineKey = first.id
+      }
       // Server search covers unloaded pages. Local filters only select sort
       // and difficulty, preserving aliases supported by the server.
-      visibleSongs = filter.apply(to: songs)
+      updateVisibleSongs()
       totalPageCount = max(0, response.pageCount)
       loadedPageCount = page + 1
     } catch is CancellationError {

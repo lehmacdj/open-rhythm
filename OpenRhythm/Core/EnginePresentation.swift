@@ -4,7 +4,26 @@ typealias EngineExpression = [String: Double]
 typealias EngineQuadTransform = [String: EngineExpression]
 
 struct EngineConfiguration: Decodable {
-  struct Option: Decodable { let def: Double }
+  struct Option: Decodable {
+    let def: Double
+    let name: String?
+    let min: Double?
+    let max: Double?
+    let step: Double?
+
+    var sliderRange: ClosedRange<Double>? {
+      guard let min, let max, min.isFinite, max.isFinite, max > min else { return nil }
+      return min...max
+    }
+
+    func clamped(_ value: Double) -> Double {
+      guard value.isFinite, let range = sliderRange else { return def }
+      let bounded = Swift.min(range.upperBound, Swift.max(range.lowerBound, value))
+      guard let step, step.isFinite, step > 0 else { return bounded }
+      let rounded = range.lowerBound + ((bounded - range.lowerBound) / step).rounded() * step
+      return Swift.min(range.upperBound, Swift.max(range.lowerBound, rounded))
+    }
+  }
   let options: [Option]
 }
 
@@ -173,6 +192,8 @@ final class EnginePresentationAssets {
     let transform: EngineQuadTransform
   }
   let options: [Double]
+  let noteSpeedOption: EngineConfiguration.Option?
+  private let noteSpeedIndex: Int?
   let skin: [Int: Sprite]
   let particles: [Int: ParticleData.Effect]
   let particleImages: [UIImage]
@@ -181,9 +202,12 @@ final class EnginePresentationAssets {
   private var tintedParticles = [String: UIImage]()
 
   init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
-    options = try CompressedJSONDecoder.decode(
+    let configuration = try CompressedJSONDecoder.decode(
       EngineConfiguration.self, from: presentation.data("configuration")
-    ).options.map(\.def)
+    )
+    options = configuration.options.map(\.def)
+    noteSpeedIndex = configuration.options.firstIndex { $0.name == "#NOTE_SPEED" }
+    noteSpeedOption = noteSpeedIndex.map { configuration.options[$0] }
     let skinData = try CompressedJSONDecoder.decode(
       SkinData.self, from: presentation.data("skinData")
     )
@@ -232,6 +256,14 @@ final class EnginePresentationAssets {
         }
       }
     }
+  }
+
+  func runtimeOptions(noteSpeed: Double?) -> [Double] {
+    var result = options
+    if let noteSpeed, let noteSpeedIndex, let noteSpeedOption {
+      result[noteSpeedIndex] = noteSpeedOption.clamped(noteSpeed)
+    }
+    return result
   }
 
   var preparedImages: [UIImage] {

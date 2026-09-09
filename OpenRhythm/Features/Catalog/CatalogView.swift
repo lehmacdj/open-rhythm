@@ -3,6 +3,7 @@ import UIKit
 
 struct CatalogView: View {
   @State private var model: CatalogModel
+  @State private var showsFilters = false
   private let server: ServerDescriptor
 
   init(server: ServerDescriptor) {
@@ -12,7 +13,7 @@ struct CatalogView: View {
 
   var body: some View {
     List {
-      if model.isLoading {
+      if model.isLoading && model.loadedPageCount == 0 {
         Section {
           HStack {
             ProgressView()
@@ -34,7 +35,7 @@ struct CatalogView: View {
 
       ForEach(model.visibleSongs) { song in
         NavigationLink {
-          SongDetailView(song: song)
+          SongDetailView(song: song, filter: model.filter)
         } label: {
           SongRow(song: song)
         }
@@ -45,10 +46,21 @@ struct CatalogView: View {
       // Keep a manual fallback when local filters hide the next-page trigger,
       // and when a failed request needs retrying. This is part of the list,
       // rather than an overlay that takes up screen space while browsing.
-      if model.hasMorePages && !model.isLoading {
-        Button(model.errorMessage == nil ? "Load More Songs" : "Retry") {
-          Task { await model.loadNextPage() }
+      if model.loadedPageCount > 0 {
+        HStack {
+          if model.isLoading {
+            ProgressView()
+            Text(progressLabel)
+          } else if model.hasMorePages {
+            Button(model.errorMessage == nil ? "Load More Songs" : "Retry") {
+              Task { await model.loadNextPage() }
+            }
+          } else {
+            Text("All loaded songs shown").foregroundStyle(.secondary)
+          }
         }
+        .frame(height: 32)
+        .id("pagination-status")
       }
     }
     .navigationTitle("Songs")
@@ -67,24 +79,14 @@ struct CatalogView: View {
         .accessibilityElement(children: .combine)
       }
       ToolbarItem(placement: .topBarTrailing) {
-        Menu("Filter", systemImage: "line.3.horizontal.decrease.circle") {
-          Picker("Sort", selection: sortBinding) {
-            ForEach(CatalogSort.allCases) { sort in
-              Text(sort.displayName).tag(sort)
-            }
-          }
-
-          Divider()
-
-          ForEach(Difficulty.allCases.filter { $0 != .unknown }, id: \.self) {
-            difficulty in
-            Toggle(
-              difficulty.displayName,
-              isOn: difficultyBinding(difficulty)
-            )
-          }
+        Button("Filter", systemImage: "line.3.horizontal.decrease.circle") {
+          showsFilters = true
         }
       }
+    }
+    .sheet(isPresented: $showsFilters) {
+      CatalogFilterPanel(filter: $model.filter, engines: model.engines,
+        selectedEngineKey: $model.selectedEngineKey)
     }
     .refreshable {
       await model.refresh(forceReload: true)
@@ -126,6 +128,68 @@ struct CatalogView: View {
         }
       }
     )
+  }
+}
+
+struct CatalogFilterPanel: View {
+  @Binding var filter: CatalogFilter
+  let engines: [CatalogEngineChoice]
+  @Binding var selectedEngineKey: String
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        if engines.count > 1 {
+          Picker("Engine", selection: $selectedEngineKey) {
+            ForEach(engines) { Text($0.name).tag($0.id) }
+          }
+        } else if let engine = engines.first {
+          Section { Text(engine.name) }
+        }
+        Section("Sort") {
+          Picker("Sort by", selection: $filter.sort) {
+            ForEach(CatalogSort.allCases) { Text($0.displayName).tag($0) }
+          }
+        }
+        Section("Difficulty Rating") {
+          Toggle("Limit rating range", isOn: Binding(
+            get: { filter.minimumRating != nil || filter.maximumRating != nil },
+            set: {
+              filter.minimumRating = $0 ? 0 : nil
+              filter.maximumRating = $0 ? 50 : nil
+            }))
+          if filter.minimumRating != nil || filter.maximumRating != nil {
+            Stepper("Minimum: \(filter.minimumRating ?? 0)", value: Binding(
+              get: { filter.minimumRating ?? 0 },
+              set: { filter.minimumRating = $0 }),
+              in: 0...(filter.maximumRating ?? 100))
+            Stepper("Maximum: \(filter.maximumRating ?? 100)", value: Binding(
+              get: { filter.maximumRating ?? 100 },
+              set: { filter.maximumRating = $0 }),
+              in: (filter.minimumRating ?? 0)...100)
+          }
+        }
+        Section("Chart Types") {
+          ForEach(Difficulty.allCases, id: \.self) { difficulty in
+            Toggle(difficulty == .unknown ? "Other" : difficulty.displayName,
+              isOn: Binding(
+                get: { filter.difficulties.contains(difficulty) },
+                set: {
+                  if $0 { filter.difficulties.insert(difficulty) }
+                  else { filter.difficulties.remove(difficulty) }
+                }))
+          }
+        }
+        Section {
+          Text("Filters and sorting are saved for this engine. Search is not saved.")
+            .foregroundStyle(.secondary)
+          Button("Reset Filters") { filter = CatalogFilter() }
+        }
+      }
+      .navigationTitle("Filters")
+      .toolbar { Button("Done") { dismiss() } }
+    }
   }
 }
 

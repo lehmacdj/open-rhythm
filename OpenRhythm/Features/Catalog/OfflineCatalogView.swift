@@ -5,16 +5,33 @@ import SwiftUI
 @Observable
 private final class OfflineCatalogModel {
   var songs = [CatalogSong]()
-  var filter = CatalogFilter()
+  var filter = CatalogFilter() {
+    didSet {
+      if !selectedEngineKey.isEmpty {
+        UserPreferences.shared.save(filter, for: selectedEngineKey)
+      }
+    }
+  }
+  var selectedEngineKey = "" {
+    didSet {
+      guard oldValue != selectedEngineKey else { return }
+      let query = filter.query
+      filter = UserPreferences.shared.filter(for: selectedEngineKey)
+      filter.query = query
+    }
+  }
+  var engines: [CatalogEngineChoice] { CatalogEngineChoice.choices(in: songs) }
   var errorMessage: String?
 
   var visibleSongs: [CatalogSong] {
-    filter.apply(to: songs)
+    filter.apply(to: songs.filter { $0.engineKey == selectedEngineKey })
   }
 
   func refresh() async {
     do {
       songs = try await OfflineStore.shared.catalogSongs()
+      if !engines.contains(where: { $0.id == selectedEngineKey }),
+        let first = engines.first { selectedEngineKey = first.id }
       errorMessage = nil
     } catch {
       errorMessage = error.localizedDescription
@@ -25,6 +42,7 @@ private final class OfflineCatalogModel {
 struct OfflineCatalogView: View {
   @State private var model = OfflineCatalogModel()
   @State private var query = ""
+  @State private var showsFilters = false
 
   var body: some View {
     List {
@@ -44,7 +62,7 @@ struct OfflineCatalogView: View {
 
       ForEach(model.visibleSongs) { song in
         NavigationLink {
-          SongDetailView(song: song, isOffline: true)
+          SongDetailView(song: song, isOffline: true, filter: model.filter)
         } label: {
           SongRow(song: song)
         }
@@ -54,22 +72,14 @@ struct OfflineCatalogView: View {
     .searchable(text: queryBinding, prompt: "Title or artist")
     .toolbar {
       ToolbarItem(placement: .topBarTrailing) {
-        Menu("Filter", systemImage: "line.3.horizontal.decrease.circle") {
-          Picker("Sort", selection: sortBinding) {
-            ForEach(CatalogSort.allCases) { sort in
-              Text(sort.displayName).tag(sort)
-            }
-          }
-          Divider()
-          ForEach(Difficulty.allCases.filter { $0 != .unknown }, id: \.self) {
-            difficulty in
-            Toggle(
-              difficulty.displayName,
-              isOn: difficultyBinding(difficulty)
-            )
-          }
+        Button("Filter", systemImage: "line.3.horizontal.decrease.circle") {
+          showsFilters = true
         }
       }
+    }
+    .sheet(isPresented: $showsFilters) {
+      CatalogFilterPanel(filter: $model.filter, engines: model.engines,
+        selectedEngineKey: $model.selectedEngineKey)
     }
     .refreshable { await model.refresh() }
     .task { await model.refresh() }

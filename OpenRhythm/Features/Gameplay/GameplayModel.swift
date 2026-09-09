@@ -63,6 +63,18 @@ final class GameplayModel {
   private var runtimeBundle: RuntimeBundle?
   private var engineAudio: EngineAudioPlayback?
   private var engineAspectRatio: Double?
+  private var preferenceKey = ""
+  var settings = GameplayPreferences() {
+    didSet {
+      if !preferenceKey.isEmpty {
+        UserPreferences.shared.save(settings, for: preferenceKey)
+      }
+    }
+  }
+
+  var displayedScore: Int {
+    settings.scoreDisplay.score(judgements: judgements, noteCount: noteCount)
+  }
 
   var noteCount: Int { engineRuntime?.inputCount ?? chart.judgementCount }
 
@@ -152,6 +164,8 @@ final class GameplayModel {
       return
     }
     chart = RhythmChart(level: bundle.level)
+    preferenceKey = level.engineKey(server: server)
+    settings = UserPreferences.shared.gameplay(for: preferenceKey)
     bgmOffset = bundle.level.bgmOffset
     resultLevel = level
     resultLevelID = level.resultKey(server: server)
@@ -398,7 +412,8 @@ final class GameplayModel {
       if engineRuntime == nil {
         engineAspectRatio = aspect
         engineRuntime = try EnginePlayRuntime(
-          engine: bundle.engine, level: bundle.level, options: assets.options,
+          engine: bundle.engine, level: bundle.level,
+          options: assets.runtimeOptions(noteSpeed: settings.noteSpeed),
           aspectRatio: aspect, skinSpriteIDs: Set(assets.skin.keys),
           effectClipIDs: engineAudio?.clipIDs ?? [],
           particleEffectIDs: Set(assets.particles.keys)

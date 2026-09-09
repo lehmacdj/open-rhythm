@@ -35,6 +35,13 @@ struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
   let cover: ResourceLocator
   let bgm: ResourceLocator
   let data: ResourceLocator
+  var engine: SonolusEngineIdentity? = nil
+
+  func engineKey(server: ServerDescriptor) -> String {
+    guard let engine else { return server.preferenceKey }
+    let origin = engine.source ?? source ?? server.baseURL.absoluteString
+    return "engine:\(origin.trimmingCharacters(in: CharacterSet(charactersIn: "/"))):\(engine.name)"
+  }
 
   var id: String { name }
 
@@ -58,6 +65,12 @@ struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
         + artists.searchValues.joined(separator: " ")
     )
   }
+}
+
+struct SonolusEngineIdentity: Codable, Hashable, Sendable {
+  let name: String
+  var source: String? = nil
+  var title: LocalizedText? = nil
 }
 
 struct SonolusLevelList: Codable, Sendable {
