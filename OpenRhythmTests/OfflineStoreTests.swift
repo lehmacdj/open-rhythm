@@ -173,6 +173,33 @@ final class OfflineStoreTests: XCTestCase {
     XCTAssertEqual(count, 3, "Expired entries refresh")
   }
 
+  func testArtworkResourcesShareCacheAcrossClientInstances() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      return Data("artwork".utf8)
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let cache = SonolusResponseCache(rootURL: root)
+    let first = SonolusClient(session: session, cache: cache)
+    let second = SonolusClient(session: session, cache: cache)
+    let url = URL(string: "https://assets.example/cover.png")!
+    async let one = first.resource(at: url)
+    async let two = second.resource(at: url)
+    let values = try await [one, two]
+    XCTAssertEqual(values, [Data("artwork".utf8), Data("artwork".utf8)])
+    _ = try await second.resource(at: url)
+    XCTAssertEqual(recorder.urls.count, 1,
+      "Artwork must share persistent caching even without HTTP cache headers")
+  }
+
   func testCollectsAndResolvesNestedResourcesWithoutDuplicates() throws {
     let json = #"""
       {
