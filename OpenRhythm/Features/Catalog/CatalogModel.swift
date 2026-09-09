@@ -8,104 +8,80 @@ final class CatalogModel {
   private let client: SonolusClient
   private var levelsByID = [String: SonolusLevelItem]()
   private var generation = 0
+  private var activeQuery = ""
 
-  var songs = [CatalogSong]()
-  var filter = CatalogFilter()
-  var isLoading = false
-  var loadedPageCount = 0
-  var totalPageCount = 0
-  var errorMessage: String?
+  private(set) var songs = [CatalogSong]()
+  var query = ""
+  var filter = CatalogFilter() {
+    didSet { visibleSongs = filter.apply(to: songs) }
+  }
+  private(set) var visibleSongs = [CatalogSong]()
+  private(set) var isLoading = false
+  private(set) var loadedPageCount = 0
+  private(set) var totalPageCount = 0
+  private(set) var errorMessage: String?
+
+  var hasMorePages: Bool { loadedPageCount < totalPageCount }
 
   init(server: ServerDescriptor, client: SonolusClient = SonolusClient()) {
     self.server = server
     self.client = client
   }
 
-  var visibleSongs: [CatalogSong] {
-    filter.apply(to: songs)
-  }
-
-  func refresh() async {
+  func refresh(forceReload: Bool = false) async {
     generation += 1
-    let currentGeneration = generation
+    activeQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
     levelsByID.removeAll()
     songs.removeAll()
+    visibleSongs.removeAll()
     loadedPageCount = 0
-    totalPageCount = 0
-    errorMessage = nil
-    isLoading = true
-    defer {
-      if currentGeneration == generation {
-        isLoading = false
-      }
-    }
+    totalPageCount = 1
+    isLoading = false
+    await loadNextPage(forceReload: forceReload)
+  }
 
+  func searchAfterDelay() async {
     do {
-      let first = try await client.levels(
-        on: server,
-        page: 0
-      )
-      guard currentGeneration == generation else { return }
-      merge(first.items)
-      totalPageCount = first.pageCount
-      loadedPageCount = 1
+      try await Task.sleep(for: .milliseconds(300))
+      try Task.checkCancellation()
+      await refresh()
+    } catch { }
+  }
 
-      try await loadRemainingPages(
-        in: first.pageCount,
-        generation: currentGeneration
-      )
+  func loadNextPage(forceReload: Bool = false) async {
+    guard !isLoading, hasMorePages else { return }
+    let currentGeneration = generation
+    let requestedQuery = activeQuery
+    let page = loadedPageCount
+    isLoading = true
+    errorMessage = nil
+    defer {
+      if currentGeneration == generation { isLoading = false }
+    }
+    do {
+      let response = try await client.levels(on: server, page: page,
+        query: requestedQuery, forceReload: forceReload)
+      try Task.checkCancellation()
+      guard currentGeneration == generation else { return }
+      for level in response.items { levelsByID[level.id] = level }
+      let levels = Array(levelsByID.values)
+      let server = server
+      let grouped = await Task.detached(priority: .userInitiated) {
+        CatalogBuilder.group(levels: levels, server: server)
+      }.value
+      try Task.checkCancellation()
+      guard currentGeneration == generation else { return }
+      songs = grouped
+      // Server search covers unloaded pages. Local filters only select sort
+      // and difficulty, preserving aliases supported by the server.
+      visibleSongs = filter.apply(to: songs)
+      totalPageCount = max(0, response.pageCount)
+      loadedPageCount = page + 1
     } catch is CancellationError {
       return
     } catch {
       guard currentGeneration == generation else { return }
       errorMessage = error.localizedDescription
     }
-  }
-
-  private func loadRemainingPages(
-    in pageCount: Int,
-    generation currentGeneration: Int
-  ) async throws {
-    guard pageCount > 1 else { return }
-
-    try await withThrowingTaskGroup(
-      of: [SonolusLevelItem].self
-    ) { group in
-      let maximumConcurrentRequests = 6
-      var nextPage = 1
-
-      func addNextPage() {
-        guard nextPage < pageCount else { return }
-        let page = nextPage
-        nextPage += 1
-        group.addTask { [client, server] in
-          try await client.levels(on: server, page: page).items
-        }
-      }
-
-      for _ in 0..<min(maximumConcurrentRequests, pageCount - 1) {
-        addNextPage()
-      }
-
-      while let items = try await group.next() {
-        guard currentGeneration == generation else {
-          group.cancelAll()
-          return
-        }
-        merge(items)
-        loadedPageCount += 1
-        addNextPage()
-      }
-    }
-  }
-
-  private func merge(_ levels: [SonolusLevelItem]) {
-    for level in levels {
-      levelsByID[level.id] = level
-    }
-    songs = CatalogBuilder.group(
-      levels: Array(levelsByID.values),
-      server: server
-    )
   }
 }

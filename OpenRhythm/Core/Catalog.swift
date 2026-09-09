@@ -27,8 +27,21 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
     return (values.min() ?? 0)...(values.max() ?? 0)
   }
 
-  var searchIndex: Set<String> {
-    Set(
+  let searchIndex: Set<String>
+
+  init(
+    id: String, server: ServerDescriptor, title: LocalizedText,
+    artists: LocalizedText, coverURL: URL?, variants: [SonolusLevelItem],
+    levelOrigins: [CatalogLevelOrigin]
+  ) {
+    self.id = id
+    self.server = server
+    self.title = title
+    self.artists = artists
+    self.coverURL = coverURL
+    self.variants = variants
+    self.levelOrigins = levelOrigins
+    searchIndex = Set(
       title.values.flatMap { language, value in
         SearchNormalizer.searchableForms(
           of: value,

@@ -29,7 +29,7 @@ struct CatalogView: View {
           description: Text(errorMessage)
         )
       } else if !model.isLoading && model.visibleSongs.isEmpty {
-        ContentUnavailableView.search(text: model.filter.query)
+        ContentUnavailableView.search(text: model.query)
       }
 
       ForEach(model.visibleSongs) { song in
@@ -38,6 +38,16 @@ struct CatalogView: View {
         } label: {
           SongRow(song: song)
         }
+      }
+    }
+    .safeAreaInset(edge: .bottom) {
+      if model.hasMorePages && !model.isLoading {
+        Button(model.errorMessage == nil ? "Load More Songs" : "Retry") {
+          Task { await model.loadNextPage() }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
       }
     }
     .navigationTitle("Songs")
@@ -76,12 +86,10 @@ struct CatalogView: View {
       }
     }
     .refreshable {
-      await model.refresh()
+      await model.refresh(forceReload: true)
     }
-    .task {
-      if model.songs.isEmpty {
-        await model.refresh()
-      }
+    .task(id: model.query) {
+      await model.searchAfterDelay()
     }
   }
 
@@ -94,8 +102,8 @@ struct CatalogView: View {
 
   private var queryBinding: Binding<String> {
     Binding(
-      get: { model.filter.query },
-      set: { model.filter.query = $0 }
+      get: { model.query },
+      set: { model.query = $0 }
     )
   }
 

@@ -24,6 +24,7 @@ private final class OfflineCatalogModel {
 
 struct OfflineCatalogView: View {
   @State private var model = OfflineCatalogModel()
+  @State private var query = ""
 
   var body: some View {
     List {
@@ -72,6 +73,13 @@ struct OfflineCatalogView: View {
     }
     .refreshable { await model.refresh() }
     .task { await model.refresh() }
+    .task(id: query) {
+      do {
+        try await Task.sleep(for: .milliseconds(300))
+        try Task.checkCancellation()
+        model.filter.query = query
+      } catch { }
+    }
   }
 
   private var emptyDescription: String {
@@ -82,8 +90,8 @@ struct OfflineCatalogView: View {
 
   private var queryBinding: Binding<String> {
     Binding(
-      get: { model.filter.query },
-      set: { model.filter.query = $0 }
+      get: { query },
+      set: { query = $0 }
     )
   }
 

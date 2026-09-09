@@ -2,6 +2,73 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  @MainActor
+  func testCatalogLoadsOnlyRequestedPagesAndCancelsDebouncedSearch() async throws {
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      return Data(#"{"pageCount":96,"items":[]}"#.utf8)
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    await model.refresh()
+    XCTAssertEqual(recorder.urls.count, 1)
+    XCTAssertEqual(model.loadedPageCount, 1)
+    XCTAssertTrue(model.hasMorePages)
+    await model.loadNextPage()
+    XCTAssertEqual(recorder.urls.count, 2)
+    XCTAssertEqual(model.loadedPageCount, 2)
+    model.query = "b"
+    let cancelled = Task { await model.searchAfterDelay() }
+    cancelled.cancel()
+    await cancelled.value
+    XCTAssertEqual(recorder.urls.count, 2)
+    model.query = "bokura"
+    await model.searchAfterDelay()
+    XCTAssertEqual(recorder.urls.count, 3)
+    XCTAssertEqual(model.loadedPageCount, 1)
+    let query = URLComponents(url: try XCTUnwrap(recorder.urls.last),
+      resolvingAgainstBaseURL: false)?.queryItems ?? []
+    XCTAssertEqual(query.first { $0.name == "keywords" }?.value, "bokura")
+    XCTAssertEqual(query.first { $0.name == "page" }?.value, "0")
+  }
+
+  func testResponsesAreCoalescedPersistedAndExplicitlyRefreshable() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = SonolusResponseCache(rootURL: root)
+    let counter = FetchCounter()
+    let url = URL(string: "https://example.test/page?keywords=song&page=0")!
+    let fetch: @Sendable () async throws -> Data = {
+      await counter.increment()
+      try await Task.sleep(for: .milliseconds(20))
+      return Data("response".utf8)
+    }
+    async let first = cache.data(at: url, maximumAge: 600, fetch: fetch)
+    async let second = cache.data(at: url, maximumAge: 600, fetch: fetch)
+    let responses = try await [first, second]
+    XCTAssertEqual(responses, [Data("response".utf8), Data("response".utf8)])
+    var count = await counter.count
+    XCTAssertEqual(count, 1)
+    let reopened = SonolusResponseCache(rootURL: root)
+    _ = try await reopened.data(at: url, maximumAge: 600, fetch: fetch)
+    count = await counter.count
+    XCTAssertEqual(count, 1, "Disk cache survives new client/cache instances")
+    _ = try await reopened.data(at: url, maximumAge: 600,
+      forceReload: true, fetch: fetch)
+    count = await counter.count
+    XCTAssertEqual(count, 2)
+    _ = try await reopened.data(at: url, maximumAge: 0, fetch: fetch)
+    count = await counter.count
+    XCTAssertEqual(count, 3, "Expired entries refresh")
+  }
+
   func testCollectsAndResolvesNestedResourcesWithoutDuplicates() throws {
     let json = #"""
       {
@@ -145,6 +212,18 @@ final class OfflineStoreTests: XCTestCase {
     let containsRepair = await store.contains(level: level, from: server)
     XCTAssertTrue(containsRepair)
   }
+}
+
+private actor FetchCounter {
+  private(set) var count = 0
+  func increment() { count += 1 }
+}
+
+private final class RequestRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values = [URL]()
+  var urls: [URL] { lock.withLock { values } }
+  func append(_ url: URL) { lock.withLock { values.append(url) } }
 }
 
 private final class StubURLProtocol: URLProtocol {
