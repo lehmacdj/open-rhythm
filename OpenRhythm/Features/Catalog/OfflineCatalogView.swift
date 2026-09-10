@@ -79,7 +79,7 @@ struct OfflineCatalogView: View {
     }
     .sheet(isPresented: $showsFilters) {
       CatalogFilterPanel(filter: $model.filter, engines: model.engines,
-        selectedEngineKey: $model.selectedEngineKey)
+        selectedEngineKey: $model.selectedEngineKey, songs: model.songs)
     }
     .refreshable { await model.refresh() }
     .task { await model.refresh() }

@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 struct CatalogView: View {
+  @Environment(\.scenePhase) private var scenePhase
   @State private var model: CatalogModel
   @State private var showsFilters = false
   private let server: ServerDescriptor
@@ -51,12 +52,11 @@ struct CatalogView: View {
           if model.isLoading {
             ProgressView()
             Text(progressLabel)
-          } else if model.hasMorePages {
-            Button(model.errorMessage == nil ? "Load More Songs" : "Retry") {
+          } else if model.hasMorePages && (model.errorMessage != nil
+            || model.visibleSongs.isEmpty || model.needsMoreMatches) {
+            Button(model.errorMessage == nil ? "Search More Songs" : "Retry") {
               Task { await model.loadNextPage() }
             }
-          } else {
-            Text("All loaded songs shown").foregroundStyle(.secondary)
           }
         }
         .frame(height: 32)
@@ -86,13 +86,17 @@ struct CatalogView: View {
     }
     .sheet(isPresented: $showsFilters) {
       CatalogFilterPanel(filter: $model.filter, engines: model.engines,
-        selectedEngineKey: $model.selectedEngineKey)
+        selectedEngineKey: $model.selectedEngineKey, songs: model.songs)
     }
     .refreshable {
       await model.refresh(forceReload: true)
     }
     .task(id: model.query) {
       await model.searchAfterDelay()
+    }
+    .task(id: model.loadedPageCount) { await model.prefetchNextPages() }
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .active { Task { await model.searchAfterDelay() } }
     }
   }
 
@@ -135,6 +139,8 @@ struct CatalogFilterPanel: View {
   @Binding var filter: CatalogFilter
   let engines: [CatalogEngineChoice]
   @Binding var selectedEngineKey: String
+  let songs: [CatalogSong]
+  @State private var initialRatingLimit = 1
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
@@ -144,8 +150,6 @@ struct CatalogFilterPanel: View {
           Picker("Engine", selection: $selectedEngineKey) {
             ForEach(engines) { Text($0.name).tag($0.id) }
           }
-        } else if let engine = engines.first {
-          Section { Text(engine.name) }
         }
         Section("Sort") {
           Picker("Sort by", selection: $filter.sort) {
@@ -153,22 +157,8 @@ struct CatalogFilterPanel: View {
           }
         }
         Section("Difficulty Rating") {
-          Toggle("Limit rating range", isOn: Binding(
-            get: { filter.minimumRating != nil || filter.maximumRating != nil },
-            set: {
-              filter.minimumRating = $0 ? 0 : nil
-              filter.maximumRating = $0 ? 50 : nil
-            }))
-          if filter.minimumRating != nil || filter.maximumRating != nil {
-            Stepper("Minimum: \(filter.minimumRating ?? 0)", value: Binding(
-              get: { filter.minimumRating ?? 0 },
-              set: { filter.minimumRating = $0 }),
-              in: 0...(filter.maximumRating ?? 100))
-            Stepper("Maximum: \(filter.maximumRating ?? 100)", value: Binding(
-              get: { filter.maximumRating ?? 100 },
-              set: { filter.maximumRating = $0 }),
-              in: (filter.minimumRating ?? 0)...100)
-          }
+          DifficultyRangeSlider(minimum: $filter.minimumRating,
+            maximum: $filter.maximumRating, limit: ratingLimit)
         }
         Section("Chart Types") {
           ForEach(Difficulty.allCases, id: \.self) { difficulty in
@@ -182,13 +172,106 @@ struct CatalogFilterPanel: View {
           }
         }
         Section {
-          Text("Filters and sorting are saved for this engine. Search is not saved.")
-            .foregroundStyle(.secondary)
           Button("Reset Filters") { filter = CatalogFilter() }
         }
       }
       .navigationTitle("Filters")
       .toolbar { Button("Done") { dismiss() } }
+      .onAppear { captureRatingLimit() }
+      .onChange(of: selectedEngineKey) { _, _ in captureRatingLimit() }
+    }
+  }
+
+  private var ratingLimit: Int {
+    let largest = songs.filter { $0.engineKey == selectedEngineKey }
+      .flatMap(\.variants).map(\.rating).max() ?? 10
+    let estimated = Int(ceil(min(1_000_000, max(1, Double(largest) * 1.2))))
+    return max(estimated, initialRatingLimit)
+  }
+
+  private func captureRatingLimit() {
+    initialRatingLimit = max(1, filter.maximumRating ?? 0, filter.minimumRating ?? 0)
+  }
+}
+
+#Preview("Difficulty Filters") {
+  @Previewable @State var filter: CatalogFilter = {
+    var value = CatalogFilter()
+    value.minimumRating = 7
+    value.maximumRating = 9
+    return value
+  }()
+  @Previewable @State var engine = "preview"
+  CatalogFilterPanel(filter: $filter,
+    engines: [CatalogEngineChoice(id: "preview", name: "Love Live!")],
+    selectedEngineKey: $engine, songs: [])
+}
+
+private struct DifficultyRangeSlider: View {
+  @Binding var minimum: Int?
+  @Binding var maximum: Int?
+  let limit: Int
+  @State private var draggingLower: Bool?
+
+  private var lower: Int { min(limit, max(0, minimum ?? 0)) }
+  private var upper: Int { min(limit, max(lower, maximum ?? limit)) }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack {
+        Text("\(lower)")
+        Spacer()
+        Text(maximum.map(String.init) ?? "Any")
+      }
+      .monospacedDigit()
+      GeometryReader { geometry in
+        let width = max(1, geometry.size.width - 44)
+        let left = 22 + width * Double(lower) / Double(limit)
+        let right = 22 + width * Double(upper) / Double(limit)
+        ZStack(alignment: .leading) {
+          Capsule().fill(.secondary.opacity(0.2))
+            .frame(width: width, height: 4).offset(x: 22)
+          Capsule().fill(Color.accentColor)
+            .frame(width: max(0, right - left), height: 4).offset(x: left)
+          thumb(lower: true).position(x: left, y: 22)
+          thumb(lower: false).position(x: right, y: 22)
+        }
+        .frame(height: 44)
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+          if draggingLower == nil {
+            draggingLower = value.startLocation.x <= (left + right) / 2
+          }
+          let rating = Int(((value.location.x - 22) / width * Double(limit)).rounded())
+          set(rating, lower: draggingLower == true)
+        }.onEnded { _ in draggingLower = nil })
+      }
+      .frame(height: 44)
+    }
+  }
+
+  private func thumb(lower isLower: Bool) -> some View {
+    Circle().fill(.white).shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+      .overlay { Circle().stroke(Color.accentColor, lineWidth: 2) }
+      .frame(width: 26, height: 26)
+      .frame(width: 44, height: 44)
+      .accessibilityElement()
+      .accessibilityLabel(isLower ? "Minimum Difficulty" : "Maximum Difficulty")
+      .accessibilityValue(String(isLower ? lower : upper))
+      .accessibilityAdjustableAction { direction in
+        let current = isLower ? lower : upper
+        if direction == .increment { set(current + 1, lower: isLower) }
+        if direction == .decrement { set(current - 1, lower: isLower) }
+      }
+  }
+
+  private func set(_ value: Int, lower isLower: Bool) {
+    if isLower {
+      let bounded = min(upper, max(0, value))
+      minimum = bounded == 0 ? nil : bounded
+    } else {
+      let bounded = max(lower, min(limit, value))
+      maximum = bounded == limit ? nil : bounded
     }
   }
 }

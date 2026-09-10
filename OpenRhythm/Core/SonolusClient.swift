@@ -52,13 +52,16 @@ actor SonolusClient {
     }
 
     let data = try await requestData(from: url, forceReload: forceReload)
-    return try decoder.decode(SonolusLevelList.self, from: data)
+    var response = try decoder.decode(SonolusLevelList.self, from: data)
+    response.fetchedAt = await cache?.storedAt(url) ?? Date()
+    return response
   }
 
   func levelDetails(
     for level: SonolusLevelItem,
     on server: ServerDescriptor,
-    locale: Locale = .current
+    locale: Locale = .current,
+    forceReload: Bool = false
   ) async throws -> Data {
     let language = locale.language.languageCode?.identifier ?? "en"
     var components = URLComponents(
@@ -73,11 +76,11 @@ actor SonolusClient {
     guard let url = components?.url else {
       throw SonolusClientError.invalidURL
     }
-    return try await requestData(from: url)
+    return try await requestData(from: url, forceReload: forceReload)
   }
 
-  func resource(at url: URL) async throws -> Data {
-    try await requestData(from: url, accept: "*/*")
+  func resource(at url: URL, forceReload: Bool = false) async throws -> Data {
+    try await requestData(from: url, accept: "*/*", forceReload: forceReload)
   }
 
   func serverTitle(at baseURL: URL) async throws -> String {
@@ -86,40 +89,41 @@ actor SonolusClient {
     return try decoder.decode(Info.self, from: data).title.displayValue()
   }
 
-  func completeSong(_ song: CatalogSong) async throws -> CatalogSong {
+  func completeSong(_ song: CatalogSong, forceReload: Bool = false) async throws -> CatalogSong {
     guard let first = song.variants.first else { return song }
     let server = song.server(for: first)
-    let key = first.songKey(server: server)
     let query = song.title.displayValue()
     guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw SonolusClientError.invalidResponse
     }
     var variants = Dictionary(song.variants.map { ($0.id, $0) },
       uniquingKeysWith: { first, _ in first })
-    let firstPage = try await levels(on: server, page: 0, query: query)
+    let firstPage = try await levels(on: server, page: 0, query: query,
+      forceReload: forceReload)
     // Do not accidentally crawl a whole server if it ignores keyword search.
     guard firstPage.pageCount <= 20 else {
       throw RuntimeBundleError.missingResource("a bounded song difficulty search")
     }
-    var found = false
-    func merge(_ items: [SonolusLevelItem]) {
-      for level in items where level.songKey(server: server) == key {
-        found = true
-        variants[level.id] = level
-      }
-    }
-    merge(firstPage.items)
+    var items = firstPage.items
     if firstPage.pageCount > 1 {
       for page in 1..<firstPage.pageCount {
         try Task.checkCancellation()
-        merge(try await levels(on: server, page: page, query: query).items)
+        items += try await levels(on: server, page: page, query: query,
+          forceReload: forceReload).items
       }
     }
-    guard found else {
+    // Music URLs often contain a content hash and change when audio is
+    // replaced. A stable chart identity locates the song's current key.
+    let current = items.first { $0.id == first.id }
+      ?? items.first { variants[$0.id] != nil } ?? first
+    let key = current.songKey(server: server)
+    let matching = items.filter { $0.songKey(server: server) == key }
+    guard !matching.isEmpty else {
       throw RuntimeBundleError.missingResource("the song's difficulty list")
     }
+    for level in matching { variants[level.id] = level }
     return CatalogBuilder.group(levels: Array(variants.values), server: server)
-      .first { $0.variants.contains { $0.id == first.id } } ?? song
+      .first { $0.variants.contains { $0.id == current.id } } ?? song
   }
 
   private func requestData(
@@ -131,7 +135,9 @@ actor SonolusClient {
     request.timeoutInterval = 60
     request.setValue(accept, forHTTPHeaderField: "Accept")
     request.setValue("1.1.2", forHTTPHeaderField: "Sonolus-Version")
-    if forceReload { request.cachePolicy = .reloadIgnoringLocalCacheData }
+    // The explicit response cache owns freshness. A second URLSession cache
+    // must never return an old response and give it a new ten-minute lifetime.
+    request.cachePolicy = .reloadIgnoringLocalCacheData
     let fetchRequest = request
     let fetch: @Sendable () async throws -> Data = { [session] in
       let (data, response) = try await session.data(for: fetchRequest)
@@ -144,10 +150,8 @@ actor SonolusClient {
       return data
     }
     guard let cache else { return try await fetch() }
-    let immutable = url.lastPathComponent.count == 40
-      && url.lastPathComponent.allSatisfy(\.isHexDigit)
     return try await cache.data(
-      at: url, maximumAge: immutable ? 365 * 86_400 : 600,
+      at: url, maximumAge: 600,
       forceReload: forceReload, fetch: fetch
     )
   }
@@ -178,6 +182,7 @@ actor SonolusResponseCache {
     if !forceReload,
       let attributes = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
       let date = attributes.contentModificationDate,
+      Date().timeIntervalSince(date) >= 0,
       Date().timeIntervalSince(date) < maximumAge,
       let data = try? Data(contentsOf: file) {
       return data
@@ -193,6 +198,13 @@ actor SonolusResponseCache {
       trim()
     }
     return data
+  }
+
+  func storedAt(_ url: URL) -> Date? {
+    let key = SHA256.hash(data: Data(url.absoluteString.utf8))
+      .map { String(format: "%02x", $0) }.joined()
+    return (try? rootURL.appendingPathComponent(key).resourceValues(
+      forKeys: [.contentModificationDateKey]))?.contentModificationDate
   }
 
   private func trim() {

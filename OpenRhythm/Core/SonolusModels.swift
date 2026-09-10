@@ -55,11 +55,12 @@ struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
   }
 
   func songKey(server: ServerDescriptor) -> String {
+    let prefix = engine == nil ? "" : "\(engineKey(server: server))\u{0}"
     if let bgmURL = bgm.resolved(against: server.baseURL) {
-      return bgmURL.absoluteString
+      return prefix + bgmURL.absoluteString
     }
 
-    return SearchNormalizer.normalize(
+    return prefix + SearchNormalizer.normalize(
       title.searchValues.joined(separator: " ")
         + "\u{0}"
         + artists.searchValues.joined(separator: " ")
@@ -76,6 +77,8 @@ struct SonolusEngineIdentity: Codable, Hashable, Sendable {
 struct SonolusLevelList: Codable, Sendable {
   let pageCount: Int
   let items: [SonolusLevelItem]
+  var fetchedAt = Date()
+  private enum CodingKeys: String, CodingKey { case pageCount, items }
 }
 
 enum Difficulty: String, CaseIterable, Codable, Hashable, Sendable {

@@ -14,6 +14,16 @@ struct OfflineLevelManifest: Codable, Hashable, Identifiable, Sendable {
   let itemData: Data
   let resources: [OfflineResource]
   let downloadedAt: Date
+
+  var catalogLevel: SonolusLevelItem {
+    struct Identity: Decodable { let engine: SonolusEngineIdentity? }
+    var result = level
+    if result.engine == nil {
+      result.engine = (try? JSONDecoder().decode(Identity.self, from: itemData))?
+        .engine
+    }
+    return result
+  }
 }
 
 private struct OfflineResourceDownload: Sendable {
@@ -88,6 +98,9 @@ actor OfflineStore {
   private let fileManager: FileManager
   private let rootURL: URL
   private let client: SonolusClient
+  private var activeDownloads = 0
+  private var cleanupRequested = false
+  private var deletionVersions = [String: Int]()
 
   init(
     rootURL: URL? = nil,
@@ -113,10 +126,22 @@ actor OfflineStore {
 
   func download(
     level: SonolusLevelItem,
-    from server: ServerDescriptor
+    from server: ServerDescriptor,
+    forceReload: Bool = false,
+    reusedResources: [URL: OfflineResource] = [:],
+    expectedVersions: [String: Int] = [:]
   ) async throws -> OfflineLevelManifest {
-    if let existing = try manifest(level: level, from: server) { return existing }
-    let detailsData = try await client.levelDetails(for: level, on: server)
+    let id = manifestID(level: level, server: server)
+    var versions = expectedVersions
+    if versions[id] == nil { versions[id] = deletionVersions[id, default: 0] }
+    try checkVersions(versions)
+    activeDownloads += 1
+    defer { finishDownload() }
+    if !forceReload, let existing = try manifest(level: level, from: server) {
+      return existing
+    }
+    let detailsData = try await client.levelDetails(
+      for: level, on: server, forceReload: forceReload)
     guard
       let details = try JSONSerialization.jsonObject(with: detailsData)
         as? [String: Any],
@@ -163,10 +188,22 @@ actor OfflineStore {
           continue
         }
       }
+      if let resource = reusedResources[locator.url],
+        resource.expectedSHA1 == hash,
+        ContentAddress.isSafeObjectName(resource.objectName),
+        let data = try? Data(contentsOf:
+          objectsURL.appendingPathComponent(resource.objectName)),
+        ContentAddress.validates(data, as: resource) {
+        resources.append(resource)
+        continue
+      }
       pending.append((url: locator.url, hash: hash))
     }
 
-    let downloads = try await downloadResources(pending)
+    let downloads = try await downloadResources(pending,
+      forceReload: forceReload)
+    try Task.checkCancellation()
+    try checkVersions(versions)
     for download in downloads {
       let objectURL = objectsURL.appendingPathComponent(
         download.resource.objectName
@@ -176,11 +213,11 @@ actor OfflineStore {
     }
     resources.sort { $0.remoteURL.absoluteString < $1.remoteURL.absoluteString }
 
-    let id = Data("\(server.id):\(level.id)".utf8).sha256Hex
     let manifest = OfflineLevelManifest(
       id: id,
       server: server,
-      level: level,
+      level: (try? JSONDecoder().decode(SonolusLevelItem.self, from: itemData))
+        .flatMap { $0.id == level.id ? $0 : nil } ?? level,
       itemData: itemData,
       resources: resources,
       downloadedAt: Date()
@@ -190,19 +227,38 @@ actor OfflineStore {
       to: manifestsURL.appendingPathComponent("\(id).json"),
       options: [.atomic]
     )
+    if forceReload { cleanupRequested = true }
     return manifest
   }
 
   func download(
     song: CatalogSong,
+    forceReload: Bool = false,
     progress: @Sendable (Int, Int) async -> Void = { _, _ in }
   ) async throws -> CatalogSong {
-    let complete = try await client.completeSong(song)
+    activeDownloads += 1
+    defer { finishDownload() }
+    let startVersions = deletionVersions
+    var expectedVersions = Dictionary(uniqueKeysWithValues: song.variants.map {
+      let id = manifestID(level: $0, server: song.server(for: $0))
+      return (id, startVersions[id, default: 0])
+    })
+    let complete = try await client.completeSong(song, forceReload: forceReload)
+    for level in complete.variants {
+      let id = manifestID(level: level, server: complete.server(for: level))
+      expectedVersions[id] = startVersions[id, default: 0]
+    }
+    var refreshedResources = [URL: OfflineResource]()
     await progress(0, complete.variants.count)
     // Sequential charts reuse the first chart's cached common resources.
     for (index, level) in complete.variants.enumerated() {
       try Task.checkCancellation()
-      _ = try await download(level: level, from: complete.server(for: level))
+      let manifest = try await download(level: level,
+        from: complete.server(for: level), forceReload: forceReload,
+        reusedResources: refreshedResources, expectedVersions: expectedVersions)
+      for resource in manifest.resources {
+        refreshedResources[resource.remoteURL] = resource
+      }
       await progress(index + 1, complete.variants.count)
     }
     return complete
@@ -340,7 +396,7 @@ actor OfflineStore {
       baseURL: rootURL
     )
     let grouped = Dictionary(grouping: entries) { manifest in
-      manifest.level.songKey(server: manifest.server)
+      manifest.catalogLevel.songKey(server: manifest.server)
     }
 
     return grouped.map { key, manifests in
@@ -364,9 +420,9 @@ actor OfflineStore {
         title: first.level.title,
         artists: first.level.artists,
         coverURL: coverURL,
-        variants: ordered.map(\.level),
+        variants: ordered.map(\.catalogLevel),
         levelOrigins: ordered.map {
-          CatalogLevelOrigin(level: $0.level, server: $0.server)
+          CatalogLevelOrigin(level: $0.catalogLevel, server: $0.server)
         }
       )
     }
@@ -385,10 +441,67 @@ actor OfflineStore {
   }
 
   func remove(_ manifest: OfflineLevelManifest) throws {
-    let url = manifestsURL.appendingPathComponent("\(manifest.id).json")
+    // Derive the filename, never trust a path from a decoded manifest.
+    let id = Data("\(manifest.server.id):\(manifest.level.id)".utf8).sha256Hex
+    deletionVersions[id, default: 0] += 1
+    let url = manifestsURL.appendingPathComponent("\(id).json")
     if fileManager.fileExists(atPath: url.path) {
       try fileManager.removeItem(at: url)
     }
+    cleanupRequested = true
+    if activeDownloads == 0 { try collectUnusedResources() }
+  }
+
+  func remove(song: CatalogSong) throws {
+    let targets = Set(song.variants.map { level in
+      Data("\(song.server(for: level).id):\(level.id)".utf8).sha256Hex
+    })
+    // Read all manifests before deleting any; malformed metadata must not
+    // cause shared assets to be mistaken for unreferenced files.
+    let entries = try manifests()
+    // Mark even missing charts so a first download cannot resurrect the song.
+    for id in targets { deletionVersions[id, default: 0] += 1 }
+    activeDownloads += 1
+    defer { finishDownload() }
+    for entry in entries where targets.contains(
+      Data("\(entry.server.id):\(entry.level.id)".utf8).sha256Hex) {
+      try remove(entry)
+    }
+  }
+
+  private func finishDownload() {
+    activeDownloads -= 1
+    if activeDownloads == 0, cleanupRequested {
+      try? collectUnusedResources()
+    }
+  }
+
+  private func manifestID(level: SonolusLevelItem, server: ServerDescriptor)
+    -> String {
+    Data("\(server.id):\(level.id)".utf8).sha256Hex
+  }
+
+  private func checkVersions(_ expected: [String: Int]) throws {
+    guard expected.allSatisfy({ deletionVersions[$0.key, default: 0] == $0.value })
+    else { throw CancellationError() }
+  }
+
+  private func collectUnusedResources() throws {
+    let retained = Set(try manifests().flatMap(\.resources).map(\.objectName))
+    for directory in [objectsURL, playbackURL] {
+      guard fileManager.fileExists(atPath: directory.path) else { continue }
+      let files = try fileManager.contentsOfDirectory(at: directory,
+        includingPropertiesForKeys: [.isRegularFileKey])
+      for file in files {
+        let name = directory == playbackURL
+          ? file.deletingPathExtension().lastPathComponent : file.lastPathComponent
+        guard ContentAddress.isSafeObjectName(name), !retained.contains(name),
+          try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+        else { continue }
+        try fileManager.removeItem(at: file)
+      }
+    }
+    cleanupRequested = false
   }
 
   private var objectsURL: URL {
@@ -437,7 +550,8 @@ actor OfflineStore {
   }
 
   private func downloadResources(
-    _ locators: [(url: URL, hash: String?)]
+    _ locators: [(url: URL, hash: String?)],
+    forceReload: Bool
   ) async throws -> [OfflineResourceDownload] {
     try await withThrowingTaskGroup(
       of: OfflineResourceDownload.self,
@@ -445,7 +559,8 @@ actor OfflineStore {
     ) { group in
       for locator in locators {
         group.addTask { [client] in
-          let data = try await client.resource(at: locator.url)
+          let data = try await client.resource(at: locator.url,
+            forceReload: forceReload)
           if let expected = locator.hash,
             data.sha1Hex != expected {
             throw OfflineStoreError.checksumMismatch(locator.url)

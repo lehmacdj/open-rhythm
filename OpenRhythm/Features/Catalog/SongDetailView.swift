@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SongDetailView: View {
+  @Environment(\.dismiss) private var dismiss
   @State private var song: CatalogSong
   let isOffline: Bool
   private let filter: CatalogFilter
@@ -12,6 +13,7 @@ struct SongDetailView: View {
   @State private var downloadProgress = ""
   @State private var isLoadingVariants = false
   @State private var discoverySucceeded = false
+  @State private var confirmsDelete = false
 
   init(song: CatalogSong, isOffline: Bool = false, filter: CatalogFilter = CatalogFilter()) {
     _song = State(initialValue: song)
@@ -57,6 +59,7 @@ struct SongDetailView: View {
           } label: {
             Label("Play", systemImage: "play.fill")
           }
+          .disabled(isDownloading)
         }
         if !isOffline {
           Button {
@@ -71,6 +74,19 @@ struct SongDetailView: View {
             }
           }
           .disabled(isDownloading || isDownloaded || isLoadingVariants)
+        }
+        if isOffline || isDownloaded {
+          Button {
+            Task { await downloadSong(forceReload: true) }
+          } label: {
+            Label(isDownloading ? downloadProgress : "Update Download",
+              systemImage: "arrow.clockwise")
+          }
+          .disabled(isDownloading || isLoadingVariants)
+          Button("Delete Download", role: .destructive) {
+            confirmsDelete = true
+          }
+          .disabled(isDownloading)
         }
       }
 
@@ -118,6 +134,20 @@ struct SongDetailView: View {
     }
     .navigationTitle("Song")
     .navigationBarTitleDisplayMode(.inline)
+    .confirmationDialog("Delete this song and its downloaded difficulties?",
+      isPresented: $confirmsDelete, titleVisibility: .visible) {
+      Button("Delete Download", role: .destructive) {
+        Task {
+          do {
+            try await OfflineStore.shared.remove(song: song)
+            isDownloaded = false
+            if isOffline { dismiss() }
+          } catch { downloadError = error.localizedDescription }
+        }
+      }
+    } message: {
+      Text("Past results are kept. You can download the song again later.")
+    }
     .task {
       guard !isOffline, !discoverySucceeded else { return }
       isLoadingVariants = true
@@ -183,16 +213,24 @@ struct SongDetailView: View {
     isDownloaded = downloaded
   }
 
-  private func downloadSong() async {
+  private func downloadSong(forceReload: Bool = false) async {
     isDownloading = true
     downloadProgress = "Finding difficulties…"
     downloadError = nil
     defer { isDownloading = false }
 
     do {
-      song = try await OfflineStore.shared.download(song: song) { done, total in
+      let complete = try await OfflineStore.shared.download(song: song,
+        forceReload: forceReload) { done, total in
         await MainActor.run { downloadProgress = "Downloading \(done)/\(total)…" }
       }
+      // Keep offline artwork and origin metadata when updating from Offline.
+      if isOffline {
+        song = try await OfflineStore.shared.catalogSongs().first {
+          $0.variants.contains { $0.id == selectedLevelID }
+            && $0.engineKey == complete.engineKey
+        } ?? complete
+      } else { song = complete }
       discoverySucceeded = true
       isDownloaded = true
     } catch {

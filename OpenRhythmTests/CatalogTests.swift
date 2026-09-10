@@ -4,6 +4,79 @@ import XCTest
 final class CatalogTests: XCTestCase {
   private let server = ServerDescriptor.defaults[0]
 
+  func testRangeSelectsLowestMatchingChartAndSeparatesEngines() {
+    var levels = zip([1, 5, 7, 9, 11],
+      ["#EASY", "#NORMAL", "#HARD", "#EXPERT", "#MASTER"]).map {
+      level(name: $0.1, rating: $0.0, difficulty: $0.1)
+    }
+    var filter = CatalogFilter()
+    filter.minimumRating = 7
+    filter.maximumRating = 9
+    let song = CatalogBuilder.group(levels: levels, server: server)[0]
+    XCTAssertEqual(filter.matchingVariants(in: song).map(\.rating), [7, 9])
+    filter.difficulties = [.easy]
+    XCTAssertTrue(filter.apply(to: [song]).isEmpty,
+      "The same chart must satisfy both rating and chart-type filters")
+    levels[0].engine = SonolusEngineIdentity(name: "one")
+    levels[1].engine = SonolusEngineIdentity(name: "two")
+    XCTAssertEqual(CatalogBuilder.group(levels: Array(levels.prefix(2)),
+      server: server).count, 2, "Shared music must not merge different engines")
+  }
+
+  @MainActor
+  func testPreferencesPersistPerEngineButNotSearch() throws {
+    let name = "OpenRhythmTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    let preferences = UserPreferences(defaults: defaults)
+    var filter = CatalogFilter()
+    filter.query = "temporary search"
+    filter.sort = .artist
+    filter.minimumRating = 7
+    filter.maximumRating = 9
+    preferences.save(filter, for: "one")
+    preferences.save(GameplayPreferences(scoreDisplay: .countDown, noteSpeed: 8),
+      for: "one")
+    let reopened = UserPreferences(defaults: defaults)
+    filter.query = ""
+    XCTAssertEqual(reopened.filter(for: "one"), filter)
+    XCTAssertEqual(reopened.filter(for: "two"), CatalogFilter())
+    XCTAssertEqual(reopened.gameplay(for: "one").noteSpeed, 8)
+    XCTAssertEqual(reopened.gameplay(for: "two"), GameplayPreferences())
+    XCTAssertEqual(ScoreDisplayMode.countDown.score(judgements: [:],
+      noteCount: 10), 1_000_000)
+    XCTAssertEqual(ScoreDisplayMode.countDown.score(judgements: [.miss: 1],
+      noteCount: 10), 900_000)
+    let all: [NoteJudgement: Int] = [.perfect: 7, .great: 1, .good: 1, .miss: 1]
+    XCTAssertEqual(ScoreDisplayMode.countDown.score(judgements: all, noteCount: 10),
+      ScoreDisplayMode.countUp.score(judgements: all, noteCount: 10))
+  }
+
+  @MainActor
+  func testServerEditsPersistAndCorruptConfigurationIsPreserved() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("servers.json")
+    let store = ServerStore(fileURL: url)
+    let normalized = try ServerDescriptor.normalizedURL(" EXAMPLE.com:443/path/ ")
+    XCTAssertEqual(normalized.absoluteString, "https://example.com/path")
+    XCTAssertThrowsError(try ServerDescriptor.normalizedURL("file:///tmp"))
+    XCTAssertThrowsError(try ServerDescriptor.normalizedURL("https://a:b@example.com"))
+    try store.add(url: normalized, name: "New")
+    XCTAssertThrowsError(try store.add(url: normalized, name: "Duplicate"))
+    try store.move(from: IndexSet(integer: 1), to: 0)
+    XCTAssertEqual(ServerStore(fileURL: url).servers.first?.name, "New")
+    try store.remove(at: IndexSet(integersIn: 0..<store.servers.count))
+    XCTAssertTrue(ServerStore(fileURL: url).servers.isEmpty)
+    let corrupt = Data("not JSON".utf8)
+    try corrupt.write(to: url)
+    let broken = ServerStore(fileURL: url)
+    XCTAssertNotNil(broken.loadError)
+    XCTAssertThrowsError(try broken.add(url: normalized, name: "New"))
+    XCTAssertEqual(try Data(contentsOf: url), corrupt)
+  }
+
   func testGroupsDifficultiesByBGM() {
     let levels = [
       level(name: "easy", rating: 1, difficulty: "#EASY"),
