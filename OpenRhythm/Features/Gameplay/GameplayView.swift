@@ -90,6 +90,10 @@ struct GameplayView: View {
         .frame(width: geometry.size.width, height: geometry.size.height)
       }
       .ignoresSafeArea()
+      JudgementOverlay(feedback: model.latestJudgement,
+        mode: model.settings.judgementDisplay)
+        .padding(.top, 76)
+        .allowsHitTesting(false)
       if model.isStartingPlayback {
         ProgressView("Starting chart…")
           .padding()
@@ -254,6 +258,13 @@ private struct GameplaySettingsPanel: View {
           Text("Count up shows points earned toward 1,000,000. Count down starts at 1,000,000 and subtracts lost points. Final results are unchanged.")
             .font(.footnote).foregroundStyle(.secondary)
         }
+        Section("Hit Feedback") {
+          Picker("Display", selection: $settings.judgementDisplay) {
+            ForEach(JudgementDisplayMode.allCases) { Text($0.title).tag($0) }
+          }
+          Text("Early/Late shows timing for GREAT and GOOD judgements.")
+            .font(.footnote).foregroundStyle(.secondary)
+        }
         Section("Note Speed") {
           if let noteSpeed, let range = noteSpeed.sliderRange {
             let value = noteSpeed.clamped(settings.noteSpeed ?? noteSpeed.def)
@@ -271,6 +282,27 @@ private struct GameplaySettingsPanel: View {
       .navigationTitle("Gameplay Settings")
       .toolbar { Button("Done") { dismiss() } }
     }
+  }
+}
+
+private struct JudgementOverlay: View {
+  let feedback: JudgementFeedback?
+  let mode: JudgementDisplayMode
+  @State private var visible = false
+
+  var body: some View {
+    Text(feedback?.text(for: mode) ?? "")
+      .font(.title2.bold().monospaced())
+      .foregroundStyle(.white)
+      .shadow(color: .black, radius: 3)
+      .opacity(visible && mode != .off ? 1 : 0)
+      .task(id: feedback) {
+        visible = feedback != nil
+        do {
+          try await Task.sleep(for: .milliseconds(650))
+          visible = false
+        } catch { }
+      }
   }
 }
 
@@ -341,12 +373,11 @@ private final class EnginePlayfieldView: UIView {
   }
 
   private func advanceFrame(present: Bool) {
+    let sampleTime = model?.playbackTime ?? 0
     model?.engineFrame(size: bounds.size,
       touches: touchesByID.values.sorted { $0.id < $1.id })
     touchesByID = touchesByID.filter { !$0.value.ended }.mapValues {
-      EngineTouch(id: $0.id, started: false, ended: false, time: $0.time,
-        startTime: $0.startTime, position: $0.position,
-        startPosition: $0.startPosition, delta: EnginePoint(x: 0, y: 0))
+      $0.nextFrame(at: sampleTime)
     }
     guard present else { return }
     if let metal, let runtime = model?.engineRuntime,
@@ -375,7 +406,7 @@ private final class EnginePlayfieldView: UIView {
   }
 
   private func receive(_ touches: Set<UITouch>, started: Bool, ended: Bool) {
-    guard bounds.height > 0, let model else { return }
+    guard bounds.height > 0, let model, !model.isStartingPlayback else { return }
     for touch in touches {
       let key = ObjectIdentifier(touch)
       let previous = touchesByID[key]
@@ -389,7 +420,8 @@ private final class EnginePlayfieldView: UIView {
         + touch.timestamp - ProcessInfo.processInfo.systemUptime
       let id = previous?.id ?? nextTouchID
       if previous == nil { nextTouchID += 1 }
-      touchesByID[key] = EngineTouch(
+      touchesByID[key] = previous?.moved(to: position, at: time, ended: ended)
+        ?? EngineTouch(
         id: id, started: started, ended: ended, time: time,
         startTime: previous?.startTime ?? time, position: position,
         startPosition: previous?.startPosition ?? position,
@@ -397,11 +429,8 @@ private final class EnginePlayfieldView: UIView {
           y: position.y - (previous?.position.y ?? position.y))
       )
     }
-    // Preserve brief taps that begin and end between display refreshes.
-    // Process every input transition immediately, but acquire/present a Metal
-    // drawable only on display-link ticks. Multitouch must not wait for an
-    // additional drawable to become available between screen refreshes.
-    advanceFrame(present: false)
+    // Pool events until the next display tick. Started and ended can both be
+    // true, preserving short taps without running the entire engine per event.
   }
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {

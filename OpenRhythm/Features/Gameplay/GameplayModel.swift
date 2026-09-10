@@ -17,6 +17,20 @@ struct BGMClockMapping {
   func mediaTime(chartTime: Double) -> Double { chartTime + offset }
 }
 
+struct JudgementFeedback: Hashable {
+  let sequence: Int
+  let judgement: NoteJudgement
+  let accuracy: Double?
+
+  func text(for mode: JudgementDisplayMode) -> String? {
+    guard mode != .off else { return nil }
+    let grade = judgement.rawValue.uppercased()
+    guard mode == .timing, judgement == .great || judgement == .good,
+      let accuracy, accuracy.isFinite, accuracy != 0 else { return grade }
+    return (accuracy < 0 ? "Early " : "Late ") + grade
+  }
+}
+
 enum NoteJudgement: String, CaseIterable, Sendable {
   case perfect
   case great
@@ -68,7 +82,9 @@ final class GameplayModel {
   private(set) var isStartingPlayback = false
   private var audioSeekCompleted = false
   private var preparedInputCount: Int?
-  private(set) var isMusicTailActive = false
+  private var musicHasEnded = false
+  private var judgementSequence = 0
+  private(set) var latestJudgement: JudgementFeedback?
   private(set) var engineRuntime: EnginePlayRuntime?
   private(set) var presentationAssets: EnginePresentationAssets?
   private var runtimeBundle: RuntimeBundle?
@@ -200,6 +216,8 @@ final class GameplayModel {
     let generation = playbackGeneration
     isStartingPlayback = true
     audioSeekCompleted = false
+    musicHasEnded = false
+    latestJudgement = nil
     combo = 0
     maxCombo = 0
     currentTime = clockMapping.initialChartTime
@@ -307,7 +325,7 @@ final class GameplayModel {
     else { return }
 
     hitNoteIDs.insert(note.id)
-    record(difference: abs(note.time - currentTime))
+    record(difference: currentTime - note.time)
     if note.endTime != nil {
       activeHolds[lane] = note
     }
@@ -322,8 +340,8 @@ final class GameplayModel {
       resolvedHoldTailIDs.insert(hold.id).inserted
     else { return }
 
-    let difference = abs(endTime - currentTime)
-    if difference <= 0.18 {
+    let difference = currentTime - endTime
+    if abs(difference) <= 0.18 {
       record(difference: difference)
     } else {
       record(.miss)
@@ -336,19 +354,17 @@ final class GameplayModel {
     start()
   }
 
-  func stop(deactivateAudio: Bool = true, preserveMusic: Bool = false) {
-    let continueMusic = preserveMusic && tailStart == nil
-    isMusicTailActive = continueMusic
-    if !continueMusic { playbackGeneration += 1 }
+  func stop(deactivateAudio: Bool = true) {
+    playbackGeneration += 1
     isStartingPlayback = false
     audioSeekCompleted = false
-    if !continueMusic { player?.pause() }
+    player?.pause()
     engineAudio?.stop()
     if let timeObserver {
       player?.removeTimeObserver(timeObserver)
       self.timeObserver = nil
     }
-    if !continueMusic, let endObserver {
+    if let endObserver {
       NotificationCenter.default.removeObserver(endObserver)
       self.endObserver = nil
     }
@@ -359,7 +375,7 @@ final class GameplayModel {
     pressedLanes.removeAll()
     activeHolds.removeAll()
     if phase == .playing { phase = .ready }
-    if deactivateAudio && !continueMusic {
+    if deactivateAudio {
       Task {
         guard phase != .playing else { return }
         await Self.setAudioSession(active: false)
@@ -370,11 +386,10 @@ final class GameplayModel {
   func playbackEnded(
     uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
   ) {
-    if phase == .finished, isMusicTailActive {
-      stop()
-      return
-    }
     guard phase == .playing, tailStart == nil else { return }
+    musicHasEnded = true
+    finishIfReady()
+    guard phase == .playing else { return }
     let mediaTime = player?.currentTime().seconds
       ?? clockMapping.mediaTime(chartTime: currentTime)
     tailStart = (
@@ -433,13 +448,7 @@ final class GameplayModel {
       record(.miss)
     }
 
-    if nextMissIndex == chart.notes.count,
-      currentTime > chart.duration + 1
-    {
-      stop(preserveMusic: true)
-      phase = .finished
-      saveResult()
-    }
+    finishIfReady()
   }
 
   func engineFrame(size: CGSize, touches: [EngineTouch]) {
@@ -471,28 +480,36 @@ final class GameplayModel {
       try runtime.update(at: currentTime, touches: touches)
       for judgment in runtime.judgments {
         switch judgment.grade {
-        case 1: record(.perfect)
-        case 2: record(.great)
-        case 3: record(.good)
+        case 1: record(.perfect, accuracy: judgment.accuracy)
+        case 2: record(.great, accuracy: judgment.accuracy)
+        case 3: record(.good, accuracy: judgment.accuracy)
         default: record(.miss)
         }
       }
       try engineAudio?.update(runtime.host.takeAudioCommands(), at: currentTime,
         advancing: tailStart != nil || player?.timeControlStatus == .playing,
         loopCommands: runtime.host.takeLoopCommands())
-      if runtime.resolvedInputCount == runtime.inputCount,
-        currentTime > chart.duration + 1 {
-        stop(preserveMusic: true)
-        phase = .finished
-        saveResult()
-      }
+      finishIfReady()
     } catch {
       stop()
       phase = .failed(error.localizedDescription)
     }
   }
 
-  private func record(_ judgement: NoteJudgement) {
+  private func finishIfReady() {
+    guard phase == .playing, musicHasEnded else { return }
+    let complete = engineRuntime.map { $0.resolvedInputCount == $0.inputCount }
+      ?? (judgements.values.reduce(0, +) == chart.judgementCount)
+    guard complete else { return }
+    stop()
+    phase = .finished
+    saveResult()
+  }
+
+  private func record(_ judgement: NoteJudgement, accuracy: Double? = nil) {
+    judgementSequence += 1
+    latestJudgement = JudgementFeedback(sequence: judgementSequence,
+      judgement: judgement, accuracy: accuracy)
     judgements[judgement, default: 0] += 1
     if judgement == .miss {
       combo = 0
@@ -503,12 +520,12 @@ final class GameplayModel {
   }
 
   private func record(difference: TimeInterval) {
-    if difference <= 0.05 {
-      record(.perfect)
-    } else if difference <= 0.10 {
-      record(.great)
+    if abs(difference) <= 0.05 {
+      record(.perfect, accuracy: difference)
+    } else if abs(difference) <= 0.10 {
+      record(.great, accuracy: difference)
     } else {
-      record(.good)
+      record(.good, accuracy: difference)
     }
   }
 

@@ -2,6 +2,17 @@ import XCTest
 @testable import OpenRhythm
 
 final class CatalogTests: XCTestCase {
+  func testNewJudgementSettingsPreserveExistingPreferences() throws {
+    let old = Data(#"{"scoreDisplay":"countDown","noteSpeed":8}"#.utf8)
+    var settings = try JSONDecoder().decode(GameplayPreferences.self, from: old)
+    XCTAssertEqual(settings.scoreDisplay, .countDown)
+    XCTAssertEqual(settings.noteSpeed, 8)
+    XCTAssertEqual(settings.judgementDisplay, .timing)
+    settings.judgementDisplay = .off
+    XCTAssertEqual(try JSONDecoder().decode(GameplayPreferences.self,
+      from: JSONEncoder().encode(settings)), settings)
+  }
+
   private let server = ServerDescriptor.defaults[0]
 
   func testRangeSelectsLowestMatchingChartAndSeparatesEngines() {
@@ -35,13 +46,15 @@ final class CatalogTests: XCTestCase {
     filter.minimumRating = 7
     filter.maximumRating = 9
     preferences.save(filter, for: "one")
-    preferences.save(GameplayPreferences(scoreDisplay: .countDown, noteSpeed: 8),
+    preferences.save(GameplayPreferences(scoreDisplay: .countDown, noteSpeed: 8,
+      judgementDisplay: .off),
       for: "one")
     let reopened = UserPreferences(defaults: defaults)
     filter.query = ""
     XCTAssertEqual(reopened.filter(for: "one"), filter)
     XCTAssertEqual(reopened.filter(for: "two"), CatalogFilter())
     XCTAssertEqual(reopened.gameplay(for: "one").noteSpeed, 8)
+    XCTAssertEqual(reopened.gameplay(for: "one").judgementDisplay, .off)
     XCTAssertEqual(reopened.gameplay(for: "two"), GameplayPreferences())
     XCTAssertEqual(ScoreDisplayMode.countDown.score(judgements: [:],
       noteCount: 10), 1_000_000)

@@ -4,6 +4,34 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testTouchPoolingPreservesShortTapsAndFlicksAfterStationaryHolds() throws {
+    let p = EnginePoint(x: 0, y: 0)
+    let start = EngineTouch(id: 1, started: true, ended: false,
+      time: 1, startTime: 1, position: p, startPosition: p, delta: p)
+    let moved = start.moved(to: EnginePoint(x: 0.1, y: 0.2),
+      at: 1.01, ended: false)
+    let end = moved.moved(to: moved.position, at: 1.02, ended: true)
+    XCTAssertTrue(end.started && end.ended)
+    XCTAssertEqual(end.startTime, 1)
+    XCTAssertEqual(end.delta, EnginePoint(x: 0.1, y: 0.2))
+    XCTAssertEqual(end.velocity?.y ?? 0, 20, accuracy: 0.001)
+    let held = start.nextFrame(at: 3)
+    XCTAssertEqual(held.time, 1, "Keep the OS event timestamp intact")
+    let flick = held.moved(to: EnginePoint(x: 0, y: 0.2), at: 3.01, ended: false)
+    XCTAssertFalse(flick.started)
+    XCTAssertEqual(flick.velocity?.y ?? 0, 20, accuracy: 0.001)
+    XCTAssertEqual(flick.nextFrame(at: 3.02).delta, p)
+
+    let engine = try RuntimeNodeBuilder().engine(archetypes: [])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: []), options: [],
+      aspectRatio: 1.8, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [])
+    try runtime.update(at: 3.02, touches: [flick])
+    XCTAssertEqual(runtime.memory.value(block: 1002, index: 13), 20, accuracy: 0.001)
+    XCTAssertEqual(runtime.memory.value(block: 1002, index: 14), .pi / 2,
+      accuracy: 0.001)
+  }
+
   private let quad: [Double] = [-1, -1, -1, 1, 1, 1, 1, -1]
 
   func testLoopedAudioCommandsHaveIndependentHandlesAndScheduledStops() throws {

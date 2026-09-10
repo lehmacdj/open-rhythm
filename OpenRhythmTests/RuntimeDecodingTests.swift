@@ -3,6 +3,35 @@ import UIKit
 @testable import OpenRhythm
 
 final class RuntimeDecodingTests: XCTestCase {
+  func testJudgementFeedbackModesAndTimingDirection() {
+    let early = JudgementFeedback(sequence: 1, judgement: .good, accuracy: -0.12)
+    let late = JudgementFeedback(sequence: 2, judgement: .great, accuracy: 0.07)
+    XCTAssertEqual(early.text(for: .timing), "Early GOOD")
+    XCTAssertEqual(late.text(for: .timing), "Late GREAT")
+    XCTAssertEqual(early.text(for: .judgement), "GOOD")
+    XCTAssertNil(early.text(for: .off))
+    XCTAssertEqual(JudgementFeedback(sequence: 3, judgement: .perfect,
+      accuracy: -0.01).text(for: .timing), "PERFECT")
+    XCTAssertEqual(JudgementFeedback(sequence: 4, judgement: .miss,
+      accuracy: 0.2).text(for: .timing), "MISS")
+  }
+
+  @MainActor
+  func testFallbackJudgementsRetainSignedAccuracyAndResetOnRestart() throws {
+    let model = try gameplayModel()
+    model.start()
+    defer { model.stop() }
+    model.update(mediaTime: 1.02)
+    model.press(lane: 0)
+    model.release(lane: 0)
+    XCTAssertEqual(model.latestJudgement?.text(for: .timing), "Late GREAT")
+    model.update(mediaTime: 2.82)
+    model.press(lane: 2)
+    XCTAssertEqual(model.latestJudgement?.text(for: .timing), "Early GOOD")
+    model.restart()
+    XCTAssertNil(model.latestJudgement)
+  }
+
   @MainActor
   func testReadyNoteCountUsesEngineInputDefinitionsBeforeRuntimeStarts() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
@@ -417,25 +446,23 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
-  func testResultsPreserveMusicUntilEOFOrExit() async throws {
+  func testGameplayWaitsForMusicAfterLastNote() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let model = try gameplayModel(resultStore: ResultStore(rootURL: root))
     model.start()
     model.update(mediaTime: 10)
-    XCTAssertEqual(model.phase, .finished)
-    XCTAssertTrue(model.isMusicTailActive)
-    await model.resultSaveTask?.value
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertNil(model.resultSaveTask)
     model.playbackEnded(uptime: 100)
-    XCTAssertFalse(model.isMusicTailActive)
     XCTAssertEqual(model.phase, .finished)
+    await model.resultSaveTask?.value
     model.restart()
     model.update(mediaTime: 10)
-    XCTAssertTrue(model.isMusicTailActive)
+    XCTAssertEqual(model.phase, .playing)
     model.stop()
-    XCTAssertFalse(model.isMusicTailActive)
-    await model.resultSaveTask?.value
+    XCTAssertEqual(model.phase, .ready)
   }
 
   @MainActor

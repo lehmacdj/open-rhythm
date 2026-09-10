@@ -17,10 +17,43 @@ enum ScoreDisplayMode: String, Codable, CaseIterable, Identifiable {
   }
 }
 
+enum JudgementDisplayMode: String, Codable, CaseIterable, Identifiable {
+  case off, judgement, timing
+  var id: Self { self }
+  var title: String {
+    switch self {
+    case .off: "Off"
+    case .judgement: "Judgement Only"
+    case .timing: "Judgement + Early/Late"
+    }
+  }
+}
+
 struct GameplayPreferences: Codable, Equatable {
   var scoreDisplay = ScoreDisplayMode.countUp
   // Nil uses the engine's default. Values are in its own option units.
   var noteSpeed: Double? = nil
+  var judgementDisplay = JudgementDisplayMode.timing
+
+  init(scoreDisplay: ScoreDisplayMode = .countUp, noteSpeed: Double? = nil,
+    judgementDisplay: JudgementDisplayMode = .timing) {
+    self.scoreDisplay = scoreDisplay
+    self.noteSpeed = noteSpeed
+    self.judgementDisplay = judgementDisplay
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case scoreDisplay, noteSpeed, judgementDisplay
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    scoreDisplay = try values.decodeIfPresent(ScoreDisplayMode.self,
+      forKey: .scoreDisplay) ?? .countUp
+    noteSpeed = try values.decodeIfPresent(Double.self, forKey: .noteSpeed)
+    judgementDisplay = try values.decodeIfPresent(JudgementDisplayMode.self,
+      forKey: .judgementDisplay) ?? .timing
+  }
 }
 
 @MainActor

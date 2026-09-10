@@ -9,6 +9,30 @@ struct EngineTouch: Sendable {
   let position: EnginePoint
   let startPosition: EnginePoint
   let delta: EnginePoint
+  var velocity: EnginePoint? = nil
+  var velocitySampleTime: Double? = nil
+
+  func moved(to position: EnginePoint, at time: Double, ended: Bool) -> Self {
+    let dx = position.x - self.position.x
+    let dy = position.y - self.position.y
+    // Stationary frames advance the sample baseline without changing the
+    // OS-reported event time. A hold followed by a flick must not average
+    // movement over the entire stationary hold.
+    let elapsed = max(1.0 / 240, time - (velocitySampleTime ?? self.time))
+    let velocity = dx != 0 || dy != 0
+      ? EnginePoint(x: dx / elapsed, y: dy / elapsed) : self.velocity
+    return Self(id: id, started: started, ended: ended, time: time,
+      startTime: startTime, position: position, startPosition: startPosition,
+      delta: EnginePoint(x: delta.x + dx, y: delta.y + dy), velocity: velocity,
+      velocitySampleTime: time)
+  }
+
+  func nextFrame(at sampleTime: Double) -> Self {
+    Self(id: id, started: false, ended: false, time: time,
+      startTime: startTime, position: position, startPosition: startPosition,
+      delta: EnginePoint(x: 0, y: 0), velocity: EnginePoint(x: 0, y: 0),
+      velocitySampleTime: max(time, sampleTime))
+  }
 }
 
 struct EngineJudgment: Sendable {
@@ -147,13 +171,16 @@ final class EnginePlayRuntime {
       memory.set(block: 1001, index: index, value: value)
     }
     for (index, touch) in touches.enumerated() {
+      let velocity = touch.velocity ?? EnginePoint(
+        x: delta > 0 ? touch.delta.x / delta : 0,
+        y: delta > 0 ? touch.delta.y / delta : 0)
       let values: [Double] = [
         Double(touch.id), touch.started ? 1 : 0, touch.ended ? 1 : 0,
         touch.time, touch.startTime, touch.position.x, touch.position.y,
         touch.startPosition.x, touch.startPosition.y,
         touch.delta.x, touch.delta.y,
-        delta > 0 ? touch.delta.x / delta : 0,
-        delta > 0 ? touch.delta.y / delta : 0, 0, 0
+        velocity.x, velocity.y, hypot(velocity.x, velocity.y),
+        atan2(velocity.y, velocity.x)
       ]
       for (offset, value) in values.enumerated() {
         memory.set(block: 1002, index: index * 15 + offset, value: value)
