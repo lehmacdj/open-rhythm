@@ -111,9 +111,78 @@ private struct EngineBreak: Error {
 }
 
 final class EngineInterpreter {
+  // Decode dispatch once; node evaluation is the dominant frame-time cost.
+  private enum Operation: String {
+    case `abs` = "Abs"
+    case `add` = "Add"
+    case `and` = "And"
+    case `arctan` = "Arctan"
+    case `arctan2` = "Arctan2"
+    case `block` = "Block"
+    case `break` = "Break"
+    case `ceil` = "Ceil"
+    case `clamp` = "Clamp"
+    case `cos` = "Cos"
+    case `divide` = "Divide"
+    case `equal` = "Equal"
+    case `easeInQuad` = "EaseInQuad"
+    case `easeOutQuad` = "EaseOutQuad"
+    case `easeInOutQuad` = "EaseInOutQuad"
+    case `easeOutInQuad` = "EaseOutInQuad"
+    case `easeInCubic` = "EaseInCubic"
+    case `easeOutCubic` = "EaseOutCubic"
+    case `execute` = "Execute"
+    case `floor` = "Floor"
+    case `get` = "Get"
+    case `getShifted` = "GetShifted"
+    case `greater` = "Greater"
+    case `greaterOr` = "GreaterOr"
+    case `incrementPost` = "IncrementPost"
+    case `decrementPost` = "DecrementPost"
+    case `incrementPre` = "IncrementPre"
+    case `decrementPre` = "DecrementPre"
+    case `if` = "If"
+    case `jumpLoop` = "JumpLoop"
+    case `lerp` = "Lerp"
+    case `lerpClamped` = "LerpClamped"
+    case `less` = "Less"
+    case `lessOr` = "LessOr"
+    case `log` = "Log"
+    case `max` = "Max"
+    case `min` = "Min"
+    case `mod` = "Mod"
+    case `multiply` = "Multiply"
+    case `negate` = "Negate"
+    case `not` = "Not"
+    case `notEqual` = "NotEqual"
+    case `or` = "Or"
+    case `power` = "Power"
+    case `remap` = "Remap"
+    case `remapClamped` = "RemapClamped"
+    case `round` = "Round"
+    case `setShifted` = "SetShifted"
+    case `set` = "Set"
+    case `setAdd` = "SetAdd"
+    case `setMultiply` = "SetMultiply"
+    case `setSubtract` = "SetSubtract"
+    case `setDivide` = "SetDivide"
+    case `setPower` = "SetPower"
+    case `sin` = "Sin"
+    case `subtract` = "Subtract"
+    case `switch` = "Switch"
+    case `switchWithDefault` = "SwitchWithDefault"
+    case `switchInteger` = "SwitchInteger"
+    case `switchIntegerWithDefault` = "SwitchIntegerWithDefault"
+    case `trunc` = "Trunc"
+    case `unlerp` = "Unlerp"
+    case `unlerpClamped` = "UnlerpClamped"
+    case `while` = "While"
+    case host
+  }
   let memory: EngineMemory
 
   private let nodes: [EngineDataNode]
+  private let operations: [Operation]
   private let host: any EngineRuntimeHost
   private let operationLimit: Int
   private var operationCount = 0
@@ -126,6 +195,9 @@ final class EngineInterpreter {
     operationLimit: Int = 1_000_000
   ) {
     self.nodes = nodes
+    operations = nodes.map {
+      $0.function.flatMap(Operation.init(rawValue:)) ?? .host
+    }
     self.memory = memory
     self.host = host
     self.operationLimit = operationLimit
@@ -160,26 +232,30 @@ final class EngineInterpreter {
     guard let function = node.function else {
       throw EngineInterpreterError.invalidNode(index)
     }
-    return try evaluate(function, arguments: node.arguments)
+    return try evaluate(function, operation: operations[index],
+      arguments: node.arguments)
   }
 
   private func evaluate(
-    _ function: String,
+    _ function: String, operation: Operation,
     arguments: [Int]
   ) throws -> Double {
-    switch function {
-    case "Abs": return try unary(arguments, abs)
-    case "Add": return try values(arguments).reduce(0, +)
-    case "And":
+    switch operation {
+    case .`abs`: return try unary(arguments, abs)
+    case .`add`:
+      var result = 0.0
+      for argument in arguments { result += try evaluate(argument) }
+      return result
+    case .`and`:
       var result = 0.0
       for argument in arguments {
         result = try evaluate(argument)
         if result == 0 { return 0 }
       }
       return result
-    case "Arctan": return try unary(arguments, atan)
-    case "Arctan2": return try binary(arguments, atan2)
-    case "Block":
+    case .`arctan`: return try unary(arguments, atan)
+    case .`arctan2`: return try binary(arguments, atan2)
+    case .`block`:
       try require(arguments, count: 1, function: function)
       do {
         return try evaluate(arguments[0])
@@ -187,56 +263,56 @@ final class EngineInterpreter {
         if signal.count <= 1 { return signal.value }
         throw EngineBreak(count: signal.count - 1, value: signal.value)
       }
-    case "Break":
+    case .`break`:
       try require(arguments, count: 2, function: function)
       let count = try integer(evaluate(arguments[0]), function: function)
       let value = try evaluate(arguments[1])
       throw EngineBreak(count: count, value: value)
-    case "Ceil": return try unary(arguments, ceil)
-    case "Clamp":
+    case .`ceil`: return try unary(arguments, ceil)
+    case .`clamp`:
       try require(arguments, count: 3, function: function)
       let v = try values(arguments)
       return v[0] < v[1] ? v[1] : (v[0] > v[2] ? v[2] : v[0])
-    case "Cos": return try unary(arguments, cos)
-    case "Divide": return try binary(arguments, /)
-    case "Equal": return try comparison(arguments, ==)
-    case "EaseInQuad", "EaseOutQuad", "EaseInOutQuad", "EaseOutInQuad",
-      "EaseInCubic", "EaseOutCubic":
+    case .`cos`: return try unary(arguments, cos)
+    case .`divide`: return try binary(arguments, /)
+    case .`equal`: return try comparison(arguments, ==)
+    case .`easeInQuad`, .`easeOutQuad`, .`easeInOutQuad`, .`easeOutInQuad`,
+      .`easeInCubic`, .`easeOutCubic`:
       let suffix = String(function.dropFirst(4))
       let name = suffix.prefix(1).lowercased() + suffix.dropFirst()
       return try unary(arguments) { EngineEasing.value(name, $0, clamped: false) }
-    case "Execute":
+    case .`execute`:
       var result = 0.0
       for argument in arguments {
         result = try evaluate(argument)
       }
       return result
-    case "Floor": return try unary(arguments, floor)
-    case "Get":
+    case .`floor`: return try unary(arguments, floor)
+    case .`get`:
       let address = try memoryAddress(arguments, function: function)
       return memory.value(block: address.block, index: address.index)
-    case "GetShifted":
+    case .`getShifted`:
       try require(arguments, count: 4, function: function)
       let values = try values(arguments)
       return memory.value(
         block: try integer(values[0], function: function),
         index: try integer(values[1] + values[2] * values[3], function: function)
       )
-    case "Greater": return try comparison(arguments, >)
-    case "GreaterOr": return try comparison(arguments, >=)
-    case "IncrementPost", "DecrementPost", "IncrementPre", "DecrementPre":
+    case .`greater`: return try comparison(arguments, >)
+    case .`greaterOr`: return try comparison(arguments, >=)
+    case .`incrementPost`, .`decrementPost`, .`incrementPre`, .`decrementPre`:
       let address = try memoryAddress(arguments, function: function)
       let before = memory.value(block: address.block, index: address.index)
       let after = before + (function.hasPrefix("Increment") ? 1 : -1)
       memory.set(block: address.block, index: address.index, value: after)
       // Sonolus names refer to which value is returned, not C-style operators.
       return function.hasSuffix("Post") ? after : before
-    case "If":
+    case .`if`:
       try require(arguments, count: 3, function: function)
       return try evaluate(
         try evaluate(arguments[0]) != 0 ? arguments[1] : arguments[2]
       )
-    case "JumpLoop":
+    case .`jumpLoop`:
       var branch = 0
       while arguments.indices.contains(branch) {
         let result = try evaluate(arguments[branch])
@@ -244,18 +320,18 @@ final class EngineInterpreter {
         branch = try integer(result, function: function)
       }
       return 0
-    case "Lerp", "LerpClamped":
+    case .`lerp`, .`lerpClamped`:
       try require(arguments, count: 3, function: function)
       let values = try values(arguments)
       let fraction = function == "LerpClamped"
         ? min(1, max(0, values[2])) : values[2]
       return values[0] + (values[1] - values[0]) * fraction
-    case "Less": return try comparison(arguments, <)
-    case "LessOr": return try comparison(arguments, <=)
-    case "Log": return try unary(arguments, log)
-    case "Max": return try values(arguments).max() ?? 0
-    case "Min": return try values(arguments).min() ?? 0
-    case "Mod":
+    case .`less`: return try comparison(arguments, <)
+    case .`lessOr`: return try comparison(arguments, <=)
+    case .`log`: return try unary(arguments, log)
+    case .`max`: return try values(arguments).max() ?? 0
+    case .`min`: return try values(arguments).min() ?? 0
+    case .`mod`:
       guard let first = arguments.first else {
         throw EngineInterpreterError.invalidArguments(function)
       }
@@ -267,35 +343,37 @@ final class EngineInterpreter {
           ? remainder + divisor : remainder
       }
       return result
-    case "Multiply": return try values(arguments).reduce(1, *)
-    case "Negate": return try unary(arguments, -)
-    case "Not": return try unary(arguments) { $0 == 0 ? 1 : 0 }
-    case "NotEqual": return try comparison(arguments, !=)
-    case "Or":
+    case .`multiply`:
+      var result = 1.0
+      for argument in arguments { result *= try evaluate(argument) }
+      return result
+    case .`negate`: return try unary(arguments, -)
+    case .`not`: return try unary(arguments) { $0 == 0 ? 1 : 0 }
+    case .`notEqual`: return try comparison(arguments, !=)
+    case .`or`:
       for argument in arguments {
         let value = try evaluate(argument)
         if value != 0 { return value }
       }
       return 0
-    case "Power": return try binary(arguments, pow)
-    case "Remap", "RemapClamped":
+    case .`power`: return try binary(arguments, pow)
+    case .`remap`, .`remapClamped`:
       try require(arguments, count: 5, function: function)
       let v = try values(arguments)
       let fraction = (v[4] - v[0]) / (v[1] - v[0])
       let t = function == "RemapClamped" ? min(1, max(0, fraction)) : fraction
       return v[2] + (v[3] - v[2]) * t
-    case "Round": return try unary(arguments) { $0.rounded() }
-    case "SetShifted":
+    case .`round`: return try unary(arguments) { $0.rounded() }
+    case .`setShifted`:
       try require(arguments, count: 5, function: function)
       let v = try values(arguments)
       return memory.set(block: try integer(v[0], function: function),
         index: try integer(v[1] + v[2] * v[3], function: function), value: v[4])
-    case "Set", "SetAdd", "SetMultiply", "SetSubtract", "SetDivide", "SetPower":
+    case .`set`, .`setAdd`, .`setMultiply`, .`setSubtract`, .`setDivide`, .`setPower`:
       try require(arguments, count: 3, function: function)
-      let address = try memoryAddress(
-        Array(arguments.prefix(2)),
-        function: function
-      )
+      let block = try integer(evaluate(arguments[0]), function: function)
+      let index = try integer(evaluate(arguments[1]), function: function)
+      let address = (block: block, index: index)
       let current = memory.value(block: address.block, index: address.index)
       let operand = try evaluate(arguments[2])
       let result = switch function {
@@ -311,8 +389,8 @@ final class EngineInterpreter {
         index: address.index,
         value: result
       )
-    case "Sin": return try unary(arguments, sin)
-    case "Subtract":
+    case .`sin`: return try unary(arguments, sin)
+    case .`subtract`:
       guard let first = arguments.first else {
         throw EngineInterpreterError.invalidArguments(function)
       }
@@ -321,7 +399,7 @@ final class EngineInterpreter {
         result -= try evaluate(argument)
       }
       return result
-    case "Switch", "SwitchWithDefault":
+    case .`switch`, .`switchWithDefault`:
       let hasDefault = function == "SwitchWithDefault"
       let end = arguments.count - (hasDefault ? 1 : 0)
       guard end >= 1, (end - 1).isMultiple(of: 2) else {
@@ -334,19 +412,19 @@ final class EngineInterpreter {
         }
       }
       return hasDefault ? try evaluate(arguments[end]) : 0
-    case "SwitchInteger", "SwitchIntegerWithDefault":
+    case .`switchInteger`, .`switchIntegerWithDefault`:
       return try switchInteger(
         arguments,
         hasDefault: function == "SwitchIntegerWithDefault",
         function: function
       )
-    case "Trunc": return try unary(arguments, trunc)
-    case "Unlerp", "UnlerpClamped":
+    case .`trunc`: return try unary(arguments, trunc)
+    case .`unlerp`, .`unlerpClamped`:
       try require(arguments, count: 3, function: function)
       let values = try values(arguments)
       let fraction = (values[2] - values[0]) / (values[1] - values[0])
       return function == "UnlerpClamped" ? min(1, max(0, fraction)) : fraction
-    case "While":
+    case .`while`:
       try require(arguments, count: 2, function: function)
       var result = 0.0
       while try evaluate(arguments[0]) != 0 {
