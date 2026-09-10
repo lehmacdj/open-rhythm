@@ -37,6 +37,10 @@ final class CatalogModel {
   private(set) var needsMoreMatches = false
 
   var hasMorePages: Bool { loadedPageCount < totalPageCount }
+  var showsPaginationStatus: Bool {
+    loadedPageCount > 0 && (isLoading || (hasMorePages
+      && (errorMessage != nil || visibleSongs.isEmpty || needsMoreMatches)))
+  }
 
   init(server: ServerDescriptor, client: SonolusClient = SonolusClient(),
     preferences: UserPreferences = .shared, now: @escaping () -> Date = Date.init

@@ -47,7 +47,7 @@ struct CatalogView: View {
       // Keep a manual fallback when local filters hide the next-page trigger,
       // and when a failed request needs retrying. This is part of the list,
       // rather than an overlay that takes up screen space while browsing.
-      if model.loadedPageCount > 0 {
+      if model.showsPaginationStatus {
         HStack {
           if model.isLoading {
             ProgressView()

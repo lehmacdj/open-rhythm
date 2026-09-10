@@ -81,6 +81,8 @@ final class OfflineStoreTests: XCTestCase {
       XCTAssertNil(model.errorMessage)
       XCTAssertEqual(model.loadedPageCount, 1)
       XCTAssertFalse(model.hasMorePages)
+      XCTAssertFalse(model.showsPaginationStatus,
+        "No empty footer row after an empty search or the final page")
       let requestCount = recorder.urls.count
       await model.prefetchNextPages()
       await model.loadNextPage()
