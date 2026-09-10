@@ -59,6 +59,65 @@ final class OfflineStoreTests: XCTestCase {
   }
 
   @MainActor
+  func testPrefetchStopsForEmptySearchAndLastPage() async throws {
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      let query = URLComponents(url: request.url!,
+        resolvingAgainstBaseURL: false)?.queryItems?
+        .first { $0.name == "keywords" }?.value ?? "0"
+      return Data("{\"pageCount\":\(query),\"items\":[]}".utf8)
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    for pageCount in [0, -1, 1] {
+      model.query = String(pageCount)
+      await model.searchAfterDelay()
+      XCTAssertNil(model.errorMessage)
+      XCTAssertEqual(model.loadedPageCount, 1)
+      XCTAssertFalse(model.hasMorePages)
+      let requestCount = recorder.urls.count
+      await model.prefetchNextPages()
+      await model.loadNextPage()
+      XCTAssertEqual(recorder.urls.count, requestCount,
+        "Empty searches and exhausted lists must not fetch more pages")
+    }
+    XCTAssertEqual(recorder.urls.count, 3)
+  }
+
+  @MainActor
+  func testPrefetchStopsWhenRemotePageCountShrinks() async throws {
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      let page = URLComponents(url: request.url!,
+        resolvingAgainstBaseURL: false)?.queryItems?
+        .first { $0.name == "page" }?.value
+      let count = page == "0" ? 96 : 1
+      return Data("{\"pageCount\":\(count),\"items\":[]}".utf8)
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    await model.refresh()
+    await model.loadNextPage()
+    XCTAssertEqual(model.loadedPageCount, 2)
+    XCTAssertEqual(model.totalPageCount, 1)
+    XCTAssertFalse(model.hasMorePages)
+    await model.prefetchNextPages()
+    XCTAssertEqual(recorder.urls.count, 2)
+  }
+
+  @MainActor
   func testPrefetchIsBoundedAndExpiredPagesRestartFromBeginning() async throws {
     let recorder = RequestRecorder()
     StubURLProtocol.handler = { request in

@@ -98,12 +98,16 @@ final class CatalogModel {
   }
 
   func prefetchNextPages() async {
-    guard loadedPageCount > 0, normalizedQuery == activeQuery else { return }
+    // Empty searches may report zero pages even though page 0 was fetched.
+    guard loadedPageCount > 0, hasMorePages,
+      normalizedQuery == activeQuery else { return }
     let currentGeneration = generation
     let query = activeQuery
     let start = loadedPageCount
-    for page in start..<min(start + 2, totalPageCount) {
-      guard !Task.isCancelled, generation == currentGeneration else { return }
+    let count = min(2, totalPageCount - start)
+    for page in start..<(start + count) {
+      guard !Task.isCancelled, generation == currentGeneration,
+        page < totalPageCount else { return }
       if let buffered = prefetchedPages[page], isFresh(buffered.fetchedAt) { continue }
       do {
         let response = try await client.levels(on: server, page: page,
