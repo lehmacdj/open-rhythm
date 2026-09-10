@@ -81,7 +81,8 @@ struct EffectAudioArchive {
 @MainActor
 protocol EngineEffectVoice: AnyObject {
   var isPlaying: Bool { get }
-  func play(after delay: Double)
+  func play(after delay: Double, looped: Bool)
+  func stop(after delay: Double)
   func stop()
 }
 
@@ -90,6 +91,7 @@ private final class NativeEffectVoice: EngineEffectVoice {
   private let player = AVAudioPlayerNode()
   private let buffer: AVAudioPCMBuffer
   private var generation = 0
+  private var stopTask: Task<Void, Never>?
   private(set) var isPlaying = false
 
   init(engine: AVAudioEngine, buffer: AVAudioPCMBuffer) {
@@ -98,17 +100,18 @@ private final class NativeEffectVoice: EngineEffectVoice {
     engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
   }
 
-  func play(after delay: Double) {
+  func play(after delay: Double, looped: Bool) {
+    stopTask?.cancel()
     generation += 1
     let current = generation
     isPlaying = true
     let time = delay > 0 ? AVAudioTime(hostTime: mach_absolute_time()
       + AVAudioTime.hostTime(forSeconds: delay)) : nil
-    player.scheduleBuffer(buffer, at: time, options: [],
+    player.scheduleBuffer(buffer, at: time, options: looped ? [.loops] : [],
       completionCallbackType: .dataPlayedBack) {
       [weak self] _ in
       Task { @MainActor [weak self] in
-        guard let self, self.generation == current else { return }
+        guard let self, self.generation == current, !looped else { return }
         self.isPlaying = false
       }
     }
@@ -117,7 +120,20 @@ private final class NativeEffectVoice: EngineEffectVoice {
 
   func start() { if !player.isPlaying { player.play() } }
 
+  func stop(after delay: Double) {
+    stopTask?.cancel()
+    if delay <= 0 { stop(); return }
+    let current = generation
+    stopTask = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+      guard let self, self.generation == current else { return }
+      self.stop()
+    }
+  }
+
   func stop() {
+    stopTask?.cancel()
+    stopTask = nil
     generation += 1
     isPlaying = false
     player.stop()
@@ -181,6 +197,14 @@ private final class NativeEffectBank {
 
 @MainActor
 final class EngineAudioPlayback {
+  private struct Loop {
+    let clipID: Int
+    let start: Double
+    var end = Double.infinity
+    var voice: (any EngineEffectVoice)?
+    var scheduledEnd: Double?
+  }
+  private var loops = [Int: Loop]()
   private struct EffectData: Decodable {
     struct Clip: Decodable { let name: String; let filename: String }
     let clips: [Clip]
@@ -242,7 +266,8 @@ final class EngineAudioPlayback {
   func start() throws { try nativeBank?.start() }
 
   func update(
-    _ commands: [EngineAudioCommand], at time: Double, advancing: Bool = true
+    _ commands: [EngineAudioCommand], at time: Double, advancing: Bool = true,
+    loopCommands: [EngineLoopCommand] = []
   ) throws {
     guard commands.count <= 16_384 - pending.count else {
       throw EngineInterpreterError.operationLimitExceeded
@@ -263,6 +288,7 @@ final class EngineAudioPlayback {
       // Native audio clocks do not pause when AVPlayer buffers. Cancel future
       // starts and retain their commands until the BGM clock resumes.
       for event in pending { recycle(event.id, stop: true) }
+      try updateLoops(loopCommands, at: time, advancing: false)
       return
     }
     if let nativeBank, !nativeBank.engine.isRunning {
@@ -270,8 +296,10 @@ final class EngineAudioPlayback {
       // Reconcile native reservations and reschedule future commands after
       // restarting. An unavailable output throws into gameplay's error state.
       for id in Array(players.keys) { recycle(id, stop: true) }
+      for id in Array(loops.keys) { releaseLoopVoice(id) }
       try nativeBank.start()
     }
+    try updateLoops(loopCommands, at: time, advancing: true)
     var prior = lastPlayed
     var retained = [Pending]()
     for event in pending {
@@ -297,7 +325,7 @@ final class EngineAudioPlayback {
           voice = try makeVoice(command.clipID, bytes)
           allocatedVoiceCount += 1
         }
-        voice.play(after: max(0, command.time - time))
+        voice.play(after: max(0, command.time - time), looped: false)
         players[event.id] = (command.clipID, voice)
       }
       if command.time <= time {
@@ -309,6 +337,78 @@ final class EngineAudioPlayback {
     pending = retained
   }
 
+  private func updateLoops(_ commands: [EngineLoopCommand], at time: Double,
+    advancing: Bool) throws {
+    guard commands.count <= 16_384 else {
+      throw EngineInterpreterError.operationLimitExceeded
+    }
+    // The host can reuse capacity as soon as a scheduled stop is reached.
+    for id in Array(loops.keys) { removeFinishedLoop(id, at: time) }
+    for command in commands {
+      switch command {
+      case .start(let id, let clipID, let start):
+        guard clips[clipID] != nil else { continue }
+        guard loops[id] == nil, loops.count < 256, start.isFinite else {
+          throw EngineInterpreterError.invalidArguments("looped audio start")
+        }
+        loops[id] = Loop(clipID: clipID, start: start)
+      case .stop(let id, let end):
+        guard end.isFinite else {
+          throw EngineInterpreterError.invalidArguments("looped audio stop")
+        }
+        guard let loop = loops[id], end < loop.end else { continue }
+        loops[id]?.end = end
+        removeFinishedLoop(id, at: time)
+      }
+    }
+    for id in Array(loops.keys) {
+      guard let loop = loops[id] else { continue }
+      if loop.end <= time || loop.end <= loop.start {
+        releaseLoopVoice(id)
+        loops[id] = nil
+        continue
+      }
+      if !advancing { releaseLoopVoice(id); continue }
+      if let voice = loop.voice, loop.end <= time + 0.5,
+        loop.scheduledEnd != loop.end {
+        voice.stop(after: max(0, loop.end - time))
+        loops[id]?.scheduledEnd = loop.end
+      }
+      guard loop.voice == nil, loop.start <= time + 0.5,
+        let bytes = clips[loop.clipID] else { continue }
+      let voice: any EngineEffectVoice
+      if let ready = available[loop.clipID]?.popLast() { voice = ready }
+      else {
+        guard allocatedVoiceCount < 256 else {
+          throw EngineInterpreterError.operationLimitExceeded
+        }
+        voice = try makeVoice(loop.clipID, bytes)
+        allocatedVoiceCount += 1
+      }
+      voice.play(after: max(0, loop.start - time), looped: true)
+      if loop.end <= time + 0.5 {
+        voice.stop(after: max(0, loop.end - time))
+        loops[id]?.scheduledEnd = loop.end
+      }
+      loops[id]?.voice = voice
+    }
+  }
+
+  private func removeFinishedLoop(_ id: Int, at time: Double) {
+    guard let loop = loops[id],
+      loop.end <= time || loop.end <= loop.start else { return }
+    releaseLoopVoice(id)
+    loops[id] = nil
+  }
+
+  private func releaseLoopVoice(_ id: Int) {
+    guard let loop = loops[id], let voice = loop.voice else { return }
+    voice.stop()
+    available[loop.clipID, default: []].append(voice)
+    loops[id]?.voice = nil
+    loops[id]?.scheduledEnd = nil
+  }
+
   private func recycle(_ id: Int, stop: Bool = false) {
     guard let player = players.removeValue(forKey: id) else { return }
     if stop { player.voice.stop() }
@@ -316,6 +416,8 @@ final class EngineAudioPlayback {
   }
 
   func stop() {
+    for id in Array(loops.keys) { releaseLoopVoice(id) }
+    loops.removeAll()
     for id in Array(players.keys) { recycle(id, stop: true) }
     pending.removeAll()
     lastPlayed.removeAll()

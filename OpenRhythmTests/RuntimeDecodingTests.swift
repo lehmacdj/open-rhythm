@@ -1,7 +1,56 @@
 import XCTest
+import UIKit
 @testable import OpenRhythm
 
 final class RuntimeDecodingTests: XCTestCase {
+  @MainActor
+  func testReadyNoteCountUsesEngineInputDefinitionsBeforeRuntimeStarts() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"nodes":[],"buckets":[],
+       "archetypes":[
+         {"name":"TapNote","hasInput":false,"imports":[],"exports":[]},
+         {"name":"SwingNote","hasInput":true,"imports":[],"exports":[]}
+       ]}
+      """#.utf8))
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+      .pngData { _ in }
+    let presentation = RuntimePresentation(resources: [
+      "configuration": Data(#"{"options":[]}"#.utf8),
+      "skinData": Data(#"""
+        {"width":1,"height":1,"interpolation":false,"sprites":[]}
+        """#.utf8),
+      "skinTexture": image,
+      "particleData": Data(#"""
+        {"width":1,"height":1,"interpolation":false,"sprites":[],"effects":[]}
+        """#.utf8),
+      "particleTexture": image,
+      "effectData": Data(#"{"clips":[]}"#.utf8),
+      "effectAudio": Data([0x50, 0x4b, 0x05, 0x06] + [UInt8](repeating: 0, count: 18))
+    ])
+    let model = try gameplayModel(engine: engine, presentation: presentation)
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertNil(model.engineRuntime)
+    XCTAssertEqual(model.noteCount, 1,
+      "Count engine-defined inputs, not guessed archetype names")
+    let fallback = try gameplayModel(engine: engine)
+    XCTAssertEqual(fallback.phase, .ready)
+    XCTAssertNil(fallback.presentationAssets)
+    XCTAssertEqual(fallback.noteCount, fallback.chart.judgementCount,
+      "The fallback player's count and score denominator must match its chart")
+  }
+
+  func testBGMOffsetSkipsDeclaredPaddingAndMapsChartTime() {
+    let eleventh = BGMClockMapping(offset: 9)
+    XCTAssertEqual(eleventh.initialMediaTime, 9)
+    XCTAssertEqual(eleventh.initialChartTime, 0)
+    XCTAssertEqual(eleventh.chartTime(mediaTime: 9.75), 0.75)
+    XCTAssertEqual(eleventh.mediaTime(chartTime: 0.75), 9.75)
+    let negative = BGMClockMapping(offset: -0.05)
+    XCTAssertEqual(negative.initialMediaTime, 0)
+    XCTAssertEqual(negative.initialChartTime, 0.05)
+    XCTAssertEqual(negative.chartTime(mediaTime: 0.95), 1)
+  }
   func testDecodesGzippedLevelData() throws {
     let encoded = """
       H4sIAAAAAAAAA6tWSkrP9U9LK04tUbLSNdAzMNVRSs0rySzJTC1WsoquVkosSs5I\
@@ -308,28 +357,28 @@ final class RuntimeDecodingTests: XCTestCase {
     defer { model.stop() }
     model.start()
 
-    model.update(mediaTime: 1.05)
+    model.update(mediaTime: 0.95)
     model.press(lane: 0)
     model.press(lane: 0)
     XCTAssertEqual(model.score, 200_000)
     model.release(lane: 0)
 
-    model.update(mediaTime: 2.05)
+    model.update(mediaTime: 1.95)
     model.slide(lane: 1)
     XCTAssertEqual(model.score, 400_000)
     model.release(lane: 1)
 
-    model.update(mediaTime: 3.05)
+    model.update(mediaTime: 2.95)
     model.slide(lane: 2)
     XCTAssertEqual(model.score, 400_000, "Sliding cannot hit a tap note")
     model.release(lane: 2)
     model.press(lane: 2)
     model.release(lane: 2)
 
-    model.update(mediaTime: 4.05)
+    model.update(mediaTime: 3.95)
     model.press(lane: 3)
     XCTAssertEqual(model.activeHoldIDs.count, 1)
-    model.update(mediaTime: 5.05)
+    model.update(mediaTime: 4.95)
     model.release(lane: 3)
     model.release(lane: 3)
 
@@ -347,7 +396,7 @@ final class RuntimeDecodingTests: XCTestCase {
     let store = ResultStore(rootURL: root)
     let model = try gameplayModel(resultStore: store)
     model.start()
-    model.update(mediaTime: 1.05)
+    model.update(mediaTime: 0.95)
     model.press(lane: 0)
     model.release(lane: 0)
     model.playbackEnded(uptime: 100)
@@ -407,7 +456,7 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(model.maxCombo, 0)
     XCTAssertTrue(model.activeHoldIDs.isEmpty)
     XCTAssertTrue(model.hitNoteIDs.isEmpty)
-    XCTAssertEqual(model.playbackTime, -0.05)
+    XCTAssertEqual(model.playbackTime, 0.05)
     model.advanceAfterAudioEnd(uptime: 200)
     XCTAssertEqual(model.phase, .playing, "An old audio tail cannot finish a restart")
     model.release(lane: 3)
@@ -433,9 +482,10 @@ final class RuntimeDecodingTests: XCTestCase {
 
   @MainActor
   private func gameplayModel(
-    resultStore: ResultStore = ResultStore()
+    resultStore: ResultStore = ResultStore(), engine: EnginePlayData? = nil,
+    presentation: RuntimePresentation? = nil
   ) throws -> GameplayModel {
-    let engine = try JSONDecoder().decode(
+    let engine = try engine ?? JSONDecoder().decode(
       EnginePlayData.self,
       from: Data(#"""
         {"skin":{"sprites":[]},"effect":{"clips":[]},
@@ -470,7 +520,7 @@ final class RuntimeDecodingTests: XCTestCase {
       bundle: RuntimeBundle(
         engine: engine, level: data,
         bgmURL: URL(fileURLWithPath: "/nonexistent-test-audio.wav"),
-        isOffline: true
+        isOffline: true, presentation: presentation
       ),
       level: level, server: server, title: "Gameplay"
     )

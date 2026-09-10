@@ -6,6 +6,87 @@ import Metal
 final class EngineHostTests: XCTestCase {
   private let quad: [Double] = [-1, -1, -1, 1, 1, 1, 1, -1]
 
+  func testLoopedAudioCommandsHaveIndependentHandlesAndScheduledStops() throws {
+    let host = makeHost()
+    try host.beginFrame(at: 2)
+    let first = try host.call(function: "PlayLooped", arguments: [8])
+    let second = try host.call(function: "PlayLoopedScheduled", arguments: [8, 5])
+    XCTAssertNotEqual(first, second)
+    _ = try host.call(function: "StopLoopedScheduled", arguments: [second, 6])
+    _ = try host.call(function: "StopLooped", arguments: [first])
+    _ = try host.call(function: "StopLooped", arguments: [first])
+    XCTAssertEqual(host.takeLoopCommands(), [
+      .start(id: Int(first), clipID: 8, time: 2),
+      .start(id: Int(second), clipID: 8, time: 5),
+      .stop(id: Int(second), time: 6), .stop(id: Int(first), time: 2)
+    ])
+    XCTAssertTrue(host.takeLoopCommands().isEmpty)
+    XCTAssertEqual(try host.call(function: "PlayLooped", arguments: [999]), 0)
+    XCTAssertThrowsError(try host.call(function: "PlayLoopedScheduled",
+      arguments: [8, .nan]))
+    try host.beginFrame(at: 7)
+    _ = try host.call(function: "StopLooped", arguments: [second])
+    XCTAssertTrue(host.takeLoopCommands().isEmpty)
+  }
+
+  @MainActor
+  func testStoppedLoopsReleaseCapacityWithinTheSameBatch() throws {
+    let audio = try EngineAudioPlayback(clips: [8: Data()]) { _, _ in
+      MockEffectVoice()
+    }
+    let commands = (1...257).flatMap { id -> [EngineLoopCommand] in
+      [.start(id: id, clipID: 8, time: 0), .stop(id: id, time: 0)]
+    }
+    XCTAssertNoThrow(try audio.update([], at: 0, loopCommands: commands))
+    let scheduled = (300..<556).flatMap { id -> [EngineLoopCommand] in
+      [.start(id: id, clipID: 8, time: 10), .stop(id: id, time: 11)]
+    }
+    try audio.update([], at: 0, loopCommands: scheduled)
+    XCTAssertNoThrow(try audio.update([], at: 11, loopCommands: [
+      .start(id: 600, clipID: 8, time: 11)
+    ]))
+    audio.stop()
+  }
+
+  @MainActor
+  func testLoopedPlaybackSchedulesStopsAndResumesAfterBuffering() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [8: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([], at: 0, loopCommands: [
+      .start(id: 1, clipID: 8, time: 0),
+      .start(id: 2, clipID: 8, time: 1), .stop(id: 2, time: 2)
+    ])
+    XCTAssertEqual(voices.filter(\.isPlaying).count, 1)
+    let first = try XCTUnwrap(voices.first { $0.isPlaying })
+    XCTAssertEqual(first.looping, [true])
+    try audio.update([], at: 0.6)
+    XCTAssertEqual(voices.filter(\.isPlaying).count, 2)
+    let second = try XCTUnwrap(voices.first { $0 !== first && $0.isPlaying })
+    XCTAssertEqual(second.delays.last ?? -1, 0.4, accuracy: 0.000001)
+    try audio.update([], at: 0.7, advancing: false)
+    XCTAssertTrue(voices.allSatisfy { !$0.isPlaying })
+    try audio.update([], at: 0.7)
+    XCTAssertEqual(voices.filter(\.isPlaying).count, 2)
+    try audio.update([], at: 1.6)
+    XCTAssertTrue(voices.contains { abs(($0.stopDelays.last ?? -1) - 0.4) < 0.000001 })
+    try audio.update([], at: 2.1)
+    XCTAssertEqual(voices.filter(\.isPlaying).count, 1)
+    try audio.update([], at: 2.1, loopCommands: [.stop(id: 1, time: 2.1)])
+    XCTAssertTrue(voices.allSatisfy { !$0.isPlaying })
+    try audio.update([], at: 3, loopCommands: [
+      .start(id: 3, clipID: 8, time: 5), .stop(id: 3, time: 4)
+    ])
+    XCTAssertTrue(voices.allSatisfy { !$0.isPlaying })
+    try audio.update([], at: 3, loopCommands: [.start(id: 4, clipID: 8, time: 3)])
+    audio.stop()
+    XCTAssertTrue(voices.allSatisfy { !$0.isPlaying })
+    XCTAssertEqual(audio.allocatedVoiceCount, 8)
+  }
+
   func testStreamsInterpolateAndPreserveKeysAcrossFrames() throws {
     let host = makeHost()
     func call(_ function: String, _ values: [Double]) throws -> Double {
@@ -620,11 +701,19 @@ final class EngineHostTests: XCTestCase {
 private final class MockEffectVoice: EngineEffectVoice {
   var isPlaying = false
   var delays = [Double]()
+  var looping = [Bool]()
+  var stopDelays = [Double]()
   var stopCount = 0
 
-  func play(after delay: Double) {
+  func play(after delay: Double, looped: Bool) {
     delays.append(delay)
+    looping.append(looped)
     isPlaying = true
+  }
+
+  func stop(after delay: Double) {
+    stopDelays.append(delay)
+    if delay <= 0 { stop() }
   }
 
   func stop() {

@@ -9,6 +9,14 @@ enum GameplayPhase: Equatable {
   case failed(String)
 }
 
+struct BGMClockMapping {
+  let offset: Double
+  var initialMediaTime: Double { max(0, offset) }
+  var initialChartTime: Double { chartTime(mediaTime: initialMediaTime) }
+  func chartTime(mediaTime: Double) -> Double { mediaTime - offset }
+  func mediaTime(chartTime: Double) -> Double { chartTime + offset }
+}
+
 enum NoteJudgement: String, CaseIterable, Sendable {
   case perfect
   case great
@@ -57,7 +65,9 @@ final class GameplayModel {
   )
   private(set) var hitNoteIDs = Set<String>()
   private(set) var playbackGeneration = 0
-  private var isStartingPlayback = false
+  private(set) var isStartingPlayback = false
+  private var audioSeekCompleted = false
+  private var preparedInputCount: Int?
   private(set) var isMusicTailActive = false
   private(set) var engineRuntime: EnginePlayRuntime?
   private(set) var presentationAssets: EnginePresentationAssets?
@@ -77,7 +87,9 @@ final class GameplayModel {
     settings.scoreDisplay.score(judgements: judgements, noteCount: noteCount)
   }
 
-  var noteCount: Int { engineRuntime?.inputCount ?? chart.judgementCount }
+  var noteCount: Int {
+    engineRuntime?.inputCount ?? preparedInputCount ?? chart.judgementCount
+  }
 
   /// Partway through a play this is the score kept, not the score projected:
   /// notes still unjudged count as nothing yet.
@@ -86,13 +98,13 @@ final class GameplayModel {
   }
 
   var playbackTime: TimeInterval {
-    if isStartingPlayback { return bgmOffset }
+    if isStartingPlayback { return clockMapping.initialChartTime }
     if let tailStart {
-      return tailStart.mediaTime + bgmOffset
+      return clockMapping.chartTime(mediaTime: tailStart.mediaTime)
         + max(0, ProcessInfo.processInfo.systemUptime - tailStart.uptime)
     }
     let mediaTime = player?.currentTime().seconds ?? 0
-    return mediaTime.isFinite ? mediaTime + bgmOffset : currentTime
+    return mediaTime.isFinite ? clockMapping.chartTime(mediaTime: mediaTime) : currentTime
   }
 
   var activeHoldIDs: Set<String> {
@@ -102,6 +114,7 @@ final class GameplayModel {
   private let loader: RuntimeBundleLoader
   private let resultStore: ResultStore
   private var bgmOffset = 0.0
+  private var clockMapping: BGMClockMapping { BGMClockMapping(offset: bgmOffset) }
   private var player: AVPlayer?
   private var timeObserver: Any?
   private var endObserver: NSObjectProtocol?
@@ -165,6 +178,12 @@ final class GameplayModel {
       return
     }
     chart = RhythmChart(level: bundle.level)
+    if presentationAssets != nil {
+      let inputArchetypes = Set(bundle.engine.archetypes.filter(\.hasInput).map(\.name))
+      preparedInputCount = bundle.level.entities.filter {
+        inputArchetypes.contains($0.archetype)
+      }.count
+    }
     preferenceKey = level.engineKey(server: server)
     settings = UserPreferences.shared.gameplay(for: preferenceKey)
     bgmOffset = bundle.level.bgmOffset
@@ -180,9 +199,10 @@ final class GameplayModel {
     playbackGeneration += 1
     let generation = playbackGeneration
     isStartingPlayback = true
+    audioSeekCompleted = false
     combo = 0
     maxCombo = 0
-    currentTime = bgmOffset
+    currentTime = clockMapping.initialChartTime
     engineRuntime = nil
     engineAspectRatio = nil
     nextMissIndex = 0
@@ -231,20 +251,32 @@ final class GameplayModel {
       }
     }
     Task {
-      let sought = await player.seek(to: .zero,
+      let sought = await player.seek(to: CMTime(
+        seconds: clockMapping.initialMediaTime, preferredTimescale: 60_000),
         toleranceBefore: .zero, toleranceAfter: .zero)
-      guard sought, phase == .playing, playbackGeneration == generation else { return }
-      await Self.setAudioSession(active: true)
       guard phase == .playing, playbackGeneration == generation else { return }
-      do {
-        try engineAudio?.start()
-      } catch {
+      guard sought else {
         stop()
-        phase = .failed(error.localizedDescription)
+        phase = .failed("The music could not seek to the chart's start.")
         return
       }
+      await Self.setAudioSession(active: true)
+      guard phase == .playing, playbackGeneration == generation else { return }
+      audioSeekCompleted = true
+      startPreparedAudio()
+    }
+  }
+
+  private func startPreparedAudio() {
+    guard phase == .playing, isStartingPlayback, audioSeekCompleted,
+      presentationAssets == nil || engineRuntime != nil else { return }
+    do {
+      try engineAudio?.start()
       isStartingPlayback = false
-      player.play()
+      player?.play()
+    } catch {
+      stop()
+      phase = .failed(error.localizedDescription)
     }
   }
 
@@ -309,6 +341,7 @@ final class GameplayModel {
     isMusicTailActive = continueMusic
     if !continueMusic { playbackGeneration += 1 }
     isStartingPlayback = false
+    audioSeekCompleted = false
     if !continueMusic { player?.pause() }
     engineAudio?.stop()
     if let timeObserver {
@@ -342,10 +375,12 @@ final class GameplayModel {
       return
     }
     guard phase == .playing, tailStart == nil else { return }
-    let mediaTime = player?.currentTime().seconds ?? (currentTime - bgmOffset)
+    let mediaTime = player?.currentTime().seconds
+      ?? clockMapping.mediaTime(chartTime: currentTime)
     tailStart = (
       mediaTime: max(
-        mediaTime.isFinite ? mediaTime : 0, currentTime - bgmOffset
+        mediaTime.isFinite ? mediaTime : 0,
+        clockMapping.mediaTime(chartTime: currentTime)
       ),
       uptime: uptime
     )
@@ -369,7 +404,7 @@ final class GameplayModel {
 
   func update(mediaTime: TimeInterval) {
     guard phase == .playing, mediaTime.isFinite else { return }
-    currentTime = mediaTime + bgmOffset
+    currentTime = clockMapping.chartTime(mediaTime: mediaTime)
 
     for lane in pressedLanes {
       hit(lane: lane, swingsOnly: true)
@@ -408,7 +443,7 @@ final class GameplayModel {
   }
 
   func engineFrame(size: CGSize, touches: [EngineTouch]) {
-    guard phase == .playing, !isStartingPlayback,
+    guard phase == .playing,
       size.width > 0, size.height > 0,
       let bundle = runtimeBundle, let assets = presentationAssets else { return }
     do {
@@ -427,6 +462,10 @@ final class GameplayModel {
           particleEffectIDs: Set(assets.particles.keys), rom: bundle.engineROM
         )
       }
+      if isStartingPlayback {
+        startPreparedAudio()
+        return
+      }
       guard let runtime = engineRuntime else { return }
       currentTime = playbackTime
       try runtime.update(at: currentTime, touches: touches)
@@ -439,7 +478,8 @@ final class GameplayModel {
         }
       }
       try engineAudio?.update(runtime.host.takeAudioCommands(), at: currentTime,
-        advancing: tailStart != nil || player?.timeControlStatus == .playing)
+        advancing: tailStart != nil || player?.timeControlStatus == .playing,
+        loopCommands: runtime.host.takeLoopCommands())
       if runtime.resolvedInputCount == runtime.inputCount,
         currentTime > chart.duration + 1 {
         stop(preserveMusic: true)

@@ -21,6 +21,11 @@ struct EngineAudioCommand: Equatable, Sendable {
   let minimumDistance: TimeInterval
 }
 
+enum EngineLoopCommand: Equatable, Sendable {
+  case start(id: Int, clipID: Int, time: TimeInterval)
+  case stop(id: Int, time: TimeInterval)
+}
+
 struct EngineSpawnCommand: Equatable, Sendable {
   let archetypeID: Int
   let memory: [Double]
@@ -67,6 +72,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private(set) var particles = [Int: EngineParticleInstance]()
   private(set) var exports = [Int: [Int: Double]]()
   private var audio = [EngineAudioCommand]()
+  private var loopAudio = [EngineLoopCommand]()
+  private var loopStops = [Int: TimeInterval]()
+  private var nextLoopID = 1
   private var spawns = [EngineSpawnCommand]()
   private var streams = [Int: EngineStream]()
   private var streamEntryCount = 0
@@ -104,6 +112,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       throw EngineInterpreterError.invalidArguments("frame time")
     }
     self.time = time
+    loopStops = loopStops.filter { $0.value > time }
     draws.removeAll(keepingCapacity: true)
     particles = particles.filter {
       $0.value.isLooped || time < $0.value.startTime + $0.value.duration
@@ -118,6 +127,11 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   func takeAudioCommands() -> [EngineAudioCommand] {
     defer { audio.removeAll(keepingCapacity: true) }
     return audio
+  }
+
+  func takeLoopCommands() -> [EngineLoopCommand] {
+    defer { loopAudio.removeAll(keepingCapacity: true) }
+    return loopAudio
   }
 
   /// Drain before executing this frame's callbacks: Spawn is deferred until
@@ -174,11 +188,35 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       )
       let id = try identifier(a[0], function: function)
       guard effectClipIDs.contains(id) else { return 0 }
-      try checkLimit(audio.count)
+      try checkLimit(audio.count + loopAudio.count)
       audio.append(EngineAudioCommand(
         clipID: id, time: function == "Play" ? time : a[1],
         minimumDistance: max(0, a.last!)
       ))
+      return 0
+    case "PlayLooped", "PlayLoopedScheduled":
+      try validate(a, count: function == "PlayLooped" ? 1 : 2, function: function)
+      let clipID = try identifier(a[0], function: function)
+      guard effectClipIDs.contains(clipID) else { return 0 }
+      try checkLimit(audio.count + loopAudio.count)
+      guard loopStops.count < 256, nextLoopID < 9_007_199_254_740_991 else {
+        throw EngineInterpreterError.operationLimitExceeded
+      }
+      let id = nextLoopID
+      nextLoopID += 1
+      loopStops[id] = .infinity
+      loopAudio.append(.start(id: id, clipID: clipID,
+        time: function == "PlayLooped" ? time : a[1]))
+      return Double(id)
+    case "StopLooped", "StopLoopedScheduled":
+      try validate(a, count: function == "StopLooped" ? 1 : 2, function: function)
+      let id = try identifier(a[0], function: function)
+      guard let existing = loopStops[id] else { return 0 }
+      let end = function == "StopLooped" ? time : a[1]
+      guard end < existing else { return 0 }
+      try checkLimit(audio.count + loopAudio.count)
+      loopAudio.append(.stop(id: id, time: end))
+      if end <= time { loopStops[id] = nil } else { loopStops[id] = end }
       return 0
     case "SpawnParticleEffect":
       try validate(a, count: 11, function: function)

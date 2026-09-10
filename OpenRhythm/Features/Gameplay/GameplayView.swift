@@ -90,6 +90,12 @@ struct GameplayView: View {
         .frame(width: geometry.size.width, height: geometry.size.height)
       }
       .ignoresSafeArea()
+      if model.isStartingPlayback {
+        ProgressView("Starting chart…")
+          .padding()
+          .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+          .frame(maxHeight: .infinity)
+      }
       // Controls inherit the outer safe area; only the playfield expands
       // beneath the notch and home indicator.
       HStack {
