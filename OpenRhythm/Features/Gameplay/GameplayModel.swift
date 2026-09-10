@@ -58,6 +58,7 @@ final class GameplayModel {
   private(set) var hitNoteIDs = Set<String>()
   private(set) var playbackGeneration = 0
   private var isStartingPlayback = false
+  private(set) var isMusicTailActive = false
   private(set) var engineRuntime: EnginePlayRuntime?
   private(set) var presentationAssets: EnginePresentationAssets?
   private var runtimeBundle: RuntimeBundle?
@@ -299,19 +300,22 @@ final class GameplayModel {
 
   func restart() {
     stop(deactivateAudio: false)
+    if phase == .finished { phase = .ready }
     start()
   }
 
-  func stop(deactivateAudio: Bool = true) {
-    playbackGeneration += 1
+  func stop(deactivateAudio: Bool = true, preserveMusic: Bool = false) {
+    let continueMusic = preserveMusic && tailStart == nil
+    isMusicTailActive = continueMusic
+    if !continueMusic { playbackGeneration += 1 }
     isStartingPlayback = false
-    player?.pause()
+    if !continueMusic { player?.pause() }
     engineAudio?.stop()
     if let timeObserver {
       player?.removeTimeObserver(timeObserver)
       self.timeObserver = nil
     }
-    if let endObserver {
+    if !continueMusic, let endObserver {
       NotificationCenter.default.removeObserver(endObserver)
       self.endObserver = nil
     }
@@ -322,7 +326,7 @@ final class GameplayModel {
     pressedLanes.removeAll()
     activeHolds.removeAll()
     if phase == .playing { phase = .ready }
-    if deactivateAudio {
+    if deactivateAudio && !continueMusic {
       Task {
         guard phase != .playing else { return }
         await Self.setAudioSession(active: false)
@@ -333,6 +337,10 @@ final class GameplayModel {
   func playbackEnded(
     uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
   ) {
+    if phase == .finished, isMusicTailActive {
+      stop()
+      return
+    }
     guard phase == .playing, tailStart == nil else { return }
     let mediaTime = player?.currentTime().seconds ?? (currentTime - bgmOffset)
     tailStart = (
@@ -393,7 +401,7 @@ final class GameplayModel {
     if nextMissIndex == chart.notes.count,
       currentTime > chart.duration + 1
     {
-      stop()
+      stop(preserveMusic: true)
       phase = .finished
       saveResult()
     }
@@ -434,7 +442,7 @@ final class GameplayModel {
         advancing: tailStart != nil || player?.timeControlStatus == .playing)
       if runtime.resolvedInputCount == runtime.inputCount,
         currentTime > chart.duration + 1 {
-        stop()
+        stop(preserveMusic: true)
         phase = .finished
         saveResult()
       }

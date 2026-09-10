@@ -213,6 +213,28 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
+  func testResultsPreserveMusicUntilEOFOrExit() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let model = try gameplayModel(resultStore: ResultStore(rootURL: root))
+    model.start()
+    model.update(mediaTime: 10)
+    XCTAssertEqual(model.phase, .finished)
+    XCTAssertTrue(model.isMusicTailActive)
+    await model.resultSaveTask?.value
+    model.playbackEnded(uptime: 100)
+    XCTAssertFalse(model.isMusicTailActive)
+    XCTAssertEqual(model.phase, .finished)
+    model.restart()
+    model.update(mediaTime: 10)
+    XCTAssertTrue(model.isMusicTailActive)
+    model.stop()
+    XCTAssertFalse(model.isMusicTailActive)
+    await model.resultSaveTask?.value
+  }
+
+  @MainActor
   func testRestartClearsJudgementsTouchesAndAudioTail() throws {
     let model = try gameplayModel()
     model.start()
