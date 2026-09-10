@@ -84,5 +84,11 @@ Bounded compatibility checks on September 10, 2026 used one catalog page and one
 chart per candidate server. Both Project SEKAI and SIF Custom Charts returned
 version-13 engines. SIF Custom Charts' LLSIF engine ran its first ten seconds
 (658 chart inputs, 34 resolved without touches); this is not a complete visual
-or audio verification. Project SEKAI's `next-sekai` engine currently stops at
-the unsupported `JumpLoop` instruction and is not yet playable.
+or audio verification. Project SEKAI's `next-sekai` engine is not yet playable:
+its cached chart now passes `JumpLoop` and the required basic math/memory
+operations, but stops at the unsupported `StreamSet` instruction.
+
+Interpreter control flow follows the public [Sonolus function specifications](
+https://wiki.sonolus.com/engine-specs/functions/jump-loop), with lazy branches
+and per-callback operation limits. Regression fixtures for these operations are
+synthetic; the downloaded compatibility chart remains outside version control.

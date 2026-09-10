@@ -77,6 +77,135 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(try interpreter.execute(nodeAt: 5), 22)
   }
 
+  func testJumpLoopDispatchIsLazyAndReturnsFinalBranch() throws {
+    let nodes = [
+      EngineDataNode(value: 2),
+      EngineDataNode(function: "UnsupportedUnvisitedBranch", arguments: []),
+      EngineDataNode(value: 42),
+      EngineDataNode(function: "JumpLoop", arguments: [0, 1, 2]),
+      EngineDataNode(value: -1),
+      EngineDataNode(function: "JumpLoop", arguments: [4, 1]),
+      EngineDataNode(function: "JumpLoop", arguments: []),
+      EngineDataNode(function: "JumpLoop", arguments: [2])
+    ]
+    let interpreter = EngineInterpreter(nodes: nodes)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 3), 42)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 5), 0)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 6), 0)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 7), 42)
+  }
+
+  func testJumpLoopHonorsOperationLimitAndPropagatesBreaks() throws {
+    let nodes = [
+      EngineDataNode(value: 0),
+      EngineDataNode(value: 1),
+      EngineDataNode(value: 42),
+      EngineDataNode(function: "Break", arguments: [1, 2]),
+      EngineDataNode(function: "JumpLoop", arguments: [3, 2]),
+      EngineDataNode(function: "Block", arguments: [4]),
+      EngineDataNode(function: "JumpLoop", arguments: [0, 2]),
+      EngineDataNode(value: .nan),
+      EngineDataNode(function: "JumpLoop", arguments: [7, 2])
+    ]
+    let interpreter = EngineInterpreter(nodes: nodes, operationLimit: 20)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 5), 42)
+    XCTAssertThrowsError(try interpreter.execute(nodeAt: 6)) { error in
+      guard case EngineInterpreterError.operationLimitExceeded = error else {
+        return XCTFail("Expected an operation limit, got \(error)")
+      }
+    }
+    XCTAssertThrowsError(try interpreter.execute(nodeAt: 8))
+    XCTAssertEqual(try interpreter.execute(nodeAt: 5), 42,
+      "A failed callback must not poison the next execution")
+  }
+
+  func testNumericFunctionsUsedBySEKAI() throws {
+    let examples: [(String, [Double], Double)] = [
+      ("Clamp", [-2, 0, 1], 0), ("Clamp", [2, 0, 1], 1),
+      ("Clamp", [0.5, 0, 1], 0.5), ("Arctan", [1], .pi / 4),
+      ("Ceil", [-1.7], -1), ("Floor", [-1.2], -2),
+      ("Round", [1.6], 2), ("Trunc", [-1.7], -1),
+      ("Log", [exp(2)], 2), ("Mod", [-5, 3], 1),
+      ("Mod", [5, -3], -1), ("Mod", [25, 7, 3], 1),
+      ("Mod", [Double.greatestFiniteMagnitude, 0.5], 0),
+      ("Remap", [0, 10, 100, 200, 5], 150),
+      ("RemapClamped", [0, 10, 200, 100, 20], 100),
+      ("RemapClamped", [10, 0, 100, 200, 20], 100),
+      ("UnlerpClamped", [0, 10, 20], 1),
+      ("UnlerpClamped", [10, 0, 20], 0),
+      ("LerpClamped", [10, 20, -1], 10)
+    ]
+    for (function, arguments, expected) in examples {
+      let nodes = arguments.map { EngineDataNode(value: $0) } + [
+        EngineDataNode(function: function, arguments: Array(arguments.indices))
+      ]
+      XCTAssertEqual(try EngineInterpreter(nodes: nodes)
+        .execute(nodeAt: arguments.count), expected, accuracy: 0.000001, function)
+    }
+  }
+
+  func testExtendedMemoryOperators() throws {
+    let memory = EngineMemory()
+    memory.set(block: 2000, index: 7, value: 10)
+    func call(_ function: String, _ arguments: [Double]) throws -> Double {
+      let nodes = arguments.map { EngineDataNode(value: $0) } + [
+        EngineDataNode(function: function, arguments: Array(arguments.indices))
+      ]
+      return try EngineInterpreter(nodes: nodes, memory: memory)
+        .execute(nodeAt: arguments.count)
+    }
+    XCTAssertEqual(try call("SetSubtract", [2000, 7, 2]), 8)
+    XCTAssertEqual(try call("SetDivide", [2000, 7, 2]), 4)
+    XCTAssertEqual(try call("SetPower", [2000, 7, 2]), 16)
+    XCTAssertEqual(try call("IncrementPost", [2000, 7]), 17)
+    XCTAssertEqual(try call("DecrementPost", [2000, 7]), 16)
+    XCTAssertEqual(try call("IncrementPre", [2000, 7]), 16)
+    XCTAssertEqual(memory.value(block: 2000, index: 7), 17)
+    XCTAssertEqual(try call("DecrementPre", [2000, 7]), 17)
+    XCTAssertEqual(memory.value(block: 2000, index: 7), 16)
+    XCTAssertEqual(try call("SetShifted", [2000, 1, 2, 3, 99]), 99)
+    XCTAssertEqual(memory.value(block: 2000, index: 7), 99)
+    XCTAssertThrowsError(try call("SetShifted", [2000, 1, .infinity, 3, 99]))
+    XCTAssertEqual(memory.value(block: 2000, index: 7), 99)
+  }
+
+  func testSwitchWithDefaultEvaluatesOnlyMatchingConsequence() throws {
+    let nodes = [
+      EngineDataNode(value: 1.5),
+      EngineDataNode(value: 2),
+      EngineDataNode(value: 42),
+      EngineDataNode(function: "UnvisitedBranch", arguments: []),
+      EngineDataNode(function: "SwitchWithDefault", arguments: [0, 1, 3, 0, 2, 3]),
+      EngineDataNode(function: "SwitchWithDefault", arguments: [0, 1, 3, 2]),
+      EngineDataNode(function: "Switch", arguments: [0, 1, 3]),
+      EngineDataNode(function: "SwitchWithDefault", arguments: [0, 1, 2])
+    ]
+    let interpreter = EngineInterpreter(nodes: nodes)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 4), 42)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 5), 42)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 6), 0)
+    XCTAssertThrowsError(try interpreter.execute(nodeAt: 7))
+  }
+
+  func testCompoundWritesCaptureCurrentValueBeforeOperandSideEffects() throws {
+    for (function, expected) in [
+      ("SetAdd", 12.0), ("SetMultiply", 20.0), ("SetSubtract", 8.0),
+      ("SetDivide", 5.0), ("SetPower", 100.0)
+    ] {
+      let memory = EngineMemory()
+      memory.set(block: 2000, index: 7, value: 10)
+      let nodes = [
+        EngineDataNode(value: 2000), EngineDataNode(value: 7),
+        EngineDataNode(value: 2),
+        EngineDataNode(function: "Set", arguments: [0, 1, 2]),
+        EngineDataNode(function: function, arguments: [0, 1, 3])
+      ]
+      let interpreter = EngineInterpreter(nodes: nodes, memory: memory)
+      XCTAssertEqual(try interpreter.execute(nodeAt: 4), expected, function)
+      XCTAssertEqual(memory.value(block: 2000, index: 7), expected, function)
+    }
+  }
+
   func testRuntimeReferencesRespectItemSources() throws {
     let json = #"""
       {
