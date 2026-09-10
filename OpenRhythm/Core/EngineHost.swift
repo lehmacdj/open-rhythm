@@ -29,11 +29,26 @@ struct EngineSpawnCommand: Equatable, Sendable {
 struct EngineParticleInstance: Equatable, Sendable {
   let id: Int
   let effectID: Int
-  let points: [EnginePoint]
+  var points: [EnginePoint]
   let startTime: TimeInterval
   let duration: TimeInterval
   let isLooped: Bool
-  let transform: [Double]
+  var transform: [Double]
+}
+
+private struct EngineStream {
+  var entries = [(key: Double, value: Double)]()
+
+  func lowerBound(_ key: Double) -> Int {
+    var lower = 0
+    var upper = entries.count
+    while lower < upper {
+      let middle = lower + (upper - lower) / 2
+      if entries[middle].key < key { lower = middle + 1 }
+      else { upper = middle }
+    }
+    return lower
+  }
 }
 
 /// Runtime side effects are retained until consumed by the presentation and
@@ -53,6 +68,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private(set) var exports = [Int: [Int: Double]]()
   private var audio = [EngineAudioCommand]()
   private var spawns = [EngineSpawnCommand]()
+  private var streams = [Int: EngineStream]()
+  private var streamEntryCount = 0
+  private let streamEntryLimit: Int
   private var nextParticleID = 1
   private var entityIndex: Int?
   private var exportCount = 0
@@ -64,7 +82,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     skinSpriteIDs: Set<Int>,
     effectClipIDs: Set<Int>,
     particleEffectIDs: Set<Int>,
-    archetypeCount: Int
+    archetypeCount: Int,
+    streamEntryLimit: Int = 262_144
   ) {
     self.memory = memory
     timeline = BPMTimeline(level: level)
@@ -72,6 +91,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     self.effectClipIDs = effectClipIDs
     self.particleEffectIDs = particleEffectIDs
     self.archetypeCount = archetypeCount
+    self.streamEntryLimit = max(0, streamEntryLimit)
     for block in [1003, 1004] {
       for index in 0..<16 {
         memory.set(block: block, index: index, value: index % 5 == 0 ? 1 : 0)
@@ -112,6 +132,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     case "BeatToTime":
       try validate(a, count: 1, function: function)
       return timeline.time(at: a[0])
+    case "BeatToBPM":
+      try validate(a, count: 1, function: function)
+      return timeline.bpm(at: a[0])
     case "Judge":
       try validate(a, count: 8, function: function)
       let distance = a[0] - a[1]
@@ -178,6 +201,57 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       try validate(a, count: 1, function: function)
       particles.removeValue(forKey: try identifier(a[0], function: function))
       return 0
+    case "MoveParticleEffect":
+      try validate(a, count: 9, function: function)
+      let id = try identifier(a[0], function: function)
+      guard particles[id] != nil else { return 0 }
+      particles[id]?.points = points(a)
+      particles[id]?.transform = transform(block: 1004)
+      return 0
+    case "StreamSet", "StreamHas", "StreamGetValue",
+      "StreamGetNextKey", "StreamGetPreviousKey":
+      try validate(a, count: function == "StreamSet" ? 3 : 2,
+        function: function)
+      let id = try identifier(a[0], function: function)
+      guard id >= 0 else {
+        throw EngineInterpreterError.invalidArguments(function)
+      }
+      let key = a[1]
+      // Do not copy the stream across a mutation: writes typically append
+      // samples and should not copy an ever-growing buffer each frame.
+      let index = streams[id]?.lowerBound(key) ?? 0
+      let count = streams[id]?.entries.count ?? 0
+      let found = index < count && streams[id]?.entries[index].key == key
+      if function == "StreamSet" {
+        if found { streams[id]?.entries[index].value = a[2] }
+        else {
+          guard streamEntryCount < streamEntryLimit else {
+            throw EngineInterpreterError.operationLimitExceeded
+          }
+          streams[id, default: EngineStream()].entries.insert((key, a[2]),
+            at: index)
+          streamEntryCount += 1
+        }
+        return 0
+      }
+      if function == "StreamHas" { return found ? 1 : 0 }
+      if function == "StreamGetNextKey" {
+        let next = index + (found ? 1 : 0)
+        return next < count ? streams[id]!.entries[next].key : key
+      }
+      if function == "StreamGetPreviousKey" {
+        return index > 0 ? streams[id]!.entries[index - 1].key : key
+      }
+      guard let stream = streams[id], !stream.entries.isEmpty else { return 0 }
+      if index == 0 { return stream.entries[0].value }
+      if index == count { return stream.entries[count - 1].value }
+      if found { return stream.entries[index].value }
+      let before = stream.entries[index - 1]
+      let after = stream.entries[index]
+      let span = after.key - before.key
+      let fraction = span.isFinite ? (key - before.key) / span
+        : (key / 2 - before.key / 2) / (after.key / 2 - before.key / 2)
+      return before.value * (1 - fraction) + after.value * fraction
     case "Spawn":
       guard (1...65).contains(a.count), a.allSatisfy(\.isFinite) else {
         throw EngineInterpreterError.invalidArguments(function)

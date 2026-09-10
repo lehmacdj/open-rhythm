@@ -44,7 +44,7 @@ final class EnginePlayRuntime {
     engine: EnginePlayData, level: LevelData,
     options: [Double], aspectRatio: Double,
     skinSpriteIDs: Set<Int>, effectClipIDs: Set<Int>,
-    particleEffectIDs: Set<Int>
+    particleEffectIDs: Set<Int>, rom: Data? = nil
   ) throws {
     guard aspectRatio.isFinite, aspectRatio > 0,
       level.entities.count <= 100_000 else {
@@ -52,6 +52,7 @@ final class EnginePlayRuntime {
     }
     self.engine = engine
     memory = EngineMemory()
+    try memory.loadROM(rom)
     host = CommandEngineRuntimeHost(
       memory: memory, level: level, skinSpriteIDs: skinSpriteIDs,
       effectClipIDs: effectClipIDs, particleEffectIDs: particleEffectIDs,

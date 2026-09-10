@@ -2,6 +2,62 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  func testEngineROMIsLoadedOnlineAndFromOfflineManifest() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let server = ServerDescriptor(id: "rom", name: "ROM Fixture",
+      baseURL: URL(string: "https://server.example")!)
+    let details = Data(#"""
+      {"item":{"bgm":{"url":"/bgm"},"data":{"url":"/level"},
+      "engine":{"version":13,"source":"https://engine.example",
+      "playData":{"url":"/play"},"rom":{"url":"/rom"}}}}
+      """#.utf8)
+    let rom = Data([0, 0, 128, 63, 0, 0, 32, 192])
+    StubURLProtocol.handler = { request in
+      switch request.url?.lastPathComponent {
+      case "rom":
+        XCTAssertEqual(request.url?.host, "engine.example")
+        return rom
+      case "play":
+        return Data(#"""
+          {"skin":{"sprites":[]},"effect":{"clips":[]},
+          "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
+          """#.utf8)
+      case "level": return Data(#"{"bgmOffset":0,"entities":[]}"#.utf8)
+      case "bgm": return Data("audio fixture".utf8)
+      default: return details
+      }
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let client = SonolusClient(session: session)
+    let store = OfflineStore(rootURL: root, client: client)
+    let loader = RuntimeBundleLoader(client: client, offlineStore: store)
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "chart", source: nil, version: 1,
+      rating: 1, title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+      author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+    let online = try await loader.load(level: level, from: server)
+    XCTAssertFalse(online.isOffline)
+    XCTAssertEqual(online.engineROM, rom)
+    _ = try await store.download(level: level, from: server)
+    StubURLProtocol.handler = { _ in
+      XCTFail("Offline ROM loading must not fetch resources")
+      throw URLError(.notConnectedToInternet)
+    }
+    let offline = try await loader.load(level: level, from: server)
+    XCTAssertTrue(offline.isOffline)
+    XCTAssertEqual(offline.engineROM, rom)
+    let runtime = try EnginePlayRuntime(engine: offline.engine, level: offline.level,
+      options: [], aspectRatio: 1.8, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [], rom: offline.engineROM)
+    XCTAssertEqual(runtime.memory.value(block: 3000, index: 1), -2.5)
+  }
+
   @MainActor
   func testPrefetchIsBoundedAndExpiredPagesRestartFromBeginning() async throws {
     let recorder = RequestRecorder()

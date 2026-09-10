@@ -31,10 +31,27 @@ struct EmptyEngineRuntimeHost: EngineRuntimeHost {
 }
 
 final class EngineMemory {
+  private var rom = [Double]()
   private var blocks = [Int: [Int: Double]]()
   private var entityBlocks = [Int: [Int: [Int: Double]]]()
   private var entityKey: Int?
   private var entityIndex: Int?
+
+  func loadROM(_ data: Data?) throws {
+    guard let data else { rom = []; return }
+    let decoded = try data.starts(with: [0x1f, 0x8b])
+      ? GzipDecoder.decompress(data, maximumSize: 16 * 1024 * 1024) : data
+    guard decoded.count.isMultiple(of: 4), decoded.count <= 16 * 1024 * 1024 else {
+      throw EngineInterpreterError.invalidArguments("engine ROM size")
+    }
+    rom = decoded.withUnsafeBytes { bytes in
+      stride(from: 0, to: bytes.count, by: 4).map { offset in
+        let bits = UInt32(littleEndian:
+          bytes.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
+        return Double(Float(bitPattern: bits))
+      }
+    }
+  }
 
   func selectEntity(key: Int, index: Int?) {
     entityKey = key
@@ -62,6 +79,7 @@ final class EngineMemory {
 
   func value(block: Int, index: Int) -> Double {
     guard index >= 0 else { return 0 }
+    if block == 3000 { return rom.indices.contains(index) ? rom[index] : 0 }
     if let (array, offset) = arrayAddress(block: block, index: index) {
       return blocks[array]?[offset] ?? 0
     }
@@ -73,7 +91,7 @@ final class EngineMemory {
 
   @discardableResult
   func set(block: Int, index: Int, value: Double) -> Double {
-    guard index >= 0 else { return value }
+    guard index >= 0, block != 3000 else { return value }
     if let (array, offset) = arrayAddress(block: block, index: index) {
       blocks[array, default: [:]][offset] = value
       return value
@@ -182,6 +200,11 @@ final class EngineInterpreter {
     case "Cos": return try unary(arguments, cos)
     case "Divide": return try binary(arguments, /)
     case "Equal": return try comparison(arguments, ==)
+    case "EaseInQuad", "EaseOutQuad", "EaseInOutQuad", "EaseOutInQuad",
+      "EaseInCubic", "EaseOutCubic":
+      let suffix = String(function.dropFirst(4))
+      let name = suffix.prefix(1).lowercased() + suffix.dropFirst()
+      return try unary(arguments) { EngineEasing.value(name, $0, clamped: false) }
     case "Execute":
       var result = 0.0
       for argument in arguments {

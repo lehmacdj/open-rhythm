@@ -424,7 +424,7 @@ final class GameplayModel {
           options: assets.runtimeOptions(noteSpeed: settings.noteSpeed),
           aspectRatio: aspect, skinSpriteIDs: Set(assets.skin.keys),
           effectClipIDs: engineAudio?.clipIDs ?? [],
-          particleEffectIDs: Set(assets.particles.keys)
+          particleEffectIDs: Set(assets.particles.keys), rom: bundle.engineROM
         )
       }
       guard let runtime = engineRuntime else { return }

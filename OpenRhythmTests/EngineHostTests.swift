@@ -6,6 +6,75 @@ import Metal
 final class EngineHostTests: XCTestCase {
   private let quad: [Double] = [-1, -1, -1, 1, 1, 1, 1, -1]
 
+  func testStreamsInterpolateAndPreserveKeysAcrossFrames() throws {
+    let host = makeHost()
+    func call(_ function: String, _ values: [Double]) throws -> Double {
+      try host.call(function: function, arguments: values)
+    }
+    XCTAssertEqual(try call("StreamGetValue", [0, 2]), 0)
+    XCTAssertEqual(try call("StreamGetNextKey", [0, 2]), 2)
+    XCTAssertEqual(try call("StreamGetPreviousKey", [0, 2]), 2)
+    _ = try call("StreamSet", [0, 10, 100])
+    _ = try call("StreamSet", [0, 0, 0])
+    _ = try call("StreamSet", [0, 5, 40])
+    _ = try call("StreamSet", [0, 5, 50])
+    _ = try call("StreamSet", [1, 5, 999])
+    try host.beginFrame(at: 20)
+    for (key, expected) in [(-1.0, 0.0), (0, 0), (2.5, 25),
+      (5, 50), (7.5, 75), (10, 100), (11, 100)] {
+      XCTAssertEqual(try call("StreamGetValue", [0, key]), expected)
+    }
+    XCTAssertEqual(try call("StreamGetValue", [1, 5]), 999)
+    XCTAssertEqual(try call("StreamHas", [0, 5]), 1)
+    XCTAssertEqual(try call("StreamHas", [0, 2.5]), 0)
+    XCTAssertEqual(try call("StreamGetNextKey", [0, 5]), 10)
+    XCTAssertEqual(try call("StreamGetNextKey", [0, 2.5]), 5)
+    XCTAssertEqual(try call("StreamGetPreviousKey", [0, 5]), 0)
+    XCTAssertEqual(try call("StreamGetPreviousKey", [0, 7.5]), 5)
+    XCTAssertEqual(try call("StreamGetPreviousKey", [0, -1]), -1)
+    XCTAssertEqual(try call("StreamGetNextKey", [0, 11]), 11)
+    XCTAssertThrowsError(try call("StreamSet", [0, .nan, 1]))
+    XCTAssertThrowsError(try call("StreamSet", [-1, 0, 1]))
+    XCTAssertThrowsError(try call("StreamSet", [0.5, 0, 1]))
+    _ = try call("StreamSet", [2, -Double.greatestFiniteMagnitude, -100])
+    _ = try call("StreamSet", [2, Double.greatestFiniteMagnitude, 100])
+    XCTAssertEqual(try call("StreamGetValue", [2, 0]), 0)
+  }
+
+  func testStreamBudgetCountsAllStreamsButAllowsReplacement() throws {
+    let host = CommandEngineRuntimeHost(memory: EngineMemory(),
+      level: LevelData(bgmOffset: 0, entities: []), skinSpriteIDs: [],
+      effectClipIDs: [], particleEffectIDs: [], archetypeCount: 0,
+      streamEntryLimit: 2)
+    _ = try host.call(function: "StreamSet", arguments: [0, 0, 1])
+    _ = try host.call(function: "StreamSet", arguments: [1, 0, 2])
+    _ = try host.call(function: "StreamSet", arguments: [0, 0, 3])
+    XCTAssertThrowsError(try host.call(function: "StreamSet", arguments: [2, 0, 4]))
+    XCTAssertEqual(try host.call(function: "StreamGetValue", arguments: [0, 0]), 3)
+    XCTAssertEqual(try host.call(function: "StreamHas", arguments: [2, 0]), 0)
+  }
+
+  func testMovingParticlesPreservesLifetimeAndRefreshesTransform() throws {
+    let host = makeHost()
+    try host.beginFrame(at: 2)
+    let id = try host.call(function: "SpawnParticleEffect",
+      arguments: [9] + quad + [3, 0])
+    let before = try XCTUnwrap(host.particles[Int(id)])
+    try host.beginFrame(at: 3)
+    host.memory.set(block: 1004, index: 0, value: 2)
+    _ = try host.call(function: "MoveParticleEffect",
+      arguments: [id] + quad.map { $0 * 2 })
+    let moved = try XCTUnwrap(host.particles[Int(id)])
+    XCTAssertEqual(moved.startTime, before.startTime)
+    XCTAssertEqual(moved.duration, before.duration)
+    XCTAssertEqual(moved.points[0], EnginePoint(x: -2, y: -2))
+    XCTAssertEqual(moved.transform[0], 2)
+    _ = try host.call(function: "MoveParticleEffect", arguments: [999] + quad)
+    XCTAssertEqual(host.particles.count, 1)
+    try host.beginFrame(at: 5)
+    XCTAssertTrue(host.particles.isEmpty)
+  }
+
   func testInterpreterDispatchesHostFunctions() throws {
     let host = makeHost()
     let nodes = [
@@ -69,6 +138,10 @@ final class EngineHostTests: XCTestCase {
         function: "BeatToTime", arguments: [beat]
       ), time)
     }
+    for (beat, value) in [(-2.0, 120.0), (3.999, 120), (4, 60), (20, 60)] {
+      XCTAssertEqual(try host.call(function: "BeatToBPM", arguments: [beat]), value)
+    }
+    XCTAssertEqual(try makeHost().call(function: "BeatToBPM", arguments: [10]), 60)
   }
 
   func testAudioSeparationUsesPlaybackOrderAndClipIdentity() throws {

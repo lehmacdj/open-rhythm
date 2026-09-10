@@ -61,6 +61,10 @@ struct BPMTimeline: Sendable {
     else { return beat }
     return segment.time + (beat - segment.beat) * 60 / segment.bpm
   }
+
+  func bpm(at beat: Double) -> Double {
+    (segments.last { $0.beat <= beat } ?? segments.first)?.bpm ?? 60
+  }
 }
 
 struct RhythmChart: Sendable {

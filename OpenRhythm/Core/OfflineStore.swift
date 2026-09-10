@@ -339,6 +339,13 @@ actor OfflineStore {
     )
 
     var presentation = [String: Data]()
+    let rom: Data?
+    if let remoteURL = references.engineROMURL {
+      guard let url = localURL(for: remoteURL, in: manifest) else {
+        throw RuntimeBundleError.missingResource("engine ROM")
+      }
+      rom = try Data(contentsOf: url)
+    } else { rom = nil }
     for (name, remoteURL) in references.presentationURLs {
       guard let url = localURL(for: remoteURL, in: manifest) else {
         throw RuntimeBundleError.missingResource(name)
@@ -357,7 +364,8 @@ actor OfflineStore {
       bgmURL: bgmURL,
       isOffline: true,
       presentation: presentation.isEmpty ? nil
-        : RuntimePresentation(resources: presentation)
+        : RuntimePresentation(resources: presentation),
+      engineROM: rom
     )
   }
 

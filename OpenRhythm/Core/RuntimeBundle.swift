@@ -48,6 +48,7 @@ private struct RuntimeEngineItem: Decodable {
   let version: Int
   let playData: ResourceLocator
   let configuration: ResourceLocator?
+  let rom: ResourceLocator?
   let skin: RuntimePresentationItem?
   let effect: RuntimePresentationItem?
   let particle: RuntimePresentationItem?
@@ -58,6 +59,7 @@ struct RuntimeResourceReferences: Sendable {
   let engineDataURL: URL
   let levelDataURL: URL
   let bgmURL: URL
+  let engineROMURL: URL?
   let presentationURLs: [String: URL]
 
   init(itemData: Data, serverBaseURL: URL) throws {
@@ -92,6 +94,7 @@ struct RuntimeResourceReferences: Sendable {
 
     engineVersion = item.engine.version
     self.engineDataURL = engineDataURL
+    engineROMURL = item.engine.rom?.resolved(against: engineBaseURL)
     self.levelDataURL = levelDataURL
     self.bgmURL = bgmURL
     var urls = [String: URL]()
@@ -123,6 +126,7 @@ struct RuntimeBundle: Sendable {
   let bgmURL: URL
   let isOffline: Bool
   var presentation: RuntimePresentation? = nil
+  var engineROM: Data? = nil
 }
 
 struct RuntimePresentation: Sendable {
@@ -168,6 +172,7 @@ actor RuntimeBundleLoader {
 
     async let engineData = client.resource(at: references.engineDataURL)
     async let levelData = client.resource(at: references.levelDataURL)
+    async let romData = loadROM(at: references.engineROMURL)
     let presentation = try await withThrowingTaskGroup(
       of: (String, Data).self
     ) { group in
@@ -186,7 +191,8 @@ actor RuntimeBundleLoader {
       level: CompressedJSONDecoder.decode(LevelData.self, from: levelData),
       bgmURL: references.bgmURL,
       isOffline: false,
-      presentation: presentation
+      presentation: presentation,
+      engineROM: romData
     )
   }
 
@@ -194,5 +200,10 @@ actor RuntimeBundleLoader {
     guard version == 13 else {
       throw RuntimeBundleError.unsupportedEngineVersion(version)
     }
+  }
+
+  private func loadROM(at url: URL?) async throws -> Data? {
+    guard let url else { return nil }
+    return try await client.resource(at: url)
   }
 }

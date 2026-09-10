@@ -133,7 +133,11 @@ final class RuntimeDecodingTests: XCTestCase {
       ("RemapClamped", [10, 0, 100, 200, 20], 100),
       ("UnlerpClamped", [0, 10, 20], 1),
       ("UnlerpClamped", [10, 0, 20], 0),
-      ("LerpClamped", [10, 20, -1], 10)
+      ("LerpClamped", [10, 20, -1], 10),
+      ("EaseInQuad", [0.5], 0.25), ("EaseOutQuad", [0.5], 0.75),
+      ("EaseInOutQuad", [0.25], 0.125), ("EaseOutInQuad", [0.25], 0.375),
+      ("EaseInCubic", [0.5], 0.125), ("EaseOutCubic", [0.5], 0.875),
+      ("EaseInQuad", [2], 4)
     ]
     for (function, arguments, expected) in examples {
       let nodes = arguments.map { EngineDataNode(value: $0) } + [
@@ -142,6 +146,28 @@ final class RuntimeDecodingTests: XCTestCase {
       XCTAssertEqual(try EngineInterpreter(nodes: nodes)
         .execute(nodeAt: arguments.count), expected, accuracy: 0.000001, function)
     }
+  }
+
+  func testEngineROMDecodesLittleEndianFloatsAndIsReadOnly() throws {
+    let memory = EngineMemory()
+    // IEEE-754 little-endian Float32 values 1, -2.5, 0.125.
+    try memory.loadROM(Data([0, 0, 128, 63, 0, 0, 32, 192, 0, 0, 0, 62]))
+    XCTAssertEqual(memory.value(block: 3000, index: 0), 1)
+    XCTAssertEqual(memory.value(block: 3000, index: 1), -2.5)
+    XCTAssertEqual(memory.value(block: 3000, index: 2), 0.125)
+    XCTAssertEqual(memory.value(block: 3000, index: 3), 0)
+    memory.set(block: 3000, index: 0, value: 999)
+    XCTAssertEqual(memory.value(block: 3000, index: 0), 1)
+    let compressed = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAAA2NgaLBnYFA4wMDAYAcAKzCAQwwAAAA="))
+    try memory.loadROM(compressed)
+    XCTAssertEqual(memory.value(block: 3000, index: 1), -2.5)
+    XCTAssertThrowsError(try memory.loadROM(Data([0x1f, 0x8b, 0])))
+    XCTAssertThrowsError(try memory.loadROM(Data([1, 2, 3])))
+    XCTAssertThrowsError(try memory.loadROM(Data(repeating: 0,
+      count: 16 * 1024 * 1024 + 4)))
+    try memory.loadROM(nil)
+    XCTAssertEqual(memory.value(block: 3000, index: 0), 0)
   }
 
   func testExtendedMemoryOperators() throws {
