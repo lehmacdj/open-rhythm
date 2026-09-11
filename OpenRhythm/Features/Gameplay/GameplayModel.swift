@@ -22,13 +22,20 @@ struct JudgementFeedback: Hashable {
   let sequence: Int
   let judgement: NoteJudgement
   let accuracy: Double?
+  var minimumError: Double? = nil
+
+  func timingText(for mode: JudgementDisplayMode) -> String? {
+    guard mode == .timing, judgement != .miss,
+      judgement != .perfect || minimumError != nil,
+      let accuracy, accuracy.isFinite, accuracy != 0,
+      abs(accuracy) >= (minimumError ?? 0) else { return nil }
+    return accuracy < 0 ? "Early" : "Late"
+  }
 
   func text(for mode: JudgementDisplayMode) -> String? {
     guard mode != .off else { return nil }
     let grade = judgement.rawValue.uppercased()
-    guard mode == .timing, judgement == .great || judgement == .good,
-      let accuracy, accuracy.isFinite, accuracy != 0 else { return grade }
-    return (accuracy < 0 ? "Early " : "Late ") + grade
+    return timingText(for: mode).map { "\($0) \(grade)" } ?? grade
   }
 }
 
@@ -83,6 +90,7 @@ final class GameplayModel {
   private(set) var isStartingPlayback = false
   private var audioSeekCompleted = false
   private var preparedInputCount: Int?
+  private var engineScore: EngineScoreSnapshot?
   private var musicHasEnded = false
   private var judgementSequence = 0
   private(set) var latestJudgement: JudgementFeedback?
@@ -103,7 +111,11 @@ final class GameplayModel {
   }
 
   var displayedScore: Int {
-    settings.scoreDisplay.score(judgements: judgements, noteCount: noteCount)
+    if let engineScore {
+      return settings.scoreDisplay == .countDown
+        ? engineScore.remaining : engineScore.earned
+    }
+    return settings.scoreDisplay.score(judgements: judgements, noteCount: noteCount)
   }
 
   var noteCount: Int {
@@ -113,7 +125,7 @@ final class GameplayModel {
   /// Partway through a play this is the score kept, not the score projected:
   /// notes still unjudged count as nothing yet.
   var score: Int {
-    NoteJudgement.score(for: judgements, noteCount: noteCount)
+    engineScore?.earned ?? NoteJudgement.score(for: judgements, noteCount: noteCount)
   }
 
   var playbackTime: TimeInterval {
@@ -133,7 +145,9 @@ final class GameplayModel {
   private let loader: RuntimeBundleLoader
   private let resultStore: ResultStore
   private var bgmOffset = 0.0
-  private var clockMapping: BGMClockMapping { BGMClockMapping(offset: bgmOffset) }
+  private var clockMapping: BGMClockMapping {
+    BGMClockMapping(offset: bgmOffset)
+  }
   private var player: AVPlayer?
   private var timeObserver: Any?
   private var endObserver: NSObjectProtocol?
@@ -234,6 +248,7 @@ final class GameplayModel {
     maxCombo = 0
     currentTime = clockMapping.initialChartTime
     engineRuntime = nil
+    engineScore = nil
     engineAspectRatio = nil
     nextMissIndex = 0
     hitNoteIDs.removeAll()
@@ -274,7 +289,8 @@ final class GameplayModel {
       queue: .main
     ) { [weak self] time in
       Task { @MainActor in
-        guard self?.tailStart == nil, self?.presentationAssets == nil,
+        guard self?.tailStart == nil,
+          self?.presentationAssets == nil,
           self?.playbackGeneration == generation,
           self?.isStartingPlayback == false else { return }
         self?.update(mediaTime: time.seconds)
@@ -477,7 +493,8 @@ final class GameplayModel {
         engineAspectRatio = aspect
         engineRuntime = try EnginePlayRuntime(
           engine: bundle.engine, level: bundle.level,
-          options: assets.runtimeOptions(noteSpeed: settings.noteSpeed),
+          options: assets.runtimeOptions(noteSpeed: settings.noteSpeed,
+            scoreMode: settings.scoreMode),
           aspectRatio: aspect, skinSpriteIDs: Set(assets.skin.keys),
           effectClipIDs: engineAudio?.clipIDs ?? [],
           particleEffectIDs: Set(assets.particles.keys), rom: bundle.engineROM
@@ -490,6 +507,7 @@ final class GameplayModel {
       guard let runtime = engineRuntime else { return }
       currentTime = playbackTime
       try runtime.update(at: currentTime, touches: touches)
+      engineScore = runtime.arcadeScore?.snapshot
       for judgment in runtime.judgments {
         let metadata = inputMetadata.indices.contains(judgment.entityIndex)
           ? inputMetadata[judgment.entityIndex] : (time: nil, type: "Unknown")
@@ -503,7 +521,9 @@ final class GameplayModel {
         record(grade, accuracy: judgment.accuracy,
           at: metadata.time, noteType: metadata.type)
       }
-      // Schedule against the clock after interpretation, not before its work.
+      // Interpretation can consume a substantial part of a frame. Schedule
+      // against the clock now, not its value before that work, or scheduled
+      // hit sounds inherit the entire interpreter delay.
       try engineAudio?.update(runtime.host.takeAudioCommands(), at: playbackTime,
         advancing: tailStart != nil || player?.timeControlStatus == .playing,
         loopCommands: runtime.host.takeLoopCommands())
@@ -535,7 +555,8 @@ final class GameplayModel {
       noteType: noteType, judgement: judgement, accuracy: validAccuracy))
     judgementSequence += 1
     latestJudgement = JudgementFeedback(sequence: judgementSequence,
-      judgement: judgement, accuracy: accuracy)
+      judgement: judgement, accuracy: accuracy,
+      minimumError: presentationAssets?.judgementErrorMinimum)
     judgements[judgement, default: 0] += 1
     if judgement == .miss {
       combo = 0
@@ -578,7 +599,8 @@ final class GameplayModel {
       good: judgements[.good, default: 0],
       miss: judgements[.miss, default: 0],
       noteTimings: noteTimings, duration: currentTime,
-      level: level, server: resultServer
+      level: level, server: resultServer, engineScore: engineScore?.earned,
+      scoreMode: scoreModeName
     )
     resultSaveTask = Task {
       do {
@@ -587,6 +609,12 @@ final class GameplayModel {
         resultSaveError = error.localizedDescription
       }
     }
+  }
+
+  private var scoreModeName: String? {
+    guard let option = presentationAssets?.scoreModeOption,
+      let values = option.values else { return nil }
+    return option.selectedIndex(settings.scoreMode).map { values[$0].displayValue() }
   }
 
   private nonisolated static func setAudioSession(active: Bool) async {

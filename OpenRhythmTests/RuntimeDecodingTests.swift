@@ -25,6 +25,19 @@ final class RuntimeDecodingTests: XCTestCase {
       accuracy: 0.2).text(for: .timing), "MISS")
   }
 
+  func testPerfectTimingLabelUsesEngineMinimumError() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self,
+      from: Data(#"{"options":[],"ui":{"judgmentErrorMin":20}}"#.utf8))
+    let minimum = try XCTUnwrap(config.ui?.judgmentErrorMin) / 1000
+    for (error, expected) in [(-0.03, "Early"), (0.025, "Late"),
+      (-0.019, ""), (0, "")] {
+      let feedback = JudgementFeedback(sequence: 1, judgement: .perfect,
+        accuracy: error, minimumError: minimum)
+      XCTAssertEqual(feedback.timingText(for: .timing) ?? "", expected)
+      XCTAssertNil(feedback.timingText(for: .judgement))
+    }
+  }
+
   @MainActor
   func testFallbackJudgementsRetainSignedAccuracyAndResetOnRestart() throws {
     let model = try gameplayModel()

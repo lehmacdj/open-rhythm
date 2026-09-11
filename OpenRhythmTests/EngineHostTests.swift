@@ -4,6 +4,74 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testRuntimeReadsArcadeWeightsAfterPreprocessAndScoresAtDespawn() throws {
+    let builder = RuntimeNodeBuilder()
+    func set(_ block: Int, _ index: Int, _ value: Double) -> Int {
+      builder.call("Set", [builder.value(Double(block)),
+        builder.value(Double(index)), builder.value(value)])
+    }
+    let preprocess = builder.call("Execute", [set(2004, 0, 1),
+      set(2004, 1, 0.7), set(2004, 2, 0.5), set(5001, 0, 10), set(4006, 0, 20)])
+    let update = builder.call("Execute", [set(4005, 0, 2), set(4004, 0, 1)])
+    let engine = try builder.engine(archetypes: [
+      ["name": "Note", "hasInput": true, "imports": [], "exports": [],
+       "preprocess": ["index": preprocess], "updateParallel": ["index": update]]
+    ])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Note", name: nil, data: [])]),
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    XCTAssertEqual(runtime.arcadeScore?.snapshot.earned, 0)
+    try runtime.update(at: 0)
+    XCTAssertEqual(runtime.arcadeScore?.snapshot.earned, 700_000)
+    XCTAssertEqual(runtime.arcadeScore?.snapshot.remaining, 700_000)
+  }
+
+  func testArcadeScoreUsesEngineWeightsGradeMultipliersAndStreaks() throws {
+    // Bonus after every two GREAT-or-better inputs, capped at four.
+    let config = [1.0, 0.7, 0.5, 0, 0, 0, 0.1, 2, 4, 0, 0, 0]
+    let weights = [0: 10.0, 1: 20, 2: 1, 3: 10, 4: 30]
+    var score = try XCTUnwrap(EngineArcadeScore(configuration: config,
+      weights: weights))
+    XCTAssertEqual(score.snapshot.remaining, 1_000_000)
+    let maximum = 71.6 // All-perfect base 71 + bonuses 0,.1,.1,.2,.2.
+    score.record(entity: 0, grade: 1)
+    score.record(entity: 1, grade: 2)
+    XCTAssertEqual(score.snapshot.earned,
+      Int(((10 + 20.1 * 0.7) / maximum * 1_000_000).rounded()))
+    score.record(entity: 2, grade: 3) // GOOD resets the GREAT-or-better streak.
+    score.record(entity: 3, grade: 1)
+    score.record(entity: 4, grade: 0)
+    let final = score.snapshot
+    XCTAssertEqual(final.earned, final.remaining)
+    XCTAssertEqual(final.earned,
+      Int(((10 + 20.1 * 0.7 + 0.5 + 10) / maximum * 1_000_000).rounded()))
+    score.record(entity: 0, grade: 1)
+    XCTAssertEqual(score.snapshot, final, "Duplicate entity resolutions do not score twice")
+    var flawless = try XCTUnwrap(EngineArcadeScore(configuration: config,
+      weights: weights))
+    for index in 0..<5 { flawless.record(entity: index, grade: 1) }
+    XCTAssertEqual(flawless.snapshot.earned, 1_000_000)
+    XCTAssertEqual(flawless.snapshot.remaining, 1_000_000)
+    XCTAssertNil(EngineArcadeScore(configuration: Array(repeating: 0, count: 12),
+      weights: weights), "Unconfigured engines use the fallback scoring policy")
+  }
+
+  func testFlatArcadeScoreUsesThreeTwoOneAndIndependentNoteWeights() throws {
+    let config = [3.0, 2, 1] + Array(repeating: 0.0, count: 9)
+    var weighted = try XCTUnwrap(EngineArcadeScore(configuration: config,
+      weights: [0: 10, 1: 20]))
+    weighted.record(entity: 0, grade: 2)
+    weighted.record(entity: 1, grade: 3)
+    XCTAssertEqual(weighted.snapshot.earned, 444_444)
+    var unweighted = try XCTUnwrap(EngineArcadeScore(configuration: config,
+      weights: [0: 10, 1: 10]))
+    unweighted.record(entity: 0, grade: 2)
+    unweighted.record(entity: 1, grade: 3)
+    XCTAssertEqual(unweighted.snapshot.earned, 500_000)
+  }
+
   func testTouchPoolKeepsTenCoincidentContactsAndReusedIdentities() throws {
     var pool = EngineTouchPool<Int>()
     let point = EnginePoint(x: 0, y: -0.75)

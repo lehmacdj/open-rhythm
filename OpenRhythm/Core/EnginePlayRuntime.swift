@@ -41,6 +41,71 @@ struct EngineJudgment: Sendable {
   let accuracy: Double
 }
 
+struct EngineScoreSnapshot: Equatable {
+  let earned: Int
+  let remaining: Int
+}
+
+/// Sonolus arcade score: engine-provided grade, note, and consecutive-grade
+/// multipliers, normalized against an all-PERFECT play of this chart.
+struct EngineArcadeScore {
+  private let configuration: [Double]
+  private let weights: [Int: Double]
+  private let maximum: Double
+  private var streaks = [0, 0, 0]
+  private var resolved = Set<Int>()
+  private var earned = 0.0
+  private var perfectResolved = 0.0
+
+  init?(configuration: [Double], weights: [Int: Double]) {
+    guard configuration.count == 12,
+      configuration.allSatisfy({ $0.isFinite && $0 >= 0 }),
+      configuration[0] > 0,
+      weights.values.allSatisfy({ $0.isFinite && $0 >= 0 }) else { return nil }
+    self.configuration = configuration
+    self.weights = weights
+    let base = weights.values.reduce(0, +)
+    let bonus = (1...max(1, weights.count)).reduce(0.0) { sum, count in
+      sum + Self.bonus(configuration, streaks: [count, count, count])
+    }
+    maximum = configuration[0] * (base + (weights.isEmpty ? 0 : bonus))
+    guard maximum.isFinite, maximum > 0 else { return nil }
+  }
+
+  private static func bonus(_ config: [Double], streaks: [Int]) -> Double {
+    (0..<3).reduce(0.0) { sum, grade in
+      let offset = 3 + grade * 3
+      let step = config[offset + 1]
+      guard step > 0 else { return sum }
+      let count = min(Double(streaks[grade]), config[offset + 2])
+      return sum + config[offset] * floor(count / step)
+    }
+  }
+
+  mutating func record(entity: Int, grade: Int) {
+    guard let weight = weights[entity], resolved.insert(entity).inserted else { return }
+    for index in 0..<3 {
+      streaks[index] = grade > 0 && grade <= index + 1 ? streaks[index] + 1 : 0
+    }
+    let count = resolved.count
+    perfectResolved += configuration[0]
+      * (weight + Self.bonus(configuration, streaks: [count, count, count]))
+    if (1...3).contains(grade) {
+      earned += configuration[grade - 1]
+        * (weight + Self.bonus(configuration, streaks: streaks))
+    }
+  }
+
+  var snapshot: EngineScoreSnapshot {
+    func normalized(_ value: Double) -> Int {
+      guard value.isFinite else { return 0 }
+      return Int(min(1_000_000, max(0, value / maximum * 1_000_000)).rounded())
+    }
+    return EngineScoreSnapshot(earned: normalized(earned),
+      remaining: normalized(maximum - perfectResolved + earned))
+  }
+}
+
 /// Pool by contact identity, never by lane or proximity. UIKit may reuse an
 /// ended UITouch's address before the next display tick; keep that final
 /// sample separately so the old release and new press both reach the engine.
@@ -88,6 +153,7 @@ final class EnginePlayRuntime {
   let inputCount: Int
   private(set) var judgments = [EngineJudgment]()
   private(set) var resolvedInputCount = 0
+  private(set) var arcadeScore: EngineArcadeScore?
   private let engine: EnginePlayData
   private let interpreter: EngineInterpreter
   private var entities = [Entity]()
@@ -182,6 +248,14 @@ final class EnginePlayRuntime {
     for entity in ordered(entities, by: \.preprocess) {
       _ = try execute(entity, callback: \.preprocess)
     }
+    let weights = Dictionary(uniqueKeysWithValues: entities.compactMap { entity in
+      guard let index = entity.index, engine.archetypes[entity.archetype].hasInput
+      else { return nil as (Int, Double)? }
+      return (index, memory.value(block: 5001, index: entity.archetype)
+        + memory.value(block: 4106, index: index))
+    })
+    arcadeScore = EngineArcadeScore(configuration:
+      (0..<12).map { memory.value(block: 2004, index: $0) }, weights: weights)
     var orders = [Int: Double]()
     for entity in ordered(entities, by: \.spawnOrder) {
       orders[entity.key] = try execute(entity, callback: \.spawnOrder)
@@ -264,6 +338,7 @@ final class EnginePlayRuntime {
       _ = try execute(entity, callback: \.terminate)
       if let index = entity.index, engine.archetypes[entity.archetype].hasInput {
         let grade = memory.value(block: 4005, index: 0)
+        arcadeScore?.record(entity: index, grade: Int(exactly: grade) ?? 0)
         judgments.append(EngineJudgment(
           entityIndex: index, grade: Int(exactly: grade) ?? 0,
           accuracy: memory.value(block: 4005, index: 1)

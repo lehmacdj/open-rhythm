@@ -10,6 +10,14 @@ struct EngineConfiguration: Decodable {
     let min: Double?
     let max: Double?
     let step: Double?
+    var values: [LocalizedText]? = nil
+
+    func selectedIndex(_ preferred: Int?) -> Int? {
+      guard let values, !values.isEmpty else { return nil }
+      if let preferred, values.indices.contains(preferred) { return preferred }
+      if let index = Int(exactly: def), values.indices.contains(index) { return index }
+      return 0
+    }
 
     var sliderRange: ClosedRange<Double>? {
       guard let min, let max, min.isFinite, max.isFinite, max > min else { return nil }
@@ -24,7 +32,11 @@ struct EngineConfiguration: Decodable {
       return Swift.min(range.upperBound, Swift.max(range.lowerBound, rounded))
     }
   }
+  struct UI: Decodable {
+    let judgmentErrorMin: Double?
+  }
   let options: [Option]
+  let ui: UI?
 }
 
 struct SkinData: Decodable {
@@ -193,6 +205,9 @@ final class EnginePresentationAssets {
   }
   let options: [Double]
   let noteSpeedOption: EngineConfiguration.Option?
+  let judgementErrorMinimum: Double?
+  let scoreModeOption: EngineConfiguration.Option?
+  private let scoreModeIndex: Int?
   private let noteSpeedIndex: Int?
   let skin: [Int: Sprite]
   let particles: [Int: ParticleData.Effect]
@@ -208,6 +223,13 @@ final class EnginePresentationAssets {
     options = configuration.options.map(\.def)
     noteSpeedIndex = configuration.options.firstIndex { $0.name == "#NOTE_SPEED" }
     noteSpeedOption = noteSpeedIndex.map { configuration.options[$0] }
+    judgementErrorMinimum = configuration.ui?.judgmentErrorMin.flatMap {
+      $0.isFinite && $0 >= 0 ? $0 / 1000 : nil
+    }
+    scoreModeIndex = configuration.options.firstIndex {
+      $0.name == "Score Mode" && $0.values?.isEmpty == false
+    }
+    scoreModeOption = scoreModeIndex.map { configuration.options[$0] }
     let skinData = try CompressedJSONDecoder.decode(
       SkinData.self, from: presentation.data("skinData")
     )
@@ -258,10 +280,13 @@ final class EnginePresentationAssets {
     }
   }
 
-  func runtimeOptions(noteSpeed: Double?) -> [Double] {
+  func runtimeOptions(noteSpeed: Double?, scoreMode: Int? = nil) -> [Double] {
     var result = options
     if let noteSpeed, let noteSpeedIndex, let noteSpeedOption {
       result[noteSpeedIndex] = noteSpeedOption.clamped(noteSpeed)
+    }
+    if let scoreModeIndex, let index = scoreModeOption?.selectedIndex(scoreMode) {
+      result[scoreModeIndex] = Double(index)
     }
     return result
   }

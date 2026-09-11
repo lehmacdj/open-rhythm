@@ -2,6 +2,15 @@ import XCTest
 @testable import OpenRhythm
 
 final class CatalogTests: XCTestCase {
+  func testRemovedEngineScoreChoiceFallsBackToCurrentDefault() throws {
+    let option = try JSONDecoder().decode(EngineConfiguration.Option.self,
+      from: Data(#"{"def":1,"name":"Score Mode","values":["Flat","Combo"]}"#.utf8))
+    XCTAssertEqual(option.selectedIndex(3), 1)
+    XCTAssertEqual(option.selectedIndex(-1), 1)
+    XCTAssertEqual(option.selectedIndex(nil), 1)
+    XCTAssertEqual(option.selectedIndex(0), 0)
+  }
+
   func testNewJudgementSettingsPreserveExistingPreferences() throws {
     let old = Data(#"{"scoreDisplay":"countDown","noteSpeed":8}"#.utf8)
     var settings = try JSONDecoder().decode(GameplayPreferences.self, from: old)
@@ -47,7 +56,7 @@ final class CatalogTests: XCTestCase {
     filter.maximumRating = 9
     preferences.save(filter, for: "one")
     preferences.save(GameplayPreferences(scoreDisplay: .countDown, noteSpeed: 8,
-      judgementDisplay: .off),
+      judgementDisplay: .off, scoreMode: 2),
       for: "one")
     let reopened = UserPreferences(defaults: defaults)
     filter.query = ""
@@ -55,6 +64,7 @@ final class CatalogTests: XCTestCase {
     XCTAssertEqual(reopened.filter(for: "two"), CatalogFilter())
     XCTAssertEqual(reopened.gameplay(for: "one").noteSpeed, 8)
     XCTAssertEqual(reopened.gameplay(for: "one").judgementDisplay, .off)
+    XCTAssertEqual(reopened.gameplay(for: "one").scoreMode, 2)
     XCTAssertEqual(reopened.gameplay(for: "two"), GameplayPreferences())
     XCTAssertEqual(ScoreDisplayMode.countDown.score(judgements: [:],
       noteCount: 10), 1_000_000)

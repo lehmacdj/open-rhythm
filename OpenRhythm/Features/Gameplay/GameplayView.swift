@@ -37,6 +37,7 @@ struct GameplayView: View {
     .sheet(isPresented: $showsSettings) {
       GameplaySettingsPanel(settings: $model.settings,
         noteSpeed: model.presentationAssets?.noteSpeedOption,
+        scoreMode: model.presentationAssets?.scoreModeOption,
         engineName: song.engineName)
     }
     .task {
@@ -242,6 +243,7 @@ struct GameplayView: View {
 private struct GameplaySettingsPanel: View {
   @Binding var settings: GameplayPreferences
   let noteSpeed: EngineConfiguration.Option?
+  let scoreMode: EngineConfiguration.Option?
   let engineName: String
   @Environment(\.dismiss) private var dismiss
 
@@ -254,6 +256,16 @@ private struct GameplaySettingsPanel: View {
             .foregroundStyle(.secondary)
         }
         Section("Score Display") {
+          if let option = scoreMode, let values = option.values {
+            Picker("Engine Score Mode", selection: Binding(
+              get: { option.selectedIndex(settings.scoreMode) ?? 0 },
+              set: { settings.scoreMode = $0 })) {
+              ForEach(values.indices, id: \.self) { index in
+                Text(values[index].displayValue()).tag(index)
+              }
+            }
+            Button("Use Engine Default Score Mode") { settings.scoreMode = nil }
+          }
           Picker("Direction", selection: $settings.scoreDisplay) {
             ForEach(ScoreDisplayMode.allCases) { Text($0.title).tag($0) }
           }
@@ -264,7 +276,7 @@ private struct GameplaySettingsPanel: View {
           Picker("Display", selection: $settings.judgementDisplay) {
             ForEach(JudgementDisplayMode.allCases) { Text($0.title).tag($0) }
           }
-          Text("Early/Late shows timing for GREAT and GOOD judgements.")
+          Text("Early/Late uses the engine’s timing-display threshold, including qualifying PERFECT judgements.")
             .font(.footnote).foregroundStyle(.secondary)
         }
         Section("Note Speed") {
@@ -293,10 +305,7 @@ private struct JudgementOverlay: View {
   @State private var visible = false
 
   var body: some View {
-    Text(feedback?.text(for: mode) ?? "")
-      .font(.title2.bold().monospaced())
-      .foregroundStyle(.white)
-      .shadow(color: .black, radius: 3)
+    JudgementLabel(feedback: feedback, mode: mode)
       .opacity(visible && mode != .off ? 1 : 0)
       .task(id: feedback) {
         visible = feedback != nil
@@ -305,6 +314,30 @@ private struct JudgementOverlay: View {
           visible = false
         } catch { }
       }
+  }
+}
+
+private struct JudgementLabel: View {
+  let feedback: JudgementFeedback?
+  let mode: JudgementDisplayMode
+
+  var body: some View {
+    VStack(spacing: 2) {
+      Text(feedback?.timingText(for: mode) ?? " ")
+        .font(.caption.bold())
+      Text(feedback?.judgement.rawValue.uppercased() ?? "")
+        .font(.title2.bold().monospaced())
+    }
+      .foregroundStyle(.white)
+      .shadow(color: .black, radius: 3)
+  }
+}
+
+#Preview("Timing Feedback") {
+  ZStack {
+    Color.black
+    JudgementLabel(feedback: JudgementFeedback(sequence: 1,
+      judgement: .perfect, accuracy: -0.03, minimumError: 0.02), mode: .timing)
   }
 }
 

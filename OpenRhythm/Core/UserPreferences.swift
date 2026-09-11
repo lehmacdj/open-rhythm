@@ -34,16 +34,18 @@ struct GameplayPreferences: Codable, Equatable {
   // Nil uses the engine's default. Values are in its own option units.
   var noteSpeed: Double? = nil
   var judgementDisplay = JudgementDisplayMode.timing
+  var scoreMode: Int? = nil
 
   init(scoreDisplay: ScoreDisplayMode = .countUp, noteSpeed: Double? = nil,
-    judgementDisplay: JudgementDisplayMode = .timing) {
+    judgementDisplay: JudgementDisplayMode = .timing, scoreMode: Int? = nil) {
     self.scoreDisplay = scoreDisplay
     self.noteSpeed = noteSpeed
     self.judgementDisplay = judgementDisplay
+    self.scoreMode = scoreMode
   }
 
   private enum CodingKeys: String, CodingKey {
-    case scoreDisplay, noteSpeed, judgementDisplay
+    case scoreDisplay, noteSpeed, judgementDisplay, scoreMode
   }
 
   init(from decoder: Decoder) throws {
@@ -51,6 +53,7 @@ struct GameplayPreferences: Codable, Equatable {
     scoreDisplay = try values.decodeIfPresent(ScoreDisplayMode.self,
       forKey: .scoreDisplay) ?? .countUp
     noteSpeed = try values.decodeIfPresent(Double.self, forKey: .noteSpeed)
+    scoreMode = try values.decodeIfPresent(Int.self, forKey: .scoreMode)
     judgementDisplay = try values.decodeIfPresent(JudgementDisplayMode.self,
       forKey: .judgementDisplay) ?? .timing
   }
