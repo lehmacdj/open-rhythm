@@ -31,6 +31,16 @@ struct ContentView: View {
 
         Section {
           NavigationLink {
+            PlayHistoryView()
+          } label: {
+            Label("Play History", systemImage: "clock")
+          }
+          NavigationLink {
+            OfflineCatalogView(playedSongs: true)
+          } label: {
+            Label("Played Songs", systemImage: "music.note.list")
+          }
+          NavigationLink {
             OfflineCatalogView()
           } label: {
             Label("Offline", systemImage: "arrow.down.circle")
@@ -45,6 +55,67 @@ struct ContentView: View {
           Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
     }
+  }
+}
+
+struct PlayHistoryView: View {
+  @State private var results = [PlayResult]()
+  @State private var errorMessage: String?
+  private let store: ResultStore?
+
+  init(results: [PlayResult] = [], store: ResultStore? = .shared) {
+    _results = State(initialValue: results)
+    self.store = store
+  }
+
+  var body: some View {
+    List {
+      if let errorMessage {
+        ContentUnavailableView("Couldn’t Load History",
+          systemImage: "exclamationmark.triangle",
+          description: Text(errorMessage))
+      } else if results.isEmpty {
+        ContentUnavailableView("No Plays Yet", systemImage: "clock")
+      }
+      ForEach(results) { result in
+        NavigationLink {
+          ResultDetailView(result: result)
+        } label: {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(result.title)
+            Text("\(result.difficulty.displayName) \(result.rating) · \(result.score.formatted())")
+              .font(.subheadline)
+            Text(result.playedAt.formatted(date: .abbreviated, time: .shortened))
+              .font(.caption).foregroundStyle(.secondary)
+          }
+        }
+      }
+    }
+    .navigationTitle("Play History")
+    .task { await refresh() }
+    .refreshable { await refresh() }
+  }
+
+  private func refresh() async {
+    guard let store else { return }
+    do {
+      results = try await store.allResults()
+      errorMessage = nil
+    } catch { errorMessage = error.localizedDescription }
+  }
+}
+
+#Preview("Play History") {
+  NavigationStack {
+    PlayHistoryView(results: [
+      PlayResult(id: UUID(), levelID: "preview", title: "光",
+        difficulty: .hard, rating: 18, playedAt: Date(), maxCombo: 280,
+        perfect: 450, great: 24, good: 3, miss: 2),
+      PlayResult(id: UUID(), levelID: "preview-2", title: "Eleventh",
+        difficulty: .hard, rating: 16,
+        playedAt: Date().addingTimeInterval(-600), maxCombo: 120,
+        perfect: 390, great: 20, good: 5, miss: 4)
+    ], store: nil)
   }
 }
 

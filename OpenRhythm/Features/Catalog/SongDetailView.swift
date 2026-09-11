@@ -258,6 +258,7 @@ struct ResultDetailView: View {
       }
       Section("Result") {
         LabeledContent("Score", value: result.score.formatted())
+        if let mode = result.scoreMode { LabeledContent("Score Mode", value: mode) }
         LabeledContent("Max Combo", value: result.maxCombo.formatted())
       }
       Section("Judgements") {

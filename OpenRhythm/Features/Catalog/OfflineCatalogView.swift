@@ -27,9 +27,10 @@ private final class OfflineCatalogModel {
     filter.apply(to: songs.filter { $0.engineKey == selectedEngineKey })
   }
 
-  func refresh() async {
+  func refresh(playedSongs: Bool) async {
     do {
-      songs = try await OfflineStore.shared.catalogSongs()
+      songs = try await playedSongs ? ResultStore.shared.playedSongs()
+        : OfflineStore.shared.catalogSongs()
       if !engines.contains(where: { $0.id == selectedEngineKey }),
         let first = engines.first { selectedEngineKey = first.id }
       errorMessage = nil
@@ -40,6 +41,7 @@ private final class OfflineCatalogModel {
 }
 
 struct OfflineCatalogView: View {
+  var playedSongs = false
   @State private var model = OfflineCatalogModel()
   @State private var query = ""
   @State private var showsFilters = false
@@ -48,13 +50,14 @@ struct OfflineCatalogView: View {
     List {
       if let errorMessage = model.errorMessage {
         ContentUnavailableView(
-          "Couldn’t Load Downloads",
+          playedSongs ? "Couldn’t Load Played Songs" : "Couldn’t Load Downloads",
           systemImage: "exclamationmark.triangle",
           description: Text(errorMessage)
         )
       } else if model.visibleSongs.isEmpty {
         ContentUnavailableView(
-          model.filter.query.isEmpty ? "No Offline Songs" : "No Results",
+          model.filter.query.isEmpty
+            ? (playedSongs ? "No Played Songs" : "No Offline Songs") : "No Results",
           systemImage: "arrow.down.circle",
           description: Text(emptyDescription)
         )
@@ -62,13 +65,13 @@ struct OfflineCatalogView: View {
 
       ForEach(model.visibleSongs) { song in
         NavigationLink {
-          SongDetailView(song: song, isOffline: true, filter: model.filter)
+          SongDetailView(song: song, isOffline: !playedSongs, filter: model.filter)
         } label: {
           SongRow(song: song)
         }
       }
     }
-    .navigationTitle("Offline")
+    .navigationTitle(playedSongs ? "Played Songs" : "Offline")
     .searchable(text: queryBinding, prompt: "Title or artist")
     .toolbar {
       ToolbarItem(placement: .topBarTrailing) {
@@ -81,8 +84,8 @@ struct OfflineCatalogView: View {
       CatalogFilterPanel(filter: $model.filter, engines: model.engines,
         selectedEngineKey: $model.selectedEngineKey, songs: model.songs)
     }
-    .refreshable { await model.refresh() }
-    .task { await model.refresh() }
+    .refreshable { await model.refresh(playedSongs: playedSongs) }
+    .task { await model.refresh(playedSongs: playedSongs) }
     .task(id: query) {
       do {
         try await Task.sleep(for: .milliseconds(300))
@@ -94,7 +97,9 @@ struct OfflineCatalogView: View {
 
   private var emptyDescription: String {
     model.filter.query.isEmpty
-      ? "Download a chart to keep its song, engine, and assets available."
+      ? (playedSongs
+        ? "Songs completed from this version onward appear here for online replay. Older plays remain in Play History."
+        : "Download a chart to keep its song, engine, and assets available.")
       : "Try a different title, artist, or difficulty."
   }
 

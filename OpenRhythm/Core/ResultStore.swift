@@ -16,12 +16,16 @@ struct PlayResult: Codable, Identifiable, Sendable {
   var duration: Double? = nil
   var hasTimingData: Bool? = nil
   var timingID: UUID? = nil
+  var level: SonolusLevelItem? = nil
+  var server: ServerDescriptor? = nil
+  var engineScore: Int? = nil
+  var scoreMode: String? = nil
 
-  /// Derived, never stored: every note earns exactly one judgement, so the
-  /// counts carry the note total too. Results written before scoring was
-  /// normalized read back on today's scale, and a change to the weights
-  /// rescales history rather than stranding it.
+  /// Engine scores depend on note weights and judgement order, so retain the
+  /// actual result. Legacy plays lack that information; preserve their prior
+  /// flat-count scoring rather than inventing a retrospective engine score.
   var score: Int {
+    if let engineScore { return engineScore }
     let counts: [NoteJudgement: Int] = [
       .perfect: perfect, .great: great, .good: good, .miss: miss
     ]
@@ -125,11 +129,32 @@ actor ResultStore {
       .sorted { $0.playedAt > $1.playedAt }
   }
 
-  private func allResults() throws -> [PlayResult] {
+  func allResults() throws -> [PlayResult] {
     guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
     return try JSONDecoder().decode(
       [PlayResult].self,
       from: Data(contentsOf: fileURL)
-    )
+    ).sorted {
+      $0.playedAt == $1.playedAt
+        ? $0.id.uuidString < $1.id.uuidString : $0.playedAt > $1.playedAt
+    }
+  }
+
+  func playedSongs() throws -> [CatalogSong] {
+    var seen = Set<String>()
+    var byServer = [URL: (server: ServerDescriptor, levels: [SonolusLevelItem])]()
+    for result in try allResults() {
+      guard let level = result.level, let server = result.server,
+        seen.insert(level.resultKey(server: server)).inserted else { continue }
+      // Names and user-assigned IDs may change. One server origin must not
+      // yield duplicate song rows when its older plays use the old name.
+      if byServer[server.baseURL] == nil {
+        byServer[server.baseURL] = (server, [])
+      }
+      byServer[server.baseURL]?.levels.append(level)
+    }
+    return byServer.values.flatMap { entry in
+      CatalogBuilder.group(levels: entry.levels, server: entry.server)
+    }
   }
 }

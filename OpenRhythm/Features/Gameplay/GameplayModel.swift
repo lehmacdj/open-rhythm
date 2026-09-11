@@ -143,6 +143,7 @@ final class GameplayModel {
   private(set) var resultSaveError: String?
   private var nextMissIndex = 0
   private var resultLevel: SonolusLevelItem?
+  private var resultServer: ServerDescriptor?
   private var resultLevelID = ""
   private var resultTitle = ""
   private var pressedLanes = Set<Int>()
@@ -212,6 +213,7 @@ final class GameplayModel {
     settings = UserPreferences.shared.gameplay(for: preferenceKey)
     bgmOffset = bundle.level.bgmOffset
     resultLevel = level
+    resultServer = server
     resultLevelID = level.resultKey(server: server)
     resultTitle = title
     player = AVPlayer(url: bundle.bgmURL)
@@ -573,7 +575,8 @@ final class GameplayModel {
       great: judgements[.great, default: 0],
       good: judgements[.good, default: 0],
       miss: judgements[.miss, default: 0],
-      noteTimings: noteTimings, duration: currentTime
+      noteTimings: noteTimings, duration: currentTime,
+      level: level, server: resultServer
     )
     resultSaveTask = Task {
       do {

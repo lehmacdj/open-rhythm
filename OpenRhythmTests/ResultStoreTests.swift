@@ -2,6 +2,46 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testEngineScoreIsPreservedInsteadOfRederivedFromFlatCounts() throws {
+    var play = result(levelID: "weighted", perfect: 9)
+    play.engineScore = 812_345
+    play.scoreMode = "Weighted Combo (Sekai Standard)"
+    let decoded = try JSONDecoder().decode(PlayResult.self,
+      from: JSONEncoder().encode(play))
+    XCTAssertEqual(decoded.score, 812_345)
+    XCTAssertEqual(decoded.scoreMode, play.scoreMode)
+    XCTAssertEqual(decoded.perfect, 9)
+  }
+  func testGlobalHistoryAndPlayedSongsPreserveOriginsAndDeduplicate() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ResultStore(rootURL: root)
+    let level = SonolusLevelItem(name: "chart", source: nil, version: 1,
+      rating: 18, title: LocalizedText("Song"), artists: LocalizedText("Cast"),
+      author: "Fixture", tags: [SonolusTag(title: "#HARD")],
+      cover: ResourceLocator(hash: nil, url: nil),
+      bgm: ResourceLocator(hash: nil, url: "music"),
+      data: ResourceLocator(hash: nil, url: "notes"))
+    for server in [ServerDescriptor.defaults[0], .suggested[0]] {
+      for _ in 0..<2 {
+        var play = result(levelID: level.resultKey(server: server), perfect: 10)
+        play.level = level
+        play.server = server
+        try await store.record(play)
+      }
+    }
+    try await store.record(result(levelID: "legacy", perfect: 5))
+    let plays = try await store.allResults()
+    XCTAssertEqual(plays.count, 5)
+    XCTAssertEqual(plays.map(\.playedAt), plays.map(\.playedAt).sorted(by: >))
+    let songs = try await store.playedSongs()
+    XCTAssertEqual(songs.count, 2)
+    XCTAssertTrue(songs.allSatisfy { $0.variants.count == 1 })
+    XCTAssertEqual(Set(songs.map(\.server.baseURL)),
+      [ServerDescriptor.defaults[0].baseURL, ServerDescriptor.suggested[0].baseURL])
+  }
+
   func testTimingStatisticsFilterAndHistogramPreserveJudgements() {
     let samples = [
       NoteTiming(id: 0, songTime: 1, noteType: "Tap", judgement: .perfect,
