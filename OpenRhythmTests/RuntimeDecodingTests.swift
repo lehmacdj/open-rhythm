@@ -415,6 +415,11 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(model.maxCombo, 5)
     XCTAssertEqual(model.judgements[.perfect], 5)
     XCTAssertEqual(model.judgements[.miss], 0)
+    XCTAssertEqual(model.noteTimings.count, 5)
+    XCTAssertEqual(model.noteTimings.map(\.noteType),
+      ["Tap", "Swing", "Tap", "Hold Start", "Hold End"])
+    XCTAssertEqual(model.noteTimings.map(\.songTime), [1, 2, 3, 4, 5])
+    XCTAssertTrue(model.noteTimings.allSatisfy { abs($0.accuracy ?? 1) < 0.001 })
   }
 
   @MainActor
@@ -441,6 +446,11 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(results.count, 1)
     XCTAssertEqual(results.first?.score, 200_000)
     XCTAssertEqual(results.first?.miss, 4)
+    let savedTimings = try await store.noteTimings(for: XCTUnwrap(results.first))
+    XCTAssertEqual(savedTimings?.count, 5)
+    XCTAssertEqual(savedTimings?.filter {
+      $0.judgement == .miss && $0.accuracy == nil
+    }.count, 4)
     model.advanceAfterAudioEnd(uptime: 200)
     XCTAssertEqual(model.judgements[.miss], 4)
   }
@@ -483,6 +493,7 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(model.maxCombo, 0)
     XCTAssertTrue(model.activeHoldIDs.isEmpty)
     XCTAssertTrue(model.hitNoteIDs.isEmpty)
+    XCTAssertTrue(model.noteTimings.isEmpty)
     XCTAssertEqual(model.playbackTime, 0.05)
     model.advanceAfterAudioEnd(uptime: 200)
     XCTAssertEqual(model.phase, .playing, "An old audio tail cannot finish a restart")

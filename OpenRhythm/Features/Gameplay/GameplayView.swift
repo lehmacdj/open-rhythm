@@ -153,6 +153,8 @@ struct GameplayView: View {
           )
         }
       }
+      ResultStatisticsSections(samples: model.noteTimings,
+        duration: model.currentTime)
       Section {
         Button("Done") {
           Task {

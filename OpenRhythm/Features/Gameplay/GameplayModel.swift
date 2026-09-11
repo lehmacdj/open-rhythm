@@ -31,7 +31,7 @@ struct JudgementFeedback: Hashable {
   }
 }
 
-enum NoteJudgement: String, CaseIterable, Sendable {
+enum NoteJudgement: String, Codable, CaseIterable, Sendable {
   case perfect
   case great
   case good
@@ -85,6 +85,8 @@ final class GameplayModel {
   private var musicHasEnded = false
   private var judgementSequence = 0
   private(set) var latestJudgement: JudgementFeedback?
+  @ObservationIgnored private(set) var noteTimings = [NoteTiming]()
+  @ObservationIgnored private var inputMetadata = [(time: Double?, type: String)]()
   private(set) var engineRuntime: EnginePlayRuntime?
   private(set) var presentationAssets: EnginePresentationAssets?
   private var runtimeBundle: RuntimeBundle?
@@ -194,6 +196,12 @@ final class GameplayModel {
       return
     }
     chart = RhythmChart(level: bundle.level)
+    let timeline = BPMTimeline(level: bundle.level)
+    inputMetadata = bundle.level.entities.map {
+      ($0.data.first { $0.name == "#BEAT" }?.value.map {
+        timeline.time(at: $0)
+      }, $0.archetype)
+    }
     if presentationAssets != nil {
       let inputArchetypes = Set(bundle.engine.archetypes.filter(\.hasInput).map(\.name))
       preparedInputCount = bundle.level.entities.filter {
@@ -218,6 +226,7 @@ final class GameplayModel {
     audioSeekCompleted = false
     musicHasEnded = false
     latestJudgement = nil
+    noteTimings.removeAll(keepingCapacity: true)
     combo = 0
     maxCombo = 0
     currentTime = clockMapping.initialChartTime
@@ -325,7 +334,7 @@ final class GameplayModel {
     else { return }
 
     hitNoteIDs.insert(note.id)
-    record(difference: currentTime - note.time)
+    record(difference: currentTime - note.time, note: note)
     if note.endTime != nil {
       activeHolds[lane] = note
     }
@@ -342,9 +351,9 @@ final class GameplayModel {
 
     let difference = currentTime - endTime
     if abs(difference) <= 0.18 {
-      record(difference: difference)
+      record(difference: difference, note: hold, tail: true)
     } else {
-      record(.miss)
+      record(.miss, at: endTime, noteType: "Hold End")
     }
   }
 
@@ -431,7 +440,7 @@ final class GameplayModel {
       let note = chart.notes[nextMissIndex]
       if !hitNoteIDs.contains(note.id) {
         hitNoteIDs.insert(note.id)
-        record(.miss)
+        record(.miss, at: note.time, noteType: type(of: note))
       }
       nextMissIndex += 1
     }
@@ -445,7 +454,7 @@ final class GameplayModel {
       if activeHolds[note.lane]?.id == note.id {
         activeHolds.removeValue(forKey: note.lane)
       }
-      record(.miss)
+      record(.miss, at: endTime, noteType: "Hold End")
     }
 
     finishIfReady()
@@ -479,12 +488,17 @@ final class GameplayModel {
       currentTime = playbackTime
       try runtime.update(at: currentTime, touches: touches)
       for judgment in runtime.judgments {
+        let metadata = inputMetadata.indices.contains(judgment.entityIndex)
+          ? inputMetadata[judgment.entityIndex] : (time: nil, type: "Unknown")
+        let grade: NoteJudgement
         switch judgment.grade {
-        case 1: record(.perfect, accuracy: judgment.accuracy)
-        case 2: record(.great, accuracy: judgment.accuracy)
-        case 3: record(.good, accuracy: judgment.accuracy)
-        default: record(.miss)
+        case 1: grade = .perfect
+        case 2: grade = .great
+        case 3: grade = .good
+        default: grade = .miss
         }
+        record(grade, accuracy: judgment.accuracy,
+          at: metadata.time, noteType: metadata.type)
       }
       try engineAudio?.update(runtime.host.takeAudioCommands(), at: currentTime,
         advancing: tailStart != nil || player?.timeControlStatus == .playing,
@@ -506,7 +520,15 @@ final class GameplayModel {
     saveResult()
   }
 
-  private func record(_ judgement: NoteJudgement, accuracy: Double? = nil) {
+  private func record(_ judgement: NoteJudgement, accuracy: Double? = nil,
+    at time: Double? = nil, noteType: String = "Unknown") {
+    let validAccuracy = judgement != .miss && accuracy.map {
+      $0.isFinite && abs($0) <= 3_600
+    } == true ? accuracy : nil
+    let songTime = time ?? currentTime
+    noteTimings.append(NoteTiming(id: noteTimings.count,
+      songTime: songTime.isFinite ? songTime : currentTime,
+      noteType: noteType, judgement: judgement, accuracy: validAccuracy))
     judgementSequence += 1
     latestJudgement = JudgementFeedback(sequence: judgementSequence,
       judgement: judgement, accuracy: accuracy)
@@ -519,13 +541,21 @@ final class GameplayModel {
     }
   }
 
-  private func record(difference: TimeInterval) {
+  private func type(of note: RhythmNote) -> String {
+    if note.endTime != nil { return "Hold Start" }
+    return note.kind == .swing ? "Swing" : "Tap"
+  }
+
+  private func record(difference: TimeInterval, note: RhythmNote,
+    tail: Bool = false) {
+    let time = tail ? note.endTime : note.time
+    let noteType = tail ? "Hold End" : type(of: note)
     if abs(difference) <= 0.05 {
-      record(.perfect, accuracy: difference)
+      record(.perfect, accuracy: difference, at: time, noteType: noteType)
     } else if abs(difference) <= 0.10 {
-      record(.great, accuracy: difference)
+      record(.great, accuracy: difference, at: time, noteType: noteType)
     } else {
-      record(.good, accuracy: difference)
+      record(.good, accuracy: difference, at: time, noteType: noteType)
     }
   }
 
@@ -542,7 +572,8 @@ final class GameplayModel {
       perfect: judgements[.perfect, default: 0],
       great: judgements[.great, default: 0],
       good: judgements[.good, default: 0],
-      miss: judgements[.miss, default: 0]
+      miss: judgements[.miss, default: 0],
+      noteTimings: noteTimings, duration: currentTime
     )
     resultSaveTask = Task {
       do {

@@ -12,6 +12,10 @@ struct PlayResult: Codable, Identifiable, Sendable {
   let great: Int
   let good: Int
   let miss: Int
+  var noteTimings: [NoteTiming]? = nil
+  var duration: Double? = nil
+  var hasTimingData: Bool? = nil
+  var timingID: UUID? = nil
 
   /// Derived, never stored: every note earns exactly one judgement, so the
   /// counts carry the note total too. Results written before scoring was
@@ -32,12 +36,15 @@ actor ResultStore {
 
   private let fileManager: FileManager
   private let fileURL: URL
+  private let maximumResults: Int
 
   init(
     rootURL: URL? = nil,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    maximumResults: Int = 500
   ) {
     self.fileManager = fileManager
+    self.maximumResults = max(1, maximumResults)
     if let rootURL {
       fileURL = rootURL.appendingPathComponent("Results.json")
     } else {
@@ -53,15 +60,59 @@ actor ResultStore {
 
   func record(_ result: PlayResult) throws {
     var values = try allResults()
-    values.insert(result, at: 0)
-    if values.count > 500 {
-      values.removeLast(values.count - 500)
+    var summary = result
+    let payload = try result.noteTimings.map { try JSONEncoder().encode($0) }
+    if payload != nil {
+      summary.noteTimings = nil
+      summary.hasTimingData = true
+      summary.timingID = UUID()
     }
+    var removed = values.filter { $0.id == result.id }
+    values.removeAll { $0.id == result.id }
+    values.insert(summary, at: 0)
+    removed.append(contentsOf: values.dropFirst(maximumResults))
+    values = Array(values.prefix(maximumResults))
+    let indexData = try JSONEncoder().encode(values)
     try fileManager.createDirectory(
       at: fileURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    try JSONEncoder().encode(values).write(to: fileURL, options: [.atomic])
+    // Immutable payload versions keep an old result intact if its replacement
+    // index fails. The atomic index write is the transaction's commit point.
+    let newURL = payload.flatMap { _ in summary.timingID.map(timingURL) }
+    if let payload, let newURL {
+      try fileManager.createDirectory(at: newURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true)
+      try payload.write(to: newURL, options: [.atomic])
+    }
+    do {
+      try indexData.write(to: fileURL, options: [.atomic])
+    } catch {
+      if let newURL { try? fileManager.removeItem(at: newURL) }
+      throw error
+    }
+    // Remove payloads only after the replacement index is safely persisted.
+    let retained = Set(values.filter { $0.hasTimingData == true }
+      .map { $0.timingID ?? $0.id })
+    for old in removed where old.hasTimingData == true {
+      let id = old.timingID ?? old.id
+      if !retained.contains(id) {
+        try? fileManager.removeItem(at: timingURL(for: id))
+      }
+    }
+  }
+
+  func noteTimings(for result: PlayResult) throws -> [NoteTiming]? {
+    if let embedded = result.noteTimings { return embedded }
+    guard result.hasTimingData == true else { return nil }
+    return try JSONDecoder().decode([NoteTiming].self,
+      from: Data(contentsOf: timingURL(for: result.timingID ?? result.id)))
+  }
+
+  private func timingURL(for id: UUID) -> URL {
+    fileURL.deletingLastPathComponent()
+      .appendingPathComponent("ResultTimings", isDirectory: true)
+      .appendingPathComponent(id.uuidString + ".json")
   }
 
   func results(for levelID: String) throws -> [PlayResult] {

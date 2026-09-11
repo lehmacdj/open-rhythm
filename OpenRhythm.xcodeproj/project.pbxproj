@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A0000000000000000000001E /* PlayStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001E /* PlayStatistics.swift */; };
+		A0000000000000000000001F /* ResultStatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001F /* ResultStatisticsView.swift */; };
 		A00000000000000000000001 /* OpenRhythmApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OpenRhythmApp.swift */; };
 		A00000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* ContentView.swift */; };
 		A00000000000000000000003 /* ServerDescriptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* ServerDescriptor.swift */; };
@@ -56,6 +58,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A1000000000000000000001E /* PlayStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayStatistics.swift; sourceTree = "<group>"; };
+		A1000000000000000000001F /* ResultStatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStatisticsView.swift; sourceTree = "<group>"; };
 		A10000000000000000000001 /* OpenRhythmApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenRhythmApp.swift; sourceTree = "<group>"; };
 		A10000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A10000000000000000000003 /* ServerDescriptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDescriptor.swift; sourceTree = "<group>"; };
@@ -168,6 +172,7 @@
 				A10000000000000000000012 /* RuntimeBundle.swift */,
 				A10000000000000000000013 /* RhythmChart.swift */,
 				A10000000000000000000016 /* ResultStore.swift */,
+				A1000000000000000000001E /* PlayStatistics.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -227,6 +232,7 @@
 			children = (
 				A10000000000000000000014 /* GameplayModel.swift */,
 				A10000000000000000000015 /* GameplayView.swift */,
+				A1000000000000000000001F /* ResultStatisticsView.swift */,
 			);
 			path = Gameplay;
 			sourceTree = "<group>";
@@ -358,6 +364,8 @@
 				A00000000000000000000014 /* GameplayModel.swift in Sources */,
 				A00000000000000000000015 /* GameplayView.swift in Sources */,
 				A00000000000000000000016 /* ResultStore.swift in Sources */,
+				A0000000000000000000001E /* PlayStatistics.swift in Sources */,
+				A0000000000000000000001F /* ResultStatisticsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -241,6 +241,12 @@ struct SongDetailView: View {
 
 struct ResultDetailView: View {
   let result: PlayResult
+  @State private var timingSamples: [NoteTiming]?
+  @State private var timingError: String?
+
+  private var hasTimings: Bool {
+    result.noteTimings != nil || result.hasTimingData == true
+  }
 
   var body: some View {
     Form {
@@ -260,8 +266,32 @@ struct ResultDetailView: View {
         LabeledContent("Good", value: result.good.formatted())
         LabeledContent("Miss", value: result.miss.formatted())
       }
+      if hasTimings && timingSamples == nil {
+        Section("Timing Analysis") {
+          if let timingError {
+            Text(timingError).foregroundStyle(.secondary)
+            Button("Retry") { Task { await loadTimings() } }
+          } else {
+            ProgressView("Loading note timings…")
+          }
+        }
+      } else {
+        ResultStatisticsSections(samples: timingSamples, duration: result.duration)
+      }
     }
     .navigationTitle("Result")
     .navigationBarTitleDisplayMode(.inline)
+    .task(id: result.id) { await loadTimings() }
+  }
+
+  private func loadTimings() async {
+    guard hasTimings else { return }
+    timingError = nil
+    do {
+      timingSamples = try await ResultStore.shared.noteTimings(for: result)
+    } catch {
+      timingError = "The detailed timing data could not be loaded. "
+        + error.localizedDescription
+    }
   }
 }
