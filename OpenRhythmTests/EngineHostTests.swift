@@ -574,6 +574,38 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testTessellationGridMatchesBilinearGeometryAndUVs() {
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+      .image { _ in }
+    let size = CGSize(width: 1800, height: 1000)
+    let quads = [
+      [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
+       EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)],
+      [EnginePoint(x: -1.3, y: -0.9), EnginePoint(x: -0.2, y: 0.8),
+       EnginePoint(x: 0.4, y: 0.6), EnginePoint(x: 1.4, y: -0.5)]
+    ]
+    for points in quads {
+      let sprite = EngineRenderSprite(image: image, points: points,
+        matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+        alpha: 0.4, interpolation: true)
+      let vertices = EngineMetalRenderer.vertices(for: sprite, size: size)
+      XCTAssertFalse(vertices.isEmpty)
+      XCTAssertTrue(vertices.count.isMultiple(of: 6))
+      for vertex in vertices {
+        let point = EngineGeometry.bilinear(points,
+          u: Double(vertex.uv.x), v: 1 - Double(vertex.uv.y))
+        XCTAssertEqual(Double(vertex.position.x), point.x / 1.8, accuracy: 0.000001)
+        XCTAssertEqual(Double(vertex.position.y), point.y, accuracy: 0.000001)
+        XCTAssertEqual(vertex.alpha, 0.4)
+      }
+      for offset in stride(from: 0, to: vertices.count, by: 6) {
+        XCTAssertEqual(vertices[offset].position, vertices[offset + 3].position)
+        XCTAssertEqual(vertices[offset + 2].position, vertices[offset + 4].position)
+      }
+    }
+  }
+
+  @MainActor
   func testMetalRendersUprightSpritesAndSeamlessTranslucentConnectors() throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
       throw XCTSkip("Metal is unavailable on this test device")
@@ -593,11 +625,15 @@ final class EngineHostTests: XCTestCase {
       UIColor.blue.setFill()
       $0.fill(CGRect(x: 0, y: 1, width: 2, height: 1))
     }
-    func render(_ image: UIImage, points: [EnginePoint]) throws -> [UInt8] {
+    func render(_ image: UIImage, points: [EnginePoint], layers: [UIImage]? = nil)
+      throws -> [UInt8] {
       let command = try XCTUnwrap(renderer.queue.makeCommandBuffer())
-      try renderer.encode([EngineRenderSprite(image: image, points: points,
-        matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
-        alpha: 0.5, interpolation: false)],
+      let sprites = (layers ?? [image]).map {
+        EngineRenderSprite(image: $0, points: points,
+          matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+          alpha: 0.5, interpolation: false)
+      }
+      try renderer.encode(sprites,
         size: CGSize(width: 20, height: 20), target: target, commandBuffer: command)
       command.commit()
       command.waitUntilCompleted()
@@ -621,6 +657,12 @@ final class EngineHostTests: XCTestCase {
       EnginePoint(x: -1, y: -1), EnginePoint(x: -0.5, y: 1),
       EnginePoint(x: 0.5, y: 1), EnginePoint(x: 1, y: -1)
     ])
+    let merged = try render(white, points: quad, layers: [white, white])
+    XCTAssertEqual(Double(merged[(2 * 20 + 10) * 4 + 2]), 192, accuracy: 1)
+    let ordered = try render(white, points: quad, layers: [white, image, white])
+    XCTAssertEqual(Double(ordered[(2 * 20 + 10) * 4 + 2]), 224, accuracy: 1)
+    XCTAssertEqual(Double(ordered[(2 * 20 + 10) * 4 + 1]), 160, accuracy: 1,
+      "A-B-A textures must not be reordered to combine the A draws")
     for row in 2..<18 {
       for column in 8..<12 {
         XCTAssertEqual(Double(connector[(row * 20 + column) * 4]),

@@ -103,12 +103,14 @@ final class EngineMetalRenderer {
   ) throws {
     struct Batch {
       let start: Int
-      let count: Int
+      var count: Int
       let texture: MTLTexture
       let interpolation: Bool
     }
     var vertices = [Vertex]()
     var batches = [Batch]()
+    vertices.reserveCapacity(min(sprites.count, 10_000) * 24)
+    batches.reserveCapacity(sprites.count)
     for sprite in sprites {
       let mesh = Self.vertices(for: sprite, size: size)
       guard !mesh.isEmpty else { continue }
@@ -124,8 +126,14 @@ final class EngineMetalRenderer {
         texture = try upload(image)
         textures[key] = (sprite.image, texture)
       }
-      batches.append(Batch(start: vertices.count, count: mesh.count,
-        texture: texture, interpolation: sprite.interpolation))
+      // Only merge adjacent draws: alpha compositing order must not change.
+      if let last = batches.indices.last, batches[last].texture === texture,
+        batches[last].interpolation == sprite.interpolation {
+        batches[last].count += mesh.count
+      } else {
+        batches.append(Batch(start: vertices.count, count: mesh.count,
+          texture: texture, interpolation: sprite.interpolation))
+      }
       vertices.append(contentsOf: mesh)
     }
     let pass = MTLRenderPassDescriptor()
@@ -191,25 +199,45 @@ final class EngineMetalRenderer {
     let warp = hypot(quad[0].x + quad[2].x - quad[1].x - quad[3].x,
       quad[0].y + quad[2].y - quad[1].y - quad[3].y)
     let divisions = EngineRenderer.tessellationDivisions(warp: warp)
-    let points = quad.map { EnginePoint(x: $0.x, y: $0.y) }
-    var result = [Vertex]()
-    for row in 0..<divisions {
-      for column in 0..<divisions {
-        let cell = [(column,row), (column,row+1),
-          (column+1,row+1), (column+1,row)].map { x, y in
-          let u = Double(x) / Double(divisions)
-          let v = Double(y) / Double(divisions)
-          let point = EngineGeometry.bilinear(points, u: u, v: v)
-          return Vertex(position: SIMD2(Float(point.x / size.width * 2 - 1),
-            Float(1 - point.y / size.height * 2)),
-            uv: SIMD2(Float(u), Float(1 - v)), alpha: Float(min(1, sprite.alpha)))
-        }
-        for index in [0, 1, 2, 0, 2, 3] { result.append(cell[index]) }
+    // Adjacent cells share vertices. Interpolate each grid point once instead
+    // of allocating weights and recomputing four corners for every cell.
+    let stride = divisions + 1
+    let alpha = Float(min(1, sprite.alpha))
+    var grid = [Vertex]()
+    grid.reserveCapacity(stride * stride)
+    for row in 0...divisions {
+      let v = Double(row) / Double(divisions)
+      let leftX = quad[0].x + (quad[1].x - quad[0].x) * v
+      let leftY = quad[0].y + (quad[1].y - quad[0].y) * v
+      let rightX = quad[3].x + (quad[2].x - quad[3].x) * v
+      let rightY = quad[3].y + (quad[2].y - quad[3].y) * v
+      for column in 0...divisions {
+        let u = Double(column) / Double(divisions)
+        let x = leftX + (rightX - leftX) * u
+        let y = leftY + (rightY - leftY) * u
+        grid.append(Vertex(position: SIMD2(Float(x / size.width * 2 - 1),
+          Float(1 - y / size.height * 2)),
+          uv: SIMD2(Float(u), Float(1 - v)), alpha: alpha))
       }
     }
-    return result.allSatisfy {
+    guard grid.allSatisfy({
       $0.position.x.isFinite && $0.position.y.isFinite
-    } ? result : []
+    }) else { return [] }
+    var result = [Vertex]()
+    result.reserveCapacity(divisions * divisions * 6)
+    for row in 0..<divisions {
+      for column in 0..<divisions {
+        let bottom = row * stride + column
+        let top = bottom + stride
+        result.append(grid[bottom])
+        result.append(grid[top])
+        result.append(grid[top + 1])
+        result.append(grid[bottom])
+        result.append(grid[top + 1])
+        result.append(grid[bottom + 1])
+      }
+    }
+    return result
   }
 
   private static let shader = """
