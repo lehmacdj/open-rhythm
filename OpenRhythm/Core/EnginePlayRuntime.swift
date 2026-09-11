@@ -41,6 +41,39 @@ struct EngineJudgment: Sendable {
   let accuracy: Double
 }
 
+/// Pool by contact identity, never by lane or proximity. UIKit may reuse an
+/// ended UITouch's address before the next display tick; keep that final
+/// sample separately so the old release and new press both reach the engine.
+struct EngineTouchPool<Key: Hashable> {
+  private var contacts = [Key: EngineTouch]()
+  private var completed = [EngineTouch]()
+  private var nextID = 1
+
+  var touches: [EngineTouch] {
+    (completed + Array(contacts.values)).sorted { $0.id < $1.id }
+  }
+
+  mutating func receive(key: Key, position: EnginePoint, time: Double,
+    started: Bool, ended: Bool) {
+    if started {
+      if let previous = contacts[key] { completed.append(previous) }
+      contacts[key] = EngineTouch(id: nextID, started: true, ended: ended,
+        time: time, startTime: time, position: position, startPosition: position,
+        delta: EnginePoint(x: 0, y: 0))
+      nextID += 1
+    } else if let previous = contacts[key], !previous.ended {
+      contacts[key] = previous.moved(to: position, at: time, ended: ended)
+    }
+  }
+
+  mutating func nextFrame(at time: Double) {
+    completed.removeAll(keepingCapacity: true)
+    contacts = contacts.filter { !$0.value.ended }.mapValues {
+      $0.nextFrame(at: time)
+    }
+  }
+}
+
 /// Executes the play lifecycle serially. "Parallel" callbacks have independent
 /// entity memory, but need not run on parallel threads to preserve semantics.
 final class EnginePlayRuntime {

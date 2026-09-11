@@ -329,8 +329,7 @@ private struct EnginePlayfield: UIViewRepresentable {
 private final class EnginePlayfieldView: UIView {
   weak var model: GameplayModel?
   private var displayLink: CADisplayLink?
-  private var touchesByID = [ObjectIdentifier: EngineTouch]()
-  private var nextTouchID = 1
+  private var touchPool = EngineTouchPool<ObjectIdentifier>()
   private var metal: EngineMetalRenderer?
 
   override init(frame: CGRect) {
@@ -377,10 +376,8 @@ private final class EnginePlayfieldView: UIView {
   private func advanceFrame(present: Bool) {
     let sampleTime = model?.playbackTime ?? 0
     model?.engineFrame(size: bounds.size,
-      touches: touchesByID.values.sorted { $0.id < $1.id })
-    touchesByID = touchesByID.filter { !$0.value.ended }.mapValues {
-      $0.nextFrame(at: sampleTime)
-    }
+      touches: touchPool.touches)
+    touchPool.nextFrame(at: sampleTime)
     guard present else { return }
     if let metal, let runtime = model?.engineRuntime,
       let assets = model?.presentationAssets {
@@ -411,8 +408,6 @@ private final class EnginePlayfieldView: UIView {
     guard bounds.height > 0, let model, !model.isStartingPlayback else { return }
     for touch in touches {
       let key = ObjectIdentifier(touch)
-      let previous = touchesByID[key]
-      guard started || previous != nil else { continue }
       let point = touch.location(in: self)
       let position = EnginePoint(
         x: (point.x - bounds.midX) * 2 / bounds.height,
@@ -420,16 +415,8 @@ private final class EnginePlayfieldView: UIView {
       )
       let time = model.playbackTime
         + touch.timestamp - ProcessInfo.processInfo.systemUptime
-      let id = previous?.id ?? nextTouchID
-      if previous == nil { nextTouchID += 1 }
-      touchesByID[key] = previous?.moved(to: position, at: time, ended: ended)
-        ?? EngineTouch(
-        id: id, started: started, ended: ended, time: time,
-        startTime: previous?.startTime ?? time, position: position,
-        startPosition: previous?.startPosition ?? position,
-        delta: EnginePoint(x: position.x - (previous?.position.x ?? position.x),
-          y: position.y - (previous?.position.y ?? position.y))
-      )
+      touchPool.receive(key: key, position: position, time: time,
+        started: started, ended: ended)
     }
     // Pool events until the next display tick. Started and ended can both be
     // true, preserving short taps without running the entire engine per event.

@@ -4,6 +4,37 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testTouchPoolKeepsTenCoincidentContactsAndReusedIdentities() throws {
+    var pool = EngineTouchPool<Int>()
+    let point = EnginePoint(x: 0, y: -0.75)
+    for key in 0..<10 {
+      pool.receive(key: key, position: point, time: 1,
+        started: true, ended: false)
+    }
+    XCTAssertEqual(pool.touches.count, 10)
+    XCTAssertEqual(Set(pool.touches.map(\.id)).count, 10)
+    pool.receive(key: 0, position: point, time: 1.01,
+      started: false, ended: true)
+    pool.receive(key: 0, position: point, time: 1.02,
+      started: true, ended: false)
+    XCTAssertEqual(pool.touches.count, 11)
+    XCTAssertTrue(pool.touches[0].started && pool.touches[0].ended)
+    XCTAssertEqual(pool.touches.last?.startTime, 1.02)
+    let engine = try RuntimeNodeBuilder().engine(archetypes: [])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: []), options: [],
+      aspectRatio: 1.8, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [])
+    try runtime.update(at: 1.03, touches: pool.touches)
+    XCTAssertEqual(runtime.memory.value(block: 1001, index: 3), 11)
+    for index in 0..<11 {
+      XCTAssertEqual(runtime.memory.value(block: 1002, index: index * 15),
+        Double(index + 1))
+    }
+    pool.nextFrame(at: 1.03)
+    XCTAssertEqual(pool.touches.count, 10)
+    XCTAssertFalse(pool.touches.contains { $0.started || $0.ended })
+  }
+
   func testTouchPoolingPreservesShortTapsAndFlicksAfterStationaryHolds() throws {
     let p = EnginePoint(x: 0, y: 0)
     let start = EngineTouch(id: 1, started: true, ended: false,
