@@ -53,8 +53,18 @@ final class CatalogModel {
     filter = preferences.filter(for: server.preferenceKey)
   }
 
-  private func updateVisibleSongs() {
-    visibleSongs = filter.apply(to: songs.filter { $0.engineKey == selectedEngineKey })
+  private func updateVisibleSongs(preservingOrder: Bool = false) {
+    let matching = filter.apply(to:
+      songs.filter { $0.engineKey == selectedEngineKey })
+    guard preservingOrder else { visibleSongs = matching; return }
+    // Sorting an enlarged partial catalog would insert new pages above the
+    // reader's scroll position. Keep existing rows (with refreshed metadata)
+    // in place and append sorted new matches. An explicit filter/sort change
+    // still sorts the entire loaded selection.
+    let byID = Dictionary(uniqueKeysWithValues: matching.map { ($0.id, $0) })
+    let previousIDs = Set(visibleSongs.map(\.id))
+    visibleSongs = visibleSongs.compactMap { byID[$0.id] }
+      + matching.filter { !previousIDs.contains($0.id) }
   }
 
   func refresh(forceReload: Bool = false) async {
@@ -166,7 +176,7 @@ final class CatalogModel {
       }
       // Server search covers unloaded pages. Local filters only select sort
       // and difficulty, preserving aliases supported by the server.
-      updateVisibleSongs()
+      updateVisibleSongs(preservingOrder: page > 0)
       needsMoreMatches = !previousIDs.isEmpty
         && Set(visibleSongs.map(\.id)).subtracting(previousIDs).isEmpty
       totalPageCount = max(0, response.pageCount)

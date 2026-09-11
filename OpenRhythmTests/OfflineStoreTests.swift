@@ -2,6 +2,43 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  @MainActor
+  func testAppendingPagesPreservesRowsUntilExplicitSortChange() async throws {
+    let pages = try ["Zulu", "Alpha"].map { title in
+      try JSONEncoder().encode(SonolusLevelList(pageCount: 2, items: [
+        SonolusLevelItem(name: title, source: nil, version: 1, rating: 1,
+          title: LocalizedText(title), artists: LocalizedText(title),
+          author: "Fixture", tags: [],
+          cover: ResourceLocator(hash: nil, url: nil),
+          bgm: ResourceLocator(hash: nil, url: title),
+          data: ResourceLocator(hash: nil, url: title))
+      ]))
+    }
+    StubURLProtocol.handler = { request in
+      let page = URLComponents(url: request.url!,
+        resolvingAgainstBaseURL: false)?.queryItems?
+        .first { $0.name == "page" }?.value ?? "0"
+      return pages[Int(page)!]
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    model.filter = CatalogFilter()
+    await model.refresh()
+    let firstID = try XCTUnwrap(model.visibleSongs.first).id
+    await model.loadNextPage()
+    XCTAssertEqual(model.visibleSongs.first?.id, firstID)
+    XCTAssertEqual(model.visibleSongs.map { $0.title.displayValue() },
+      ["Zulu", "Alpha"])
+    model.filter.sort = .artist
+    XCTAssertEqual(model.visibleSongs.map { $0.title.displayValue() },
+      ["Alpha", "Zulu"])
+  }
+
   func testEngineROMIsLoadedOnlineAndFromOfflineManifest() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
