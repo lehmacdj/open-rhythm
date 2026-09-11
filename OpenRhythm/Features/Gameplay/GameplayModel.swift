@@ -11,7 +11,8 @@ enum GameplayPhase: Equatable {
 
 struct BGMClockMapping {
   let offset: Double
-  var initialMediaTime: Double { max(0, offset) }
+  // The offset aligns two timelines; it is not permission to trim audio.
+  var initialMediaTime: Double { 0 }
   var initialChartTime: Double { chartTime(mediaTime: initialMediaTime) }
   func chartTime(mediaTime: Double) -> Double { mediaTime - offset }
   func mediaTime(chartTime: Double) -> Double { chartTime + offset }
@@ -502,7 +503,8 @@ final class GameplayModel {
         record(grade, accuracy: judgment.accuracy,
           at: metadata.time, noteType: metadata.type)
       }
-      try engineAudio?.update(runtime.host.takeAudioCommands(), at: currentTime,
+      // Schedule against the clock after interpretation, not before its work.
+      try engineAudio?.update(runtime.host.takeAudioCommands(), at: playbackTime,
         advancing: tailStart != nil || player?.timeControlStatus == .playing,
         loopCommands: runtime.host.takeLoopCommands())
       finishIfReady()

@@ -3,6 +3,15 @@ import UIKit
 @testable import OpenRhythm
 
 final class RuntimeDecodingTests: XCTestCase {
+  func testStartupPreservesAudioWithoutAddingLeadIn() {
+    for offset in [9.0, 1, 0, -2] {
+      let mapping = BGMClockMapping(offset: offset)
+      XCTAssertEqual(mapping.initialChartTime, -offset)
+      XCTAssertEqual(mapping.initialMediaTime, 0)
+      XCTAssertEqual(mapping.chartTime(mediaTime: 10), 10 - offset)
+    }
+  }
+
   func testJudgementFeedbackModesAndTimingDirection() {
     let early = JudgementFeedback(sequence: 1, judgement: .good, accuracy: -0.12)
     let late = JudgementFeedback(sequence: 2, judgement: .great, accuracy: 0.07)
@@ -69,10 +78,10 @@ final class RuntimeDecodingTests: XCTestCase {
       "The fallback player's count and score denominator must match its chart")
   }
 
-  func testBGMOffsetSkipsDeclaredPaddingAndMapsChartTime() {
+  func testBGMOffsetPreservesSuppliedAudioAndMapsChartTime() {
     let eleventh = BGMClockMapping(offset: 9)
-    XCTAssertEqual(eleventh.initialMediaTime, 9)
-    XCTAssertEqual(eleventh.initialChartTime, 0)
+    XCTAssertEqual(eleventh.initialMediaTime, 0)
+    XCTAssertEqual(eleventh.initialChartTime, -9)
     XCTAssertEqual(eleventh.chartTime(mediaTime: 9.75), 0.75)
     XCTAssertEqual(eleventh.mediaTime(chartTime: 0.75), 9.75)
     let negative = BGMClockMapping(offset: -0.05)
