@@ -4,6 +4,138 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testCompatibilityChecksLazyAndSpawnablePathsButNotOrphanedNodes() throws {
+    let builder = RuntimeNodeBuilder()
+    let unknown = builder.call("UnimplementedHitEffect", [])
+    _ = builder.call("OrphanedCompilerFunction", [])
+    let branch = builder.call("If", [builder.value(0), unknown, builder.value(1)])
+    let engine = try builder.engine(archetypes: [
+      ["name": "Spawnable", "hasInput": false, "imports": [], "exports": [],
+       "touch": ["index": branch]]
+    ])
+    XCTAssertEqual(try engine.unsupportedFunctions(), ["UnimplementedHitEffect"])
+    XCTAssertThrowsError(try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: []), options: [], aspectRatio: 1,
+      skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: []))
+    let invalid = try builder.engine(archetypes: [
+      ["name": "Note", "hasInput": false, "imports": [], "exports": [],
+       "touch": ["index": -1]]
+    ])
+    XCTAssertThrowsError(try invalid.unsupportedFunctions())
+  }
+
+  func testRuntimeSeedsEngineVisibilitySafeAreaAndLifeBeforePreprocess() throws {
+    let builder = RuntimeNodeBuilder()
+    let readLife = builder.call("Get", [builder.value(2005), builder.value(6)])
+    let capture = builder.call("Set", [builder.value(2000), builder.value(0), readLife])
+    let engine = try builder.engine(archetypes: [
+      ["name": "Init", "hasInput": false, "imports": [], "exports": [],
+       "preprocess": ["index": capture]]
+    ])
+    let ui = [1.0, 0, 2, 0.3, 0.7, 0.5, 1, 0.8, 2, 0.1]
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Init", name: nil, data: [])]),
+      options: [], aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [], uiConfiguration: ui, safeArea: [-1.8, 1.9, -0.9, 1])
+    XCTAssertEqual((0..<10).map { runtime.memory.value(block: 1007, index: $0) }, ui)
+    XCTAssertEqual((5..<9).map { runtime.memory.value(block: 1000, index: $0) },
+      [-1.8, 1.9, -0.9, 1])
+    XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 1000)
+    XCTAssertEqual(runtime.life.value, 1000)
+  }
+
+  func testEngineLifeCombinesArchetypeEntityAndScheduledChangesAtDespawn() throws {
+    let builder = RuntimeNodeBuilder()
+    func set(_ block: Double, _ index: Double, _ value: Double) -> Int {
+      builder.call("Set", [builder.value(block), builder.value(index), builder.value(value)])
+    }
+    let schedule = builder.call("AddLifeScheduled", [builder.value(30), builder.value(2)])
+    let preprocess = builder.call("Execute", [set(2005, 6, 100),
+      set(2005, 7, 200), set(5000, 1, -10), set(4007, 1, -5), schedule])
+    let update = builder.call("Execute", [set(4005, 0, 2), set(4004, 0, 1)])
+    let engine = try builder.engine(archetypes: [
+      ["name": "Note", "hasInput": true, "imports": [], "exports": [],
+       "preprocess": ["index": preprocess], "updateParallel": ["index": update]]
+    ])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Note", name: nil, data: [])]), options: [],
+      aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [])
+    XCTAssertEqual(runtime.life.value, 100)
+    try runtime.update(at: 0)
+    XCTAssertEqual(runtime.life.value, 85)
+    try runtime.update(at: 2)
+    XCTAssertEqual(runtime.life.value, 115)
+    try runtime.update(at: 3)
+    XCTAssertEqual(runtime.life.value, 115)
+  }
+
+  func testLifeStreaksCapsScheduledOrderAndPermanentFailure() throws {
+    var life = EngineLife(configuration: [10, 2, 0, 0, 0, 0, 100, 110])
+    life.record(grade: 1, increment: -5)
+    XCTAssertEqual(life.value, 95)
+    life.record(grade: 1, increment: -5)
+    XCTAssertEqual(life.value, 100)
+    life.record(grade: 2, increment: -5)
+    life.record(grade: 1, increment: -5)
+    XCTAssertEqual(life.value, 90)
+    life.add(100)
+    XCTAssertEqual(life.value, 110)
+    life.add(-200)
+    life.add(1000)
+    XCTAssertEqual(life.value, 0)
+    XCTAssertTrue(life.failed)
+    let host = makeHost()
+    _ = try host.call(function: "AddLifeScheduled", arguments: [20, 4])
+    _ = try host.call(function: "AddLifeScheduled", arguments: [-10, 2])
+    XCTAssertEqual(host.takeScheduledLife(at: 3), [-10])
+    XCTAssertEqual(host.takeScheduledLife(at: 5), [20])
+    XCTAssertTrue(host.takeScheduledLife(at: 5).isEmpty)
+  }
+
+  func testJudgeSimpleAndBeatSegmentFunctions() throws {
+    let host = makeHost()
+    for (error, grade) in [(0.0, 1.0), (0.05, 1), (-0.1, 2), (0.15, 3), (0.2, 0)] {
+      XCTAssertEqual(try host.call(function: "JudgeSimple",
+        arguments: [error, 0, 0.05, 0.1, 0.15]), grade)
+    }
+    XCTAssertEqual(try host.call(function: "BeatToStartingBeat", arguments: [1]), 0)
+    XCTAssertEqual(try host.call(function: "BeatToStartingTime", arguments: [1]), 0)
+  }
+
+  func testTimeScaleIntegratesTempoPausesReversalsAndNegativeLeadIn() throws {
+    func scale(_ beat: Double, _ value: Double) -> LevelEntity {
+      LevelEntity(archetype: "#TIMESCALE_CHANGE", name: nil, data: [
+        LevelEntityData(name: "#BEAT", value: beat, ref: nil),
+        LevelEntityData(name: "#TIMESCALE", value: value, ref: nil)])
+    }
+    let level = LevelData(bgmOffset: 9, entities: [
+      bpm(beat: -4, value: 120), bpm(beat: 4, value: 60),
+      scale(-2, 2), scale(2, 0), scale(4, -1), scale(6, 1)])
+    let tempo = BPMTimeline(level: level)
+    XCTAssertEqual(tempo.time(at: 0), 0)
+    XCTAssertEqual(tempo.time(at: -4), -2)
+    XCTAssertEqual(tempo.time(at: 6), 4)
+    let engine = try RuntimeNodeBuilder().engine(archetypes: [])
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    for (time, expected) in [(-2.0, -4.0), (0, 0), (1, 2), (1.5, 2),
+      (2, 2), (3, 1), (4, 0), (5, 1)] {
+      XCTAssertEqual(try runtime.host.call(function: "TimeToScaledTime",
+        arguments: [time]), expected)
+      try runtime.update(at: time)
+      XCTAssertEqual(runtime.memory.value(block: 1001, index: 2), expected)
+      XCTAssertEqual(runtime.memory.value(block: 1001, index: 0), time)
+    }
+    XCTAssertEqual(try runtime.host.call(function: "TimeToStartingTime", arguments: [3]), 2)
+    XCTAssertEqual(try runtime.host.call(function: "TimeToStartingScaledTime", arguments: [3]), 2)
+    XCTAssertEqual(try runtime.host.call(function: "TimeToTimeScale", arguments: [3]), -1)
+    XCTAssertEqual(try runtime.host.call(function: "BeatToStartingBeat", arguments: [6]), 4)
+    XCTAssertEqual(try runtime.host.call(function: "BeatToStartingTime", arguments: [6]), 2)
+  }
+
   func testRuntimeReadsArcadeWeightsAfterPreprocessAndScoresAtDespawn() throws {
     let builder = RuntimeNodeBuilder()
     func set(_ block: Int, _ index: Int, _ value: Double) -> Int {

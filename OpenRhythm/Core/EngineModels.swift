@@ -107,4 +107,31 @@ struct EnginePlayData: Decodable, Sendable {
   let archetypes: [EngineArchetype]
   let nodes: [EngineDataNode]
   let buckets: [EngineBucket]
+
+  /// Include callbacks of spawnable archetypes, but not orphaned compiler
+  /// nodes. Inspect both sides of lazy branches: a missed tap must not be the
+  /// first time we discover that its successful-hit path is unsupported.
+  func unsupportedFunctions() throws -> [String] {
+    let supported = EngineInterpreter.supportedFunctions
+      .union(CommandEngineRuntimeHost.supportedFunctions)
+    var pending = archetypes.flatMap {
+      [$0.preprocess, $0.spawnOrder, $0.shouldSpawn, $0.initialize,
+       $0.updateSequential, $0.touch, $0.updateParallel, $0.terminate]
+        .compactMap { $0?.index }
+    }
+    var visited = Set<Int>()
+    var missing = Set<String>()
+    while let index = pending.popLast() {
+      guard nodes.indices.contains(index) else {
+        throw EngineInterpreterError.invalidNode(index)
+      }
+      guard visited.insert(index).inserted else { continue }
+      let node = nodes[index]
+      if let function = node.function, !supported.contains(function) {
+        missing.insert(function)
+      }
+      pending.append(contentsOf: node.arguments)
+    }
+    return missing.sorted()
+  }
 }

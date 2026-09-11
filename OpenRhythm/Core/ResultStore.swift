@@ -20,6 +20,9 @@ struct PlayResult: Codable, Identifiable, Sendable {
   var server: ServerDescriptor? = nil
   var engineScore: Int? = nil
   var scoreMode: String? = nil
+  var finalLife: Double? = nil
+  var maximumLife: Double? = nil
+  var failed: Bool? = nil
 
   /// Engine scores depend on note weights and judgement order, so retain the
   /// actual result. Legacy plays lack that information; preserve their prior

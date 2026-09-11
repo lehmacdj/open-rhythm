@@ -60,8 +60,19 @@ private struct EngineStream {
 /// lifecycle systems. No unavailable resource is reported as available merely
 /// because its name appears in EnginePlayData.
 final class CommandEngineRuntimeHost: EngineRuntimeHost {
+  static let supportedFunctions: Set<String> = [
+    "AddLifeScheduled", "BeatToStartingBeat", "BeatToStartingTime",
+    "BeatToTime", "BeatToBPM", "Judge", "JudgeSimple", "HasSkinSprite",
+    "HasParticleEffect", "HasEffectClip", "Draw", "Play", "PlayScheduled",
+    "PlayLooped", "PlayLoopedScheduled", "StopLooped", "StopLoopedScheduled",
+    "SpawnParticleEffect", "DestroyParticleEffect", "MoveParticleEffect",
+    "StreamSet", "StreamHas", "StreamGetValue", "StreamGetNextKey",
+    "StreamGetPreviousKey", "Spawn", "ExportValue", "TimeToScaledTime",
+    "TimeToStartingScaledTime", "TimeToStartingTime", "TimeToTimeScale"
+  ]
   let memory: EngineMemory
   let timeline: BPMTimeline
+  let timeScale: TimeScaleTimeline
   let skinSpriteIDs: Set<Int>
   let effectClipIDs: Set<Int>
   let particleEffectIDs: Set<Int>
@@ -76,6 +87,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private var loopStops = [Int: TimeInterval]()
   private var nextLoopID = 1
   private var spawns = [EngineSpawnCommand]()
+  private var scheduledLife = [(time: Double, amount: Double)]()
   private var streams = [Int: EngineStream]()
   private var streamEntryCount = 0
   private let streamEntryLimit: Int
@@ -95,6 +107,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   ) {
     self.memory = memory
     timeline = BPMTimeline(level: level)
+    timeScale = TimeScaleTimeline(level: level, bpm: timeline)
     self.skinSpriteIDs = skinSpriteIDs
     self.effectClipIDs = effectClipIDs
     self.particleEffectIDs = particleEffectIDs
@@ -134,6 +147,12 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     return loopAudio
   }
 
+  func takeScheduledLife(at time: Double) -> [Double] {
+    let due = scheduledLife.filter { $0.time <= time }.map(\.amount)
+    scheduledLife.removeAll { $0.time <= time }
+    return due
+  }
+
   /// Drain before executing this frame's callbacks: Spawn is deferred until
   /// the next update, and its data belongs in Entity Memory, not Entity Data.
   func takeSpawnCommands() -> [EngineSpawnCommand] {
@@ -143,6 +162,26 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
 
   func call(function: String, arguments a: [Double]) throws -> Double {
     switch function {
+    case "TimeToScaledTime", "TimeToStartingScaledTime", "TimeToStartingTime",
+      "TimeToTimeScale":
+      try validate(a, count: 1, function: function)
+      let segment = timeScale.segment(at: a[0])
+      switch function {
+      case "TimeToStartingTime": return segment.time
+      case "TimeToStartingScaledTime": return segment.scaledTime
+      case "TimeToTimeScale": return segment.scale
+      default: return timeScale.scaledTime(at: a[0])
+      }
+    case "AddLifeScheduled":
+      try validate(a, count: 2, function: function)
+      try checkLimit(scheduledLife.count)
+      scheduledLife.append((time: a[1], amount: a[0]))
+      scheduledLife.sort { $0.time < $1.time }
+      return 0
+    case "BeatToStartingBeat", "BeatToStartingTime":
+      try validate(a, count: 1, function: function)
+      let segment = timeline.segment(at: a[0])
+      return function == "BeatToStartingBeat" ? segment.beat : segment.time
     case "BeatToTime":
       try validate(a, count: 1, function: function)
       return timeline.time(at: a[0])
@@ -158,6 +197,11 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
           return Double(judgment)
         }
       }
+      return 0
+    case "JudgeSimple":
+      try validate(a, count: 5, function: function)
+      let distance = abs(a[0] - a[1])
+      for grade in 1...3 where distance <= a[grade + 1] { return Double(grade) }
       return 0
     case "HasSkinSprite", "HasParticleEffect", "HasEffectClip":
       try validate(a, count: 1, function: function)

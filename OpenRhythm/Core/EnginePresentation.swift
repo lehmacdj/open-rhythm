@@ -33,10 +33,81 @@ struct EngineConfiguration: Decodable {
     }
   }
   struct UI: Decodable {
+    struct Animation: Decodable {
+      struct Tween: Decodable {
+        let from: Double
+        let to: Double
+        let duration: Double
+        let ease: String
+
+        private enum CodingKeys: String, CodingKey { case from, to, duration, ease }
+
+        init(from decoder: Decoder) throws {
+          let values = try decoder.container(keyedBy: CodingKeys.self)
+          from = try values.decode(Double.self, forKey: .from)
+          to = try values.decode(Double.self, forKey: .to)
+          duration = try values.decode(Double.self, forKey: .duration)
+          ease = try values.decode(String.self, forKey: .ease)
+          guard from.isFinite, to.isFinite, abs(from) <= 1024, abs(to) <= 1024,
+            duration.isFinite, (0...3600).contains(duration) else {
+            throw DecodingError.dataCorruptedError(forKey: .duration, in: values,
+              debugDescription: "Engine UI animation exceeds supported numeric bounds.")
+          }
+        }
+
+        func value(at elapsed: Double) -> Double {
+          guard duration > 0, elapsed < duration else { return to }
+          let result = from + (to - from) * EngineEasing.value(ease, elapsed / duration)
+          return result.isFinite ? Swift.min(1024, Swift.max(-1024, result)) : to
+        }
+      }
+      let scale: Tween
+      let alpha: Tween
+      var duration: Double { Swift.max(scale.duration, alpha.duration) }
+    }
+    struct Visibility: Decodable {
+      let scale: Double
+      let alpha: Double
+
+      var values: [Double] {
+        [scale.isFinite ? Swift.max(0, scale) : 1,
+         alpha.isFinite ? Swift.min(1, Swift.max(0, alpha)) : 1]
+      }
+    }
+    let menuVisibility: Visibility?
+    let judgmentVisibility: Visibility?
+    let comboVisibility: Visibility?
+    let primaryMetricVisibility: Visibility?
+    let secondaryMetricVisibility: Visibility?
+    let primaryMetric: String?
+    let secondaryMetric: String?
+    let judgmentAnimation: Animation?
+    let judgmentErrorPlacement: String?
     let judgmentErrorMin: Double?
+
+    var runtimeValues: [Double] {
+      [menuVisibility, judgmentVisibility, comboVisibility,
+       primaryMetricVisibility, secondaryMetricVisibility]
+        .flatMap { $0?.values ?? [1, 1] }
+    }
   }
   let options: [Option]
   let ui: UI?
+}
+
+struct EngineUIElement: Equatable {
+  let values: [Double]
+  init(memory: EngineMemory, index: Int) {
+    values = (0..<10).map { memory.value(block: 1006, index: index * 10 + $0) }
+  }
+  var isVisible: Bool {
+    values.allSatisfy(\.isFinite) && values[5] > 0 && values[7] > 0
+  }
+  var pivot: CGPoint { CGPoint(x: values[2], y: 1 - values[3]) }
+  func anchor(in size: CGSize) -> CGPoint {
+    CGPoint(x: size.width / 2 + values[0] * size.height / 2,
+      y: size.height / 2 - values[1] * size.height / 2)
+  }
 }
 
 struct SkinData: Decodable {
@@ -169,6 +240,17 @@ enum EngineEasing {
       case "in": return inward(curve, t)
       case "out": return 1 - inward(curve, 1 - t)
       case "inOut":
+        if curve == "Back" {
+          let c = 1.70158 * 1.525
+          return t < 0.5 ? pow(2 * t, 2) * ((c + 1) * 2 * t - c) / 2
+            : (pow(2 * t - 2, 2) * ((c + 1) * (2 * t - 2) + c) + 2) / 2
+        }
+        if curve == "Elastic" {
+          if t == 0 || t == 1 { return t }
+          let wave = sin((20 * t - 11.125) * (2 * .pi / 4.5))
+          return t < 0.5 ? -pow(2, 20 * t - 10) * wave / 2
+            : pow(2, -20 * t + 10) * wave / 2 + 1
+        }
         return t < 0.5 ? inward(curve, t * 2) / 2
           : 1 - inward(curve, 2 - t * 2) / 2
       default:
@@ -204,6 +286,7 @@ final class EnginePresentationAssets {
     let transform: EngineQuadTransform
   }
   let options: [Double]
+  let ui: EngineConfiguration.UI?
   let noteSpeedOption: EngineConfiguration.Option?
   let judgementErrorMinimum: Double?
   let scoreModeOption: EngineConfiguration.Option?
@@ -221,6 +304,7 @@ final class EnginePresentationAssets {
       EngineConfiguration.self, from: presentation.data("configuration")
     )
     options = configuration.options.map(\.def)
+    ui = configuration.ui
     noteSpeedIndex = configuration.options.firstIndex { $0.name == "#NOTE_SPEED" }
     noteSpeedOption = noteSpeedIndex.map { configuration.options[$0] }
     judgementErrorMinimum = configuration.ui?.judgmentErrorMin.flatMap {

@@ -112,12 +112,18 @@ private struct EngineBreak: Error {
 
 final class EngineInterpreter {
   // Decode dispatch once; node evaluation is the dominant frame-time cost.
-  private enum Operation: String {
+  private enum Operation: String, CaseIterable {
     case `abs` = "Abs"
     case `add` = "Add"
     case `and` = "And"
     case `arctan` = "Arctan"
     case `arctan2` = "Arctan2"
+    case arccos = "Arccos", arcsin = "Arcsin", cosh = "Cosh"
+    case sinh = "Sinh", tan = "Tan", tanh = "Tanh"
+    case degree = "Degree", radian = "Radian", frac = "Frac", sign = "Sign"
+    case rem = "Rem", random = "Random", randomInteger = "RandomInteger"
+    case copy = "Copy", doWhile = "DoWhile"
+    case extendedMemory, easing
     case `block` = "Block"
     case `break` = "Break"
     case `ceil` = "Ceil"
@@ -181,6 +187,23 @@ final class EngineInterpreter {
   }
   let memory: EngineMemory
 
+  static let memoryFunctions = Set(
+    ["Get", "Set", "SetAdd", "SetSubtract", "SetMultiply", "SetDivide",
+      "SetPower", "SetMod", "SetRem", "IncrementPre", "IncrementPost",
+      "DecrementPre", "DecrementPost"].flatMap { base in
+      [base, base + "Pointed", base + "Shifted"]
+    })
+  static let easingFunctions = Set(
+    ["In", "Out", "InOut", "OutIn"].flatMap { mode in
+      ["Sine", "Quad", "Cubic", "Quart", "Quint", "Expo", "Circ", "Back",
+        "Elastic"].map { "Ease" + mode + $0 }
+    })
+  static var supportedFunctions: Set<String> {
+    Set(Operation.allCases.filter {
+      $0 != .host && $0 != .extendedMemory && $0 != .easing
+    }.map(\.rawValue)).union(memoryFunctions).union(easingFunctions)
+  }
+
   private let nodes: [EngineDataNode]
   private let operations: [Operation]
   private let host: any EngineRuntimeHost
@@ -196,7 +219,10 @@ final class EngineInterpreter {
   ) {
     self.nodes = nodes
     operations = nodes.map {
-      $0.function.flatMap(Operation.init(rawValue:)) ?? .host
+      guard let name = $0.function else { return .host }
+      return Operation(rawValue: name)
+        ?? (Self.memoryFunctions.contains(name) ? .extendedMemory
+          : Self.easingFunctions.contains(name) ? .easing : .host)
     }
     self.memory = memory
     self.host = host
@@ -255,6 +281,51 @@ final class EngineInterpreter {
       return result
     case .`arctan`: return try unary(arguments, atan)
     case .`arctan2`: return try binary(arguments, atan2)
+    case .arccos: return try unary(arguments, acos)
+    case .arcsin: return try unary(arguments, asin)
+    case .cosh: return try unary(arguments, cosh)
+    case .sinh: return try unary(arguments, sinh)
+    case .tan: return try unary(arguments, tan)
+    case .tanh: return try unary(arguments, tanh)
+    case .degree: return try unary(arguments) { $0 * 180 / .pi }
+    case .radian: return try unary(arguments) { $0 * .pi / 180 }
+    case .frac: return try unary(arguments) { $0 - floor($0) }
+    case .sign: return try unary(arguments) { $0 == 0 ? 0 : ($0 < 0 ? -1 : 1) }
+    case .random, .randomInteger:
+      try require(arguments, count: 2, function: function)
+      let a = try values(arguments)
+      guard a.allSatisfy(\.isFinite), a[0] <= a[1] else {
+        throw EngineInterpreterError.invalidArguments(function)
+      }
+      if operation == .random {
+        let fraction = Double.random(in: 0...1)
+        return fraction * a[1] + (1 - fraction) * a[0]
+      }
+      let lower = try integer(ceil(a[0]), function: function)
+      let upper = try integer(ceil(a[1]), function: function)
+      guard lower < upper else { throw EngineInterpreterError.invalidArguments(function) }
+      return Double(Int.random(in: lower..<upper))
+    case .copy:
+      try require(arguments, count: 5, function: function)
+      let a = try values(arguments).map { try integer($0, function: function) }
+      let count = a[4]
+      guard count >= 0, count <= operationLimit - operationCount,
+        a[1] >= 0, a[3] >= 0, a[1] <= Int.max - count,
+        a[3] <= Int.max - count else {
+        throw EngineInterpreterError.operationLimitExceeded
+      }
+      operationCount += count
+      let copied = (0..<count).map { memory.value(block: a[0], index: a[1] + $0) }
+      for (offset, value) in copied.enumerated() {
+        memory.set(block: a[2], index: a[3] + offset, value: value)
+      }
+      return 0
+    case .extendedMemory:
+      return try extendedMemory(function, arguments)
+    case .doWhile:
+      try require(arguments, count: 2, function: function)
+      repeat { _ = try evaluate(arguments[0]) } while try evaluate(arguments[1]) != 0
+      return 0
     case .`block`:
       try require(arguments, count: 1, function: function)
       do {
@@ -274,10 +345,10 @@ final class EngineInterpreter {
       let v = try values(arguments)
       return v[0] < v[1] ? v[1] : (v[0] > v[2] ? v[2] : v[0])
     case .`cos`: return try unary(arguments, cos)
-    case .`divide`: return try binary(arguments, /)
+    case .`divide`: return try fold(arguments, function: function, /)
     case .`equal`: return try comparison(arguments, ==)
     case .`easeInQuad`, .`easeOutQuad`, .`easeInOutQuad`, .`easeOutInQuad`,
-      .`easeInCubic`, .`easeOutCubic`:
+      .`easeInCubic`, .`easeOutCubic`, .easing:
       let suffix = String(function.dropFirst(4))
       let name = suffix.prefix(1).lowercased() + suffix.dropFirst()
       return try unary(arguments) { EngineEasing.value(name, $0, clamped: false) }
@@ -356,7 +427,9 @@ final class EngineInterpreter {
         if value != 0 { return value }
       }
       return 0
-    case .`power`: return try binary(arguments, pow)
+    case .`power`: return try fold(arguments, function: function, pow)
+    case .rem:
+      return try fold(arguments, function: function) { $0.truncatingRemainder(dividingBy: $1) }
     case .`remap`, .`remapClamped`:
       try require(arguments, count: 5, function: function)
       let v = try values(arguments)
@@ -426,11 +499,10 @@ final class EngineInterpreter {
       return function == "UnlerpClamped" ? min(1, max(0, fraction)) : fraction
     case .`while`:
       try require(arguments, count: 2, function: function)
-      var result = 0.0
       while try evaluate(arguments[0]) != 0 {
-        result = try evaluate(arguments[1])
+        _ = try evaluate(arguments[1])
       }
-      return result
+      return 0
     default:
       return try host.call(
         function: function,
@@ -441,6 +513,64 @@ final class EngineInterpreter {
 
   private func values(_ arguments: [Int]) throws -> [Double] {
     try arguments.map(evaluate)
+  }
+
+  private func fold(_ arguments: [Int], function: String,
+    _ operation: (Double, Double) -> Double) throws -> Double {
+    guard let first = arguments.first else {
+      throw EngineInterpreterError.invalidArguments(function)
+    }
+    var result = try evaluate(first)
+    for argument in arguments.dropFirst() { result = operation(result, try evaluate(argument)) }
+    return result
+  }
+
+  private func extendedMemory(_ function: String, _ arguments: [Int]) throws -> Double {
+    let suffix = function.hasSuffix("Pointed") ? "Pointed"
+      : function.hasSuffix("Shifted") ? "Shifted" : ""
+    let base = String(function.dropLast(suffix.count))
+    let addressCount = suffix == "Pointed" ? 3 : suffix == "Shifted" ? 4 : 2
+    let writes = base.hasPrefix("Set")
+    try require(arguments, count: addressCount + (writes ? 1 : 0), function: function)
+    // Pointed addressing dereferences the pointer before evaluating offset;
+    // offset expressions may themselves mutate the pointer's storage.
+    let a = try values(Array(arguments.prefix(suffix == "Pointed" ? 2 : addressCount)))
+    var block = try integer(a[0], function: function)
+    var index = try integer(a[1], function: function)
+    if suffix == "Shifted" {
+      index = try integer(a[1] + a[2] * a[3], function: function)
+    } else if suffix == "Pointed" {
+      guard index < Int.max else { throw EngineInterpreterError.invalidArguments(function) }
+      let targetBlock = memory.value(block: block, index: index)
+      let pointerIndex = memory.value(block: block, index: index + 1)
+      let targetIndex = pointerIndex + (try evaluate(arguments[2]))
+      block = try integer(targetBlock, function: function)
+      index = try integer(targetIndex, function: function)
+    }
+    let old = memory.value(block: block, index: index)
+    if base == "Get" { return old }
+    if !writes {
+      let value = old + (base.hasPrefix("Increment") ? 1 : -1)
+      memory.set(block: block, index: index, value: value)
+      return base.hasSuffix("Post") ? value : old
+    }
+    let operand = try evaluate(arguments[addressCount])
+    let value: Double
+    switch base {
+    case "Set": value = operand
+    case "SetAdd": value = old + operand
+    case "SetSubtract": value = old - operand
+    case "SetMultiply": value = old * operand
+    case "SetDivide": value = old / operand
+    case "SetPower": value = pow(old, operand)
+    case "SetRem": value = old.truncatingRemainder(dividingBy: operand)
+    case "SetMod":
+      let remainder = old.truncatingRemainder(dividingBy: operand)
+      value = remainder != 0 && (remainder < 0) != (operand < 0)
+        ? remainder + operand : remainder
+    default: throw EngineInterpreterError.unsupportedFunction(function)
+    }
+    return memory.set(block: block, index: index, value: value)
   }
 
   private func unary(

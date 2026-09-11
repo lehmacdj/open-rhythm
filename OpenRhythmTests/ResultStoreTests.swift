@@ -2,6 +2,21 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testEngineLifeAndFailureSurviveHistoryRoundTrip() throws {
+    var play = result(levelID: "life", perfect: 9)
+    play.finalLife = 0
+    play.maximumLife = 2000
+    play.failed = true
+    let decoded = try JSONDecoder().decode(PlayResult.self,
+      from: JSONEncoder().encode(play))
+    XCTAssertEqual(decoded.finalLife, 0)
+    XCTAssertEqual(decoded.maximumLife, 2000)
+    XCTAssertEqual(decoded.failed, true)
+    let legacy = try JSONDecoder().decode(PlayResult.self,
+      from: JSONEncoder().encode(result(levelID: "legacy", perfect: 1)))
+    XCTAssertNil(legacy.failed)
+    XCTAssertNil(legacy.finalLife)
+  }
   func testEngineScoreIsPreservedInsteadOfRederivedFromFlatCounts() throws {
     var play = result(levelID: "weighted", perfect: 9)
     play.engineScore = 812_345

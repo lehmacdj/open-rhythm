@@ -46,6 +46,44 @@ struct EngineScoreSnapshot: Equatable {
   let remaining: Int
 }
 
+struct EngineLife: Equatable {
+  private(set) var value: Double
+  let maximum: Double
+  private(set) var failed: Bool
+  private var streaks = [0, 0, 0]
+  private let configuration: [Double]
+
+  init(configuration: [Double]) {
+    // Keep malformed engine values out of the visible state. Runtime callers
+    // validate these separately and report an error instead of falling back.
+    let valid = configuration.count == 8 && configuration.allSatisfy(\.isFinite)
+    let config = valid ? configuration : [0, 0, 0, 0, 0, 0, 1000, 1000]
+    self.configuration = config
+    maximum = max(0, config[7])
+    value = min(maximum, max(0, config[6]))
+    failed = value == 0
+  }
+
+  mutating func add(_ amount: Double) {
+    guard !failed, amount.isFinite else { return }
+    value = min(maximum, max(0, value + amount))
+    if value == 0 { failed = true }
+  }
+
+  mutating func record(grade: Int, increment: Double) {
+    var bonus = 0.0
+    for index in 0..<3 {
+      streaks[index] = grade > 0 && grade <= index + 1 ? streaks[index] + 1 : 0
+      let step = configuration[index * 2 + 1]
+      if step > 0, streaks[index] > 0,
+        Double(streaks[index]).truncatingRemainder(dividingBy: step) == 0 {
+        bonus += configuration[index * 2]
+      }
+    }
+    add(increment + bonus)
+  }
+}
+
 /// Sonolus arcade score: engine-provided grade, note, and consecutive-grade
 /// multipliers, normalized against an all-PERFECT play of this chart.
 struct EngineArcadeScore {
@@ -154,6 +192,7 @@ final class EnginePlayRuntime {
   private(set) var judgments = [EngineJudgment]()
   private(set) var resolvedInputCount = 0
   private(set) var arcadeScore: EngineArcadeScore?
+  private(set) var life = EngineLife(configuration: [0, 0, 0, 0, 0, 0, 1000, 1000])
   private let engine: EnginePlayData
   private let interpreter: EngineInterpreter
   private var entities = [Entity]()
@@ -167,13 +206,22 @@ final class EnginePlayRuntime {
     engine: EnginePlayData, level: LevelData,
     options: [Double], aspectRatio: Double,
     skinSpriteIDs: Set<Int>, effectClipIDs: Set<Int>,
-    particleEffectIDs: Set<Int>, rom: Data? = nil
+    particleEffectIDs: Set<Int>, rom: Data? = nil,
+    uiConfiguration: [Double] = Array(repeating: 1, count: 10),
+    safeArea: [Double]? = nil
   ) throws {
     guard aspectRatio.isFinite, aspectRatio > 0,
-      level.entities.count <= 100_000 else {
+      level.entities.count <= 100_000,
+      uiConfiguration.count == 10, uiConfiguration.allSatisfy(\.isFinite),
+      safeArea == nil || (safeArea?.count == 4
+        && safeArea?.allSatisfy(\.isFinite) == true) else {
       throw EngineInterpreterError.invalidArguments("runtime environment")
     }
     self.engine = engine
+    let missing = try engine.unsupportedFunctions()
+    guard missing.isEmpty else {
+      throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
+    }
     memory = EngineMemory()
     try memory.loadROM(rom)
     host = CommandEngineRuntimeHost(
@@ -202,11 +250,16 @@ final class EnginePlayRuntime {
       archetypes[$0.archetype].map { engine.archetypes[$0].hasInput } ?? false
     }.count
     memory.set(block: 1000, index: 1, value: aspectRatio)
+    for (index, value) in (safeArea ?? [-aspectRatio, aspectRatio, -1, 1]).enumerated() {
+      memory.set(block: 1000, index: 5 + index, value: value)
+    }
+    memory.set(block: 2005, index: 6, value: 1000)
+    memory.set(block: 2005, index: 7, value: 1000)
     for (index, value) in options.enumerated() {
       memory.set(block: 2002, index: index, value: value)
     }
     for index in 0..<10 {
-      memory.set(block: 1007, index: index, value: 1)
+      memory.set(block: 1007, index: index, value: uiConfiguration[index])
     }
     for index in engine.archetypes.indices {
       memory.set(block: 5001, index: index, value: 1)
@@ -214,7 +267,8 @@ final class EnginePlayRuntime {
     for (index, source) in level.entities.enumerated() {
       // Preserve original indices, including built-in timing entities.
       guard let archetypeID = archetypes[source.archetype] else {
-        // Unimplemented chart archetypes are metadata, not startup errors.
+        // Charts may include editor-only metadata as well as built-in timing
+        // entities. These preserve their indices but have no play callbacks.
         memory.set(block: 4103, index: index * 3, value: Double(index))
         memory.set(block: 4103, index: index * 3 + 1, value: -1)
         memory.set(block: 4103, index: index * 3 + 2, value: 2)
@@ -256,6 +310,12 @@ final class EnginePlayRuntime {
     })
     arcadeScore = EngineArcadeScore(configuration:
       (0..<12).map { memory.value(block: 2004, index: $0) }, weights: weights)
+    let lifeConfiguration = (0..<8).map { memory.value(block: 2005, index: $0) }
+    guard lifeConfiguration.allSatisfy(\.isFinite),
+      lifeConfiguration[6] >= 0, lifeConfiguration[7] >= 0 else {
+      throw EngineInterpreterError.invalidArguments("Level Life")
+    }
+    life = EngineLife(configuration: lifeConfiguration)
     var orders = [Int: Double]()
     for entity in ordered(entities, by: \.spawnOrder) {
       orders[entity.key] = try execute(entity, callback: \.spawnOrder)
@@ -270,10 +330,12 @@ final class EnginePlayRuntime {
   func update(at time: TimeInterval, touches: [EngineTouch] = []) throws {
     let spawned = host.takeSpawnCommands()
     try host.beginFrame(at: time)
+    for amount in host.takeScheduledLife(at: time) { life.add(amount) }
     judgments.removeAll(keepingCapacity: true)
     let delta = max(0, time - previousTime)
     previousTime = time
-    for (index, value) in [time, delta, time, Double(touches.count)]
+    for (index, value) in [time, delta, host.timeScale.scaledTime(at: time),
+      Double(touches.count)]
       .enumerated() {
       memory.set(block: 1001, index: index, value: value)
     }
@@ -339,6 +401,11 @@ final class EnginePlayRuntime {
       if let index = entity.index, engine.archetypes[entity.archetype].hasInput {
         let grade = memory.value(block: 4005, index: 0)
         arcadeScore?.record(entity: index, grade: Int(exactly: grade) ?? 0)
+        let lifeGrade = Int(exactly: grade) ?? 0
+        let gradeIndex = (1...3).contains(lifeGrade) ? lifeGrade - 1 : 3
+        life.record(grade: lifeGrade,
+          increment: memory.value(block: 5000, index: entity.archetype * 4 + gradeIndex)
+            + memory.value(block: 4007, index: gradeIndex))
         judgments.append(EngineJudgment(
           entityIndex: index, grade: Int(exactly: grade) ?? 0,
           accuracy: memory.value(block: 4005, index: 1)

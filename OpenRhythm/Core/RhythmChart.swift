@@ -31,7 +31,7 @@ struct BPMTimeline: Sendable {
         guard
           let beat = entity.value(named: "#BEAT"),
           let bpm = entity.value(named: "#BPM"),
-          bpm > 0
+          beat.isFinite, bpm.isFinite, bpm > 0
         else { return nil }
         return (beat, bpm)
       }
@@ -52,18 +52,80 @@ struct BPMTimeline: Sendable {
         Segment(beat: change.beat, time: time, bpm: change.bpm)
       )
     }
-    segments = result
+    // Beat zero is time zero even when the chart defines tempo beforehand.
+    let origin = result.last { $0.beat <= 0 } ?? result[0]
+    let zeroTime = origin.time - origin.beat * 60 / origin.bpm
+    segments = result.map {
+      Segment(beat: $0.beat, time: $0.time - zeroTime, bpm: $0.bpm)
+    }
   }
 
   func time(at beat: Double) -> TimeInterval {
-    guard let segment = segments.last(where: { $0.beat <= beat })
-      ?? segments.first
-    else { return beat }
+    let segment = segment(at: beat)
     return segment.time + (beat - segment.beat) * 60 / segment.bpm
   }
 
   func bpm(at beat: Double) -> Double {
-    (segments.last { $0.beat <= beat } ?? segments.first)?.bpm ?? 60
+    segment(at: beat).bpm
+  }
+
+  func segment(at beat: Double) -> Segment {
+    var lower = 0
+    var upper = segments.count
+    while lower < upper {
+      let middle = lower + (upper - lower) / 2
+      if segments[middle].beat <= beat { lower = middle + 1 }
+      else { upper = middle }
+    }
+    return segments[max(0, lower - 1)]
+  }
+}
+
+/// Integral of the level's built-in time-scale changes. This affects engine
+/// animation time, never the BGM clock or audio playback speed.
+struct TimeScaleTimeline {
+  struct Segment {
+    let time: Double
+    let scaledTime: Double
+    let scale: Double
+  }
+  let segments: [Segment]
+
+  init(level: LevelData, bpm: BPMTimeline) {
+    var changes = level.entities.compactMap { entity -> (Double, Double)? in
+      guard entity.archetype == "#TIMESCALE_CHANGE",
+        let beat = entity.value(named: "#BEAT"), beat.isFinite,
+        let scale = entity.value(named: "#TIMESCALE"), scale.isFinite else { return nil }
+      return (bpm.time(at: beat), scale)
+    }.sorted { $0.0 < $1.0 }
+    if changes.isEmpty || changes[0].0 > 0 { changes.insert((0, 1), at: 0) }
+    var result = [Segment]()
+    var scaled = 0.0
+    for (time, scale) in changes {
+      if let last = result.last { scaled += (time - last.time) * last.scale }
+      result.append(Segment(time: time, scaledTime: scaled, scale: scale))
+    }
+    let origin = result.last { $0.time <= 0 } ?? result[0]
+    let zero = origin.scaledTime - origin.time * origin.scale
+    segments = result.map {
+      Segment(time: $0.time, scaledTime: $0.scaledTime - zero, scale: $0.scale)
+    }
+  }
+
+  func segment(at time: Double) -> Segment {
+    var lower = 0
+    var upper = segments.count
+    while lower < upper {
+      let middle = lower + (upper - lower) / 2
+      if segments[middle].time <= time { lower = middle + 1 }
+      else { upper = middle }
+    }
+    return segments[max(0, lower - 1)]
+  }
+
+  func scaledTime(at time: Double) -> Double {
+    let segment = segment(at: time)
+    return segment.scaledTime + (time - segment.time) * segment.scale
   }
 }
 

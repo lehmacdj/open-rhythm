@@ -3,6 +3,209 @@ import UIKit
 @testable import OpenRhythm
 
 final class RuntimeDecodingTests: XCTestCase {
+  private func evaluate(_ name: String, _ values: [Double],
+    memory: EngineMemory = EngineMemory(), limit: Int = 1_000_000) throws -> Double {
+    let nodes = values.map { EngineDataNode(value: $0) }
+      + [EngineDataNode(function: name, arguments: Array(values.indices))]
+    return try EngineInterpreter(nodes: nodes, memory: memory,
+      operationLimit: limit).execute(nodeAt: values.count)
+  }
+
+  func testExtendedMathAndVariadicFolds() throws {
+    let cases: [(String, [Double], Double)] = [
+      ("Arccos", [0], .pi / 2), ("Arcsin", [1], .pi / 2),
+      ("Cosh", [0], 1), ("Sinh", [0], 0), ("Tan", [0], 0),
+      ("Tanh", [0], 0), ("Degree", [.pi], 180), ("Radian", [180], .pi),
+      ("Frac", [1.25], 0.25), ("Sign", [-2], -1), ("Sign", [0], 0),
+      ("Divide", [24, 2, 3], 4), ("Divide", [7], 7),
+      ("Power", [2, 3, 2], 64), ("Rem", [-17, 5, 2], 0),
+      ("Rem", [-17, 5], -2)
+    ]
+    for (name, args, expected) in cases {
+      XCTAssertEqual(try evaluate(name, args), expected, accuracy: 1e-10, name)
+    }
+    for name in ["Divide", "Power", "Rem"] {
+      XCTAssertThrowsError(try evaluate(name, []), name)
+    }
+  }
+
+  func testAllMemoryAddressingAndCompoundFamilies() throws {
+    let mutations: [(String, Double, Double)] = [
+      ("Get", 10, 10), ("Set", 3, 3), ("SetAdd", 13, 13),
+      ("SetSubtract", 7, 7), ("SetMultiply", 30, 30),
+      ("SetDivide", 10.0 / 3, 10.0 / 3), ("SetPower", 1000, 1000),
+      ("SetMod", 1, 1), ("SetRem", 1, 1),
+      ("IncrementPre", 10, 11), ("IncrementPost", 11, 11),
+      ("DecrementPre", 10, 9), ("DecrementPost", 9, 9)
+    ]
+    for suffix in ["", "Shifted", "Pointed"] {
+      for (base, returned, stored) in mutations {
+        let memory = EngineMemory()
+        memory.set(block: 2000, index: 8, value: 10)
+        memory.set(block: 2001, index: 0, value: 2000)
+        memory.set(block: 2001, index: 1, value: 6)
+        var args: [Double] = switch suffix {
+        case "Shifted": [2000, 2, 2, 3] // 2 + 2 * 3
+        case "Pointed": [2001, 0, 2] // pointer (2000, 6) + 2
+        default: [2000, 8]
+        }
+        if base.hasPrefix("Set") { args.append(3) }
+        XCTAssertEqual(try evaluate(base + suffix, args, memory: memory),
+          returned, accuracy: 1e-10, base + suffix)
+        XCTAssertEqual(memory.value(block: 2000, index: 8), stored,
+          accuracy: 1e-10, base + suffix)
+      }
+    }
+    for suffix in ["", "Shifted", "Pointed"] {
+      let memory = EngineMemory()
+      memory.set(block: 2000, index: 0, value: -10)
+      memory.set(block: 2001, index: 0, value: 2000)
+      let address: [Double] = suffix == "Pointed" ? [2001, 0, 0]
+        : suffix == "Shifted" ? [2000, 0, 0, 1] : [2000, 0]
+      XCTAssertEqual(try evaluate("SetMod" + suffix, address + [3], memory: memory), 2)
+      memory.set(block: 2000, index: 0, value: -10)
+      XCTAssertEqual(try evaluate("SetRem" + suffix, address + [3], memory: memory), -1)
+    }
+  }
+
+  func testCopyOverlapsInBothDirectionsAndChargesItsBudget() throws {
+    for destination in [0, 2] {
+      let memory = EngineMemory()
+      for index in 0..<6 { memory.set(block: 2000, index: index, value: Double(index)) }
+      XCTAssertEqual(try evaluate("Copy", [2000, 1, 2000, Double(destination), 4],
+        memory: memory), 0)
+      XCTAssertEqual((destination..<(destination + 4)).map {
+        memory.value(block: 2000, index: $0)
+      }, [1, 2, 3, 4])
+    }
+    XCTAssertThrowsError(try evaluate("Copy", [2000, 0, 2001, 0, 100], limit: 20))
+    XCTAssertThrowsError(try evaluate("Copy", [2000, 0, 2001, 0, -1]))
+    XCTAssertThrowsError(try evaluate("GetPointed", [2000, .infinity, 0]))
+  }
+
+  func testLoopReturnsAndDoWhileExecutesBeforeCondition() throws {
+    let memory = EngineMemory()
+    let nodes = [EngineDataNode(value: 2000), EngineDataNode(value: 0),
+      EngineDataNode(function: "IncrementPost", arguments: [0, 1]),
+      EngineDataNode(function: "DoWhile", arguments: [2, 1]),
+      EngineDataNode(function: "While", arguments: [1, 2])]
+    let interpreter = EngineInterpreter(nodes: nodes, memory: memory)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 3), 0)
+    XCTAssertEqual(memory.value(block: 2000, index: 0), 1)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 4), 0)
+    XCTAssertEqual(memory.value(block: 2000, index: 0), 1)
+    XCTAssertThrowsError(try evaluate("DoWhile", [1, 1], limit: 20))
+  }
+
+  func testEveryEasingFunctionIsRecognizedAndHasCorrectEndpoints() throws {
+    XCTAssertEqual(EngineInterpreter.easingFunctions.count, 36)
+    for name in EngineInterpreter.easingFunctions {
+      XCTAssertEqual(try evaluate(name, [0]), 0, accuracy: 1e-10, name)
+      XCTAssertEqual(try evaluate(name, [1]), 1, accuracy: 1e-10, name)
+      XCTAssertTrue(try evaluate(name, [0.3]).isFinite, name)
+    }
+    XCTAssertEqual(try evaluate("EaseInOutBack", [0.25]),
+      -0.09968184375, accuracy: 1e-10)
+    XCTAssertEqual(try evaluate("EaseInOutElastic", [0.25]),
+      0.011969444423734, accuracy: 1e-10)
+    XCTAssertEqual(try evaluate("EaseInOutBack", [0.75]),
+      1.09968184375, accuracy: 1e-10)
+    XCTAssertEqual(try evaluate("EaseInOutElastic", [0.75]),
+      0.988030555576266, accuracy: 1e-10)
+  }
+
+  func testPointedAddressSnapshotPrecedesOffsetSideEffects() throws {
+    for name in ["GetPointed", "SetAddPointed", "IncrementPostPointed"] {
+      let memory = EngineMemory()
+      memory.set(block: 2000, index: 0, value: 2001)
+      memory.set(block: 2001, index: 0, value: 7)
+      memory.set(block: 2002, index: 0, value: 9)
+      var nodes = [EngineDataNode(value: 2000), EngineDataNode(value: 0),
+        EngineDataNode(value: 2002),
+        EngineDataNode(function: "Set", arguments: [0, 1, 2]),
+        EngineDataNode(function: "Execute", arguments: [3, 1]),
+        EngineDataNode(value: 3)]
+      nodes.append(EngineDataNode(function: name,
+        arguments: name == "SetAddPointed" ? [0, 1, 4, 5] : [0, 1, 4]))
+      let result = try EngineInterpreter(nodes: nodes, memory: memory).execute(nodeAt: 6)
+      XCTAssertEqual(result, name == "GetPointed" ? 7 : name == "SetAddPointed" ? 10 : 8)
+      XCTAssertEqual(memory.value(block: 2002, index: 0), 9)
+    }
+  }
+
+  func testRandomBoundsAndInvalidRanges() throws {
+    for _ in 0..<100 {
+      XCTAssertTrue((-3...2).contains(try evaluate("Random", [-3, 2])))
+      let integer = try evaluate("RandomInteger", [-1.5, 2.2])
+      XCTAssertTrue((-1...2).contains(integer))
+      XCTAssertEqual(integer, integer.rounded())
+    }
+    XCTAssertEqual(try evaluate("Random", [4, 4]), 4)
+    XCTAssertThrowsError(try evaluate("RandomInteger", [4, 4]))
+    XCTAssertThrowsError(try evaluate("Random", [2, 1]))
+    XCTAssertThrowsError(try evaluate("Random", [.nan, 1]))
+  }
+
+  func testUIVisibilityDecodesInRuntimeBlockOrder() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
+      {"options":[],"ui":{"menuVisibility":{"scale":0.5,"alpha":0},
+      "comboVisibility":{"scale":2,"alpha":0.3},
+      "secondaryMetricVisibility":{"scale":1.5,"alpha":0.8}}}
+      """#.utf8))
+    XCTAssertEqual(config.ui?.runtimeValues, [0.5, 0, 1, 1, 2, 0.3, 1, 1, 1.5, 0.8])
+  }
+
+  func testEngineUILayoutMapsCoordinatesPivotsAndHiddenElements() throws {
+    let memory = EngineMemory()
+    let values = [-1.5, 0.8, 1.0, 1, 0, 0.08, 0, 0.7, 1, 0]
+    for (index, value) in values.enumerated() {
+      memory.set(block: 1006, index: 50 + index, value: value)
+    }
+    let element = EngineUIElement(memory: memory, index: 5)
+    XCTAssertTrue(element.isVisible)
+    XCTAssertEqual(element.anchor(in: CGSize(width: 800, height: 400)),
+      CGPoint(x: 100, y: 40))
+    XCTAssertEqual(element.pivot, CGPoint(x: 1, y: 0))
+    memory.set(block: 1006, index: 57, value: 0)
+    XCTAssertFalse(EngineUIElement(memory: memory, index: 5).isVisible)
+  }
+
+  func testEngineJudgmentAnimationControlsDurationAndEasing() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
+      {"options":[],"ui":{"primaryMetric":"arcade","secondaryMetric":"life",
+      "judgmentAnimation":{"scale":{"from":0,"to":1,"duration":0.1,"ease":"linear"},
+      "alpha":{"from":1,"to":0,"duration":0.3,"ease":"none"}}}}
+      """#.utf8))
+    let animation = try XCTUnwrap(config.ui?.judgmentAnimation)
+    XCTAssertEqual(animation.duration, 0.3)
+    XCTAssertEqual(animation.scale.value(at: 0.05), 0.5)
+    XCTAssertEqual(animation.alpha.value(at: 0.29), 1)
+    XCTAssertEqual(animation.alpha.value(at: 0.3), 0)
+    XCTAssertEqual(config.ui?.primaryMetric, "arcade")
+    XCTAssertEqual(config.ui?.secondaryMetric, "life")
+  }
+
+  func testOversizedEngineAnimationsAreRejectedWithoutDurationTraps() {
+    for (from, duration) in [("1", "1e300"), ("1e300", "0.3"), ("1", "-1")] {
+      let json = """
+        {"options":[],"ui":{"judgmentAnimation":{
+        "scale":{"from":\(from),"to":1,"duration":\(duration),"ease":"linear"},
+        "alpha":{"from":1,"to":0,"duration":0.3,"ease":"none"}}}}
+        """
+      XCTAssertThrowsError(try JSONDecoder().decode(EngineConfiguration.self,
+        from: Data(json.utf8)))
+    }
+  }
+
+  @MainActor
+  func testTimeMetricRejectsUnrepresentableTimes() throws {
+    let model = try gameplayModel()
+    model.start()
+    defer { model.stop() }
+    model.update(mediaTime: 1e20)
+    XCTAssertNil(model.engineMetric("time"))
+  }
+
   func testStartupPreservesAudioWithoutAddingLeadIn() {
     for offset in [9.0, 1, 0, -2] {
       let mapping = BGMClockMapping(offset: offset)
@@ -23,6 +226,26 @@ final class RuntimeDecodingTests: XCTestCase {
       accuracy: -0.01).text(for: .timing), "PERFECT")
     XCTAssertEqual(JudgementFeedback(sequence: 4, judgement: .miss,
       accuracy: 0.2).text(for: .timing), "MISS")
+  }
+
+  func testTimingPlacementUsesEngineSettingWithoutChangingTheGrade() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
+      {"options":[],"ui":{"judgmentErrorPlacement":"bottom"}}
+      """#.utf8))
+    let early = JudgementFeedback(sequence: 1, judgement: .perfect,
+      accuracy: -0.03, minimumError: 0.02)
+    let late = JudgementFeedback(sequence: 2, judgement: .great, accuracy: 0.03)
+    XCTAssertEqual(early.timingPlacement(config.ui?.judgmentErrorPlacement), "bottom")
+    for fixed in ["top", "bottom", "left", "right", "center"] {
+      XCTAssertEqual(early.timingPlacement(fixed), fixed)
+      XCTAssertEqual(late.timingPlacement(fixed), fixed)
+    }
+    XCTAssertEqual(early.timingPlacement("leftRight"), "left")
+    XCTAssertEqual(late.timingPlacement("leftRight"), "right")
+    XCTAssertEqual(early.timingPlacement("topBottom"), "top")
+    XCTAssertEqual(late.timingPlacement("topBottom"), "bottom")
+    XCTAssertEqual(early.text(for: .timing), "Early PERFECT")
+    XCTAssertEqual(early.timingPlacement(nil), "top")
   }
 
   func testPerfectTimingLabelUsesEngineMinimumError() throws {

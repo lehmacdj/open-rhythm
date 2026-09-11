@@ -79,6 +79,10 @@ struct GameplayView: View {
           Color.black
           if model.presentationAssets != nil {
             EnginePlayfield(model: model).id(model.playbackGeneration)
+            if model.engineUI.count == 8 {
+              engineHUD(size: geometry.size)
+                .allowsHitTesting(false)
+            }
           } else {
             TimelineView(.animation) { _ in
               Canvas { context, size in
@@ -91,10 +95,12 @@ struct GameplayView: View {
         .frame(width: geometry.size.width, height: geometry.size.height)
       }
       .ignoresSafeArea()
-      JudgementOverlay(feedback: model.latestJudgement,
-        mode: model.settings.judgementDisplay)
-        .padding(.top, 76)
-        .allowsHitTesting(false)
+      if model.presentationAssets == nil {
+        JudgementOverlay(feedback: model.latestJudgement,
+          mode: model.settings.judgementDisplay)
+          .padding(.top, 76)
+          .allowsHitTesting(false)
+      }
       if model.isStartingPlayback {
         ProgressView("Starting chart…")
           .padding()
@@ -103,36 +109,59 @@ struct GameplayView: View {
       }
       // Controls inherit the outer safe area; only the playfield expands
       // beneath the notch and home indicator.
-      HStack {
-        Button {
-          model.stop()
-          dismiss()
-        } label: {
-          Image(systemName: "xmark")
-            .frame(width: 44, height: 44)
-            .background(.black.opacity(0.55), in: Circle())
+      if model.presentationAssets != nil {
+        HStack {
+          Spacer()
+          Menu {
+            Button("Restart Song", systemImage: "arrow.counterclockwise") {
+              model.restart()
+            }
+            Button("Exit Song", systemImage: "xmark") {
+              model.stop()
+              dismiss()
+            }
+          } label: {
+            Image(systemName: "ellipsis")
+              .frame(width: 44, height: 44)
+              .background(.black.opacity(0.55), in: Circle())
+          }
+          .accessibilityLabel("Song Controls")
         }
-        .accessibilityLabel("Exit Song")
-        Spacer()
-        VStack(spacing: 2) {
-          Text("Score \(model.displayedScore)")
-          Text("Combo \(model.combo)")
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+      } else {
+        HStack {
+          Button {
+            model.stop()
+            dismiss()
+          } label: {
+            Image(systemName: "xmark")
+              .frame(width: 44, height: 44)
+              .background(.black.opacity(0.55), in: Circle())
+          }
+          .accessibilityLabel("Exit Song")
+          Spacer()
+          VStack(spacing: 2) {
+            Text("Score \(model.displayedScore)")
+            Text("Combo \(model.combo)")
+          }
+          .allowsHitTesting(false)
+          Spacer()
+          Button {
+            model.restart()
+          } label: {
+            Image(systemName: "arrow.counterclockwise")
+              .frame(width: 44, height: 44)
+              .background(.black.opacity(0.55), in: Circle())
+          }
+          .accessibilityLabel("Restart Song")
         }
-        .allowsHitTesting(false)
-        Spacer()
-        Button {
-          model.restart()
-        } label: {
-          Image(systemName: "arrow.counterclockwise")
-            .frame(width: 44, height: 44)
-            .background(.black.opacity(0.55), in: Circle())
-        }
-        .accessibilityLabel("Restart Song")
+        .font(.headline.monospacedDigit())
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
       }
-      .font(.headline.monospacedDigit())
-      .foregroundStyle(.white)
-      .padding(.horizontal, 12)
-      .padding(.top, 8)
     }
   }
 
@@ -140,11 +169,60 @@ struct GameplayView: View {
     LaneInput(model: model)
   }
 
+  private func engineHUD(size: CGSize) -> some View {
+    ZStack(alignment: .topLeading) {
+      EngineUIPlacement(element: model.engineUI[1], size: size) {
+        JudgementOverlay(feedback: model.latestJudgement,
+          mode: model.settings.judgementDisplay,
+          animation: model.presentationAssets?.ui?.judgmentAnimation,
+          timingPlacement: model.presentationAssets?.ui?.judgmentErrorPlacement,
+          fontSize: model.engineUI[1].values[5] * size.height / 2)
+      }
+      if model.combo > 0 {
+        EngineUIPlacement(element: model.engineUI[2], size: size) {
+          Text(model.combo.formatted())
+        }
+        EngineUIPlacement(element: model.engineUI[3], size: size) {
+          Text("COMBO")
+        }
+      }
+      metricUI(model.presentationAssets?.ui?.primaryMetric ?? "arcade",
+        index: 4, size: size)
+      metricUI(model.presentationAssets?.ui?.secondaryMetric ?? "life",
+        index: 6, size: size)
+    }
+    .foregroundStyle(.white)
+  }
+
+  @ViewBuilder private func metricUI(_ name: String, index: Int, size: CGSize)
+    -> some View {
+    let metric = model.engineMetric(name)
+    EngineUIPlacement(element: model.engineUI[index], size: size) {
+      GeometryReader { geometry in
+        ZStack(alignment: .leading) {
+          Rectangle().fill(.white.opacity(0.2))
+          Rectangle().fill(name == "life" ? Color.green : Color.cyan)
+            .frame(width: geometry.size.width * (metric?.fraction ?? 0))
+        }
+      }
+      .frame(width: max(0, model.engineUI[index].values[4] * size.height / 2),
+        height: max(0, model.engineUI[index].values[5] * size.height / 2))
+    }
+    EngineUIPlacement(element: model.engineUI[index + 1], size: size) {
+      Text(metric?.text ?? "—")
+        .accessibilityLabel(metric == nil ? "Unsupported metric: \(name)" : name)
+    }
+  }
+
   private var resultView: some View {
     Form {
       Section("Result") {
         LabeledContent("Score", value: model.score.formatted())
         LabeledContent("Max Combo", value: model.maxCombo.formatted())
+        if let life = model.engineLife {
+          LabeledContent("Life", value: "\(life.value.formatted()) / \(life.maximum.formatted())")
+          LabeledContent("Clear", value: life.failed ? "Failed" : "Passed")
+        }
       }
       Section("Judgements") {
         ForEach(NoteJudgement.allCases, id: \.self) { judgement in
@@ -302,15 +380,26 @@ private struct GameplaySettingsPanel: View {
 private struct JudgementOverlay: View {
   let feedback: JudgementFeedback?
   let mode: JudgementDisplayMode
+  var animation: EngineConfiguration.UI.Animation? = nil
+  var timingPlacement: String? = nil
+  var fontSize: CGFloat? = nil
   @State private var visible = false
+  @State private var started = Date()
 
   var body: some View {
-    JudgementLabel(feedback: feedback, mode: mode)
-      .opacity(visible && mode != .off ? 1 : 0)
+    TimelineView(.animation(paused: !visible)) { context in
+      let elapsed = max(0, context.date.timeIntervalSince(started))
+      JudgementLabel(feedback: feedback, mode: mode, fontSize: fontSize,
+        timingPlacement: timingPlacement)
+        .scaleEffect(animation?.scale.value(at: elapsed) ?? 1)
+        .opacity(visible && mode != .off
+          ? min(1, max(0, animation?.alpha.value(at: elapsed) ?? 1)) : 0)
+    }
       .task(id: feedback) {
+        started = Date()
         visible = feedback != nil
         do {
-          try await Task.sleep(for: .milliseconds(650))
+          try await Task.sleep(for: .seconds(animation?.duration ?? 0.65))
           visible = false
         } catch { }
       }
@@ -320,16 +409,90 @@ private struct JudgementOverlay: View {
 private struct JudgementLabel: View {
   let feedback: JudgementFeedback?
   let mode: JudgementDisplayMode
+  var fontSize: CGFloat? = nil
+  var timingPlacement: String? = nil
 
   var body: some View {
-    VStack(spacing: 2) {
-      Text(feedback?.timingText(for: mode) ?? " ")
-        .font(.caption.bold())
+    JudgmentTimingLayout(placement: feedback?.timingPlacement(timingPlacement) ?? "top") {
       Text(feedback?.judgement.rawValue.uppercased() ?? "")
-        .font(.title2.bold().monospaced())
+        .font(fontSize.map { .system(size: $0, weight: .bold, design: .monospaced) }
+          ?? .title2.bold().monospaced())
+      Text(feedback?.timingText(for: mode) ?? "")
+        .font(fontSize.map { .system(size: $0 * 0.5, weight: .bold) } ?? .caption.bold())
     }
       .foregroundStyle(.white)
       .shadow(color: .black, radius: 3)
+  }
+}
+
+/// Keep the grade itself on the engine's anchor. Adding or moving the smaller
+/// timing label must not shift PERFECT/GREAT/GOOD between successive hits.
+private struct JudgmentTimingLayout: Layout {
+  let placement: String
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews,
+    cache: inout ()) -> CGSize {
+    subviews.first?.sizeThatFits(.unspecified) ?? .zero
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+    subviews: Subviews, cache: inout ()) {
+    guard subviews.count == 2 else { return }
+    subviews[0].place(at: CGPoint(x: bounds.midX, y: bounds.midY),
+      anchor: .center, proposal: .unspecified)
+    let point: CGPoint
+    let anchor: UnitPoint
+    switch placement {
+    case "bottom": point = CGPoint(x: bounds.midX, y: bounds.maxY + 2); anchor = .top
+    case "left": point = CGPoint(x: bounds.minX - 4, y: bounds.midY); anchor = .trailing
+    case "right": point = CGPoint(x: bounds.maxX + 4, y: bounds.midY); anchor = .leading
+    case "center": point = CGPoint(x: bounds.midX, y: bounds.midY); anchor = .center
+    default: point = CGPoint(x: bounds.midX, y: bounds.minY - 2); anchor = .bottom
+    }
+    subviews[1].place(at: point, anchor: anchor, proposal: .unspecified)
+  }
+}
+
+private struct EngineUIPlacement<Content: View>: View {
+  let element: EngineUIElement
+  let size: CGSize
+  @ViewBuilder let content: Content
+
+  var body: some View {
+    if element.isVisible {
+      EngineAnchorLayout(element: element, size: size) {
+        content
+          .font(.system(size: element.values[5] * size.height / 2,
+            weight: .bold, design: .rounded).monospacedDigit())
+          .fixedSize()
+          .frame(width: element.values[4] > 0
+            ? element.values[4] * size.height / 2 : nil,
+            alignment: element.values[8] < 0 ? .leading
+              : element.values[8] > 0 ? .trailing : .center)
+          .background(element.values[9] != 0 ? Color.black.opacity(0.4) : .clear)
+          .opacity(min(1, element.values[7]))
+          .rotationEffect(.radians(-element.values[6]),
+            anchor: UnitPoint(x: element.pivot.x, y: element.pivot.y))
+      }
+    }
+  }
+}
+
+private struct EngineAnchorLayout: Layout {
+  let element: EngineUIElement
+  let size: CGSize
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews,
+    cache: inout ()) -> CGSize { size }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+    subviews: Subviews, cache: inout ()) {
+    let anchor = element.anchor(in: size)
+    for subview in subviews {
+      subview.place(at: CGPoint(x: bounds.minX + anchor.x, y: bounds.minY + anchor.y),
+        anchor: UnitPoint(x: element.pivot.x, y: element.pivot.y),
+        proposal: .unspecified)
+    }
   }
 }
 
@@ -339,6 +502,63 @@ private struct JudgementLabel: View {
     JudgementLabel(feedback: JudgementFeedback(sequence: 1,
       judgement: .perfect, accuracy: -0.03, minimumError: 0.02), mode: .timing)
   }
+}
+
+#Preview("Engine Timing Positions", traits: .fixedLayout(width: 420, height: 280)) {
+  ZStack {
+    Color.black
+    VStack(spacing: 65) {
+      VStack(spacing: 20) {
+        Text("Project SEKAI · top").font(.caption)
+        JudgementLabel(feedback: JudgementFeedback(sequence: 1,
+          judgement: .perfect, accuracy: -0.03, minimumError: 0.02),
+          mode: .timing, timingPlacement: "top")
+      }
+      VStack(spacing: 20) {
+        Text("Love Live · bottom").font(.caption)
+        JudgementLabel(feedback: JudgementFeedback(sequence: 2,
+          judgement: .great, accuracy: 0.04, minimumError: 0.02),
+          mode: .timing, timingPlacement: "bottom")
+      }
+    }.foregroundStyle(.white)
+  }
+}
+
+#Preview("Engine HUD Layout", traits: .fixedLayout(width: 844, height: 390)) {
+  let memory = EngineMemory()
+  let placements = [
+    [-1.9, 0.85, 0, 1, 0.75, 0.15, 0, 1, -1, 0],
+    [-1.185, 0.815, 1, 1, 0, 0.08, 0, 1, 1, 0],
+    [1.9, 0.85, 1, 1, 0.75, 0.15, 0, 1, 1, 0],
+    [1.865, 0.815, 1, 1, 0, 0.08, 0, 1, 1, 0],
+    [0, -0.23, 0.5, 0.5, 0, 0.095, 0, 1, 0, 0],
+    [1.065, 0.175, 0.5, 0.5, 0, 0.28, 0, 1, 0, 0],
+    [1.065, 0.175, 0.5, -2.25, 0, 0.07, 0, 1, 0, 0]
+  ]
+  let _ = placements.enumerated().forEach { row, values in
+    values.enumerated().forEach { index, value in
+      memory.set(block: 1006, index: row * 10 + index, value: value)
+    }
+  }
+  ZStack(alignment: .topLeading) {
+    Color.black
+    ForEach(0..<7) { index in
+      let element = EngineUIElement(memory: memory, index: index)
+      EngineUIPlacement(element: element, size: CGSize(width: 844, height: 390)) {
+        if index == 0 || index == 2 {
+          Rectangle().fill(index == 0 ? Color.cyan.opacity(0.4) : Color.green.opacity(0.4))
+            .frame(width: 146.25, height: 29.25)
+        } else if index == 4 {
+          JudgementLabel(feedback: JudgementFeedback(sequence: 1,
+            judgement: .perfect, accuracy: -0.03, minimumError: 0.02),
+            mode: .timing, fontSize: 18.525)
+        } else {
+          Text(index == 1 ? "975,430" : index == 3 ? "1,000"
+            : index == 5 ? "123" : "COMBO")
+        }
+      }
+    }
+  }.foregroundStyle(.white)
 }
 
 private struct EnginePlayfield: UIViewRepresentable {
@@ -409,7 +629,7 @@ private final class EnginePlayfieldView: UIView {
   private func advanceFrame(present: Bool) {
     let sampleTime = model?.playbackTime ?? 0
     model?.engineFrame(size: bounds.size,
-      touches: touchPool.touches)
+      touches: touchPool.touches, safeAreaInsets: safeAreaInsets)
     touchPool.nextFrame(at: sampleTime)
     guard present else { return }
     if let metal, let runtime = model?.engineRuntime,

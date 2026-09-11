@@ -260,6 +260,12 @@ struct ResultDetailView: View {
         LabeledContent("Score", value: result.score.formatted())
         if let mode = result.scoreMode { LabeledContent("Score Mode", value: mode) }
         LabeledContent("Max Combo", value: result.maxCombo.formatted())
+        if let life = result.finalLife, let maximum = result.maximumLife {
+          LabeledContent("Life", value: "\(life.formatted()) / \(maximum.formatted())")
+        }
+        if let failed = result.failed {
+          LabeledContent("Clear", value: failed ? "Failed" : "Passed")
+        }
       }
       Section("Judgements") {
         LabeledContent("Perfect", value: result.perfect.formatted())

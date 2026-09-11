@@ -19,12 +19,14 @@ branding, or reverse-engineered implementation details.
 - Browse downloaded charts together in a cross-server offline catalog.
 - Update or delete all downloaded difficulties from song details.
 - Decode Sonolus v13 compressed engine and level data.
-- Run the LLSIF engine's lifecycle, input, skin, particle, and audio commands.
+- Run LLSIF and Project SEKAI engine lifecycle, input, skin, particle, and audio commands.
 - Render fullscreen GPU sprites with corner exit/restart controls and
   predecoded, pooled hit sounds.
 - Persist results with navigable score, combo, and judgement breakdowns.
-- Keep music playing through the results screen until the audio ends or you exit.
+- Wait for the music to end before showing results; preserve chart/audio lead-in.
 - Save per-engine note speed and count-up/count-down score display settings.
+- Use engine-defined score weights, life rules, HUD layout, judgment animation,
+  and Early/Late position and threshold. Store life/failure with new results.
 
 This is still a compatibility milestone, not a complete Sonolus implementation.
 
@@ -70,15 +72,29 @@ directory, and can also be configured there:
 
 ## Compatibility notes
 
-The app parses version 13 engine resources and includes a tested core
-interpreter for the operations used by the LLSIF engine, including drawing,
-judging, scheduled audio, particles, beat conversion, dynamic spawning, resource
-availability, and exports. Metal renders the engine's sprite geometry, with a
-software fallback; the simpler chart adapter remains for bundles without
-presentation resources. Scores still use the app's fixed judgement point values,
-not full engine-defined scoring/life rules. General third-party engine
-compatibility is not guaranteed. No music, charts, artwork, or third-party
-application code is bundled in this repository.
+The app parses version 13 engine resources. Shared runtime support includes
+direct/shifted/pointed memory operations, overlapping copies, bounded control
+flow, all 36 named easing functions, drawing, judging, scheduled/looped audio,
+particles, BPM/time-scale conversion, dynamic spawning, resource availability,
+streams, and exports. Metal renders engine sprite geometry with a software
+fallback. Engine score and life configuration is consumed after preprocessing.
+The simpler chart adapter remains for bundles without presentation resources.
+No music, charts, artwork, or third-party application code is bundled here.
+
+Before play, a callback-graph scan reports unsupported functions, including
+those in lazy successful-hit branches and dynamically spawnable archetypes.
+This is a capability check, not proof of semantic conformance or playability.
+
+General third-party engine compatibility is **not yet guaranteed**. Known gaps
+include stack functions, curved drawing/Paint/Print, full skin render-mode
+semantics, accuracy/error-heatmap HUD metrics, combo animations, timing-indicator
+styles beyond Early/Late text, and generic engine-option controls. The native
+exit/restart menu remains app-positioned. Unknown metric names display a dash,
+not a substituted score. Engines can also contain editor-only entities with no
+matching play archetype; these remain non-executing metadata. Resource
+optionality, callback access restrictions, and non-play modes need further
+conformance work. Do not infer arbitrary-engine support from the two tested
+engine families.
 
 Bounded compatibility checks on September 10, 2026 used one catalog page and one
 chart per candidate server. Both Project SEKAI and SIF Custom Charts returned
@@ -88,8 +104,16 @@ or audio verification. Project SEKAI's cached `next-sekai` chart now completes
 a 240-second no-touch simulation (1,210 inputs resolved, sampled at 10 Hz),
 with 70 inputs resolved in a separate first-ten-seconds run at 60 Hz. It uses
 the engine's compressed Float32 ROM, bounded streams, BPM lookup, easing, and
-moving particles. This does not yet establish full playability: successful-hit
-paths, looped effect audio, and visual/performance checks still need coverage.
+moving particles. Later cached checks covered looped audio and successful hold
+input separately; none of these simulations establish physical-device touch
+latency or audio alignment.
+
+The September 11 conformance pass uses synthetic operation/configuration tests
+and cached assets, with no catalog crawl. Both LLSIF (365 inputs) and SEKAI
+Hikari Hard 18 (563 inputs) resolve every input in 300-second no-touch runs.
+Engine HUD and top/bottom timing-label layouts have Xcode preview coverage.
+Independent review caught easing, pointer evaluation-order, and malformed HUD
+number defects; regression tests cover the fixes.
 
 Interpreter control flow follows the public [Sonolus function specifications](
 https://wiki.sonolus.com/engine-specs/functions/jump-loop), with lazy branches

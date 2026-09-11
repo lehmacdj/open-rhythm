@@ -1,4 +1,5 @@
 import AVFoundation
+import UIKit
 import Observation
 
 enum GameplayPhase: Equatable {
@@ -23,6 +24,15 @@ struct JudgementFeedback: Hashable {
   let judgement: NoteJudgement
   let accuracy: Double?
   var minimumError: Double? = nil
+
+  func timingPlacement(_ configured: String?) -> String {
+    switch configured {
+    case "leftRight": return (accuracy ?? 0) < 0 ? "left" : "right"
+    case "topBottom": return (accuracy ?? 0) < 0 ? "top" : "bottom"
+    case "left", "right", "top", "bottom", "center": return configured!
+    default: return "top"
+    }
+  }
 
   func timingText(for mode: JudgementDisplayMode) -> String? {
     guard mode == .timing, judgement != .miss,
@@ -91,7 +101,44 @@ final class GameplayModel {
   private var audioSeekCompleted = false
   private var preparedInputCount: Int?
   private var engineScore: EngineScoreSnapshot?
+  private(set) var engineLife: EngineLife?
+  private(set) var engineUI = [EngineUIElement]()
   private var musicHasEnded = false
+
+  func engineMetric(_ name: String) -> (text: String, fraction: Double)? {
+    func metric(_ value: Double, _ maximum: Double, percentage: Bool = false)
+      -> (String, Double) {
+      let fraction = maximum > 0 ? min(1, max(0, value / maximum)) : 0
+      return (percentage ? String(format: "%.2f%%", fraction * 100)
+        : value.formatted(.number.precision(.fractionLength(0))), fraction)
+    }
+    switch name {
+    case "arcade", "arcadePercentage":
+      return metric(Double(displayedScore), 1_000_000,
+        percentage: name == "arcadePercentage")
+    case "life":
+      guard let engineLife else { return nil }
+      return metric(engineLife.value, engineLife.maximum)
+    case "perfect", "perfectPercentage", "miss", "missPercentage":
+      let grade: NoteJudgement = name.hasPrefix("perfect") ? .perfect : .miss
+      return metric(Double(judgements[grade, default: 0]), Double(noteCount),
+        percentage: name.hasSuffix("Percentage"))
+    case "greatGoodMiss", "greatGoodMissPercentage":
+      let values = [NoteJudgement.great, .good, .miss].map {
+        metric(Double(judgements[$0, default: 0]), Double(noteCount),
+          percentage: name.hasSuffix("Percentage"))
+      }
+      return (values.map(\.0).joined(separator: " / "),
+        values.reduce(0) { $0 + $1.1 })
+    case "time":
+      let elapsed = max(0, currentTime)
+      guard let seconds = Int(exactly: elapsed.rounded(.towardZero)) else { return nil }
+      let duration = player?.currentItem?.duration.seconds ?? 0
+      return ("\(seconds / 60):" + String(format: "%02d", seconds % 60),
+        duration.isFinite && duration > 0 ? min(1, elapsed / duration) : 0)
+    default: return nil // Do not substitute arcade score for a different metric.
+    }
+  }
   private var judgementSequence = 0
   private(set) var latestJudgement: JudgementFeedback?
   @ObservationIgnored private(set) var noteTimings = [NoteTiming]()
@@ -199,6 +246,10 @@ final class GameplayModel {
     guard phase == .loading else { return }
     do {
       if let presentation = bundle.presentation {
+        let missing = try bundle.engine.unsupportedFunctions()
+        guard missing.isEmpty else {
+          throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
+        }
         presentationAssets = try EnginePresentationAssets(
           engine: bundle.engine, presentation: presentation
         )
@@ -249,6 +300,8 @@ final class GameplayModel {
     currentTime = clockMapping.initialChartTime
     engineRuntime = nil
     engineScore = nil
+    engineLife = nil
+    engineUI = []
     engineAspectRatio = nil
     nextMissIndex = 0
     hitNoteIDs.removeAll()
@@ -479,7 +532,8 @@ final class GameplayModel {
     finishIfReady()
   }
 
-  func engineFrame(size: CGSize, touches: [EngineTouch]) {
+  func engineFrame(size: CGSize, touches: [EngineTouch],
+    safeAreaInsets: UIEdgeInsets = .zero) {
     guard phase == .playing,
       size.width > 0, size.height > 0,
       let bundle = runtimeBundle, let assets = presentationAssets else { return }
@@ -497,8 +551,19 @@ final class GameplayModel {
             scoreMode: settings.scoreMode),
           aspectRatio: aspect, skinSpriteIDs: Set(assets.skin.keys),
           effectClipIDs: engineAudio?.clipIDs ?? [],
-          particleEffectIDs: Set(assets.particles.keys), rom: bundle.engineROM
+          particleEffectIDs: Set(assets.particles.keys), rom: bundle.engineROM,
+          uiConfiguration: assets.ui?.runtimeValues ?? Array(repeating: 1, count: 10),
+          safeArea: [
+            -aspect + Double(safeAreaInsets.left * 2 / size.height),
+            aspect - Double(safeAreaInsets.right * 2 / size.height),
+            -1 + Double(safeAreaInsets.bottom * 2 / size.height),
+            1 - Double(safeAreaInsets.top * 2 / size.height)
+          ]
         )
+        if let runtime = engineRuntime {
+          engineUI = (0..<8).map { EngineUIElement(memory: runtime.memory, index: $0) }
+          engineLife = runtime.life
+        }
       }
       if isStartingPlayback {
         startPreparedAudio()
@@ -508,6 +573,7 @@ final class GameplayModel {
       currentTime = playbackTime
       try runtime.update(at: currentTime, touches: touches)
       engineScore = runtime.arcadeScore?.snapshot
+      engineLife = runtime.life
       for judgment in runtime.judgments {
         let metadata = inputMetadata.indices.contains(judgment.entityIndex)
           ? inputMetadata[judgment.entityIndex] : (time: nil, type: "Unknown")
@@ -600,7 +666,8 @@ final class GameplayModel {
       miss: judgements[.miss, default: 0],
       noteTimings: noteTimings, duration: currentTime,
       level: level, server: resultServer, engineScore: engineScore?.earned,
-      scoreMode: scoreModeName
+      scoreMode: scoreModeName, finalLife: engineLife?.value,
+      maximumLife: engineLife?.maximum, failed: engineLife?.failed
     )
     resultSaveTask = Task {
       do {
