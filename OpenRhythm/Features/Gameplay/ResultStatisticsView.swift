@@ -29,7 +29,7 @@ struct ResultStatisticsSections: View {
       }
       Section("Early / Late Distribution") {
         TimingHistogram(stats: stats)
-        Text("\(stats.binWidthMS.formatted()) ms bins. Misses have no timing error and are excluded.")
+        Text("Continuous timing density; no bins. Misses and \(stats.excludedHoldTicks) intermediate hold ticks are excluded. Smoothing width: \(stats.bandwidthMS.formatted(.number.precision(.fractionLength(1)))) ms.")
           .font(.caption).foregroundStyle(.secondary)
       }
       Section("Timing Statistics") {
@@ -119,19 +119,17 @@ struct TimingHistogram: View {
   let stats: PlayStatistics
 
   private var errorRange: ClosedRange<Double> {
-    let upper = max(stats.timingLimitMS, stats.bins.map(\.upperMS).max() ?? 0)
-    return (-stats.timingLimitMS)...upper
+    (-stats.distributionLimitMS)...stats.distributionLimitMS
   }
 
   var body: some View {
     Chart {
-      ForEach(stats.bins) { bin in
-        RectangleMark(xStart: .value("From", bin.lowerMS),
-          xEnd: .value("To", bin.upperMS),
-          yStart: .value("Notes", bin.base),
-          yEnd: .value("Notes", bin.base + bin.count))
+      ForEach(stats.density) { point in
+        AreaMark(x: .value("Timing error", point.timingMS),
+          y: .value("Density", point.density), stacking: .standard)
           .foregroundStyle(by: .value("Judgement",
-            bin.judgement.rawValue.uppercased()))
+            point.judgement.rawValue.uppercased()))
+          .interpolationMethod(.linear)
       }
       RuleMark(x: .value("Perfect timing", 0))
         .foregroundStyle(.secondary.opacity(0.5))
@@ -141,11 +139,11 @@ struct TimingHistogram: View {
       range: Array(judgementColors.prefix(3)))
     .chartXScale(domain: errorRange)
     .chartXAxisLabel("Early ← Timing error (ms) → Late")
-    .chartYAxisLabel("Notes")
+    .chartYAxisLabel("Density (notes/ms)")
     .frame(height: 200)
     .accessibilityLabel("Timing error distribution, colored by judgement")
     .overlay {
-      if stats.timingsMS.isEmpty {
+      if stats.distributionCount == 0 {
         Text("No timed hits").foregroundStyle(.secondary)
       }
     }

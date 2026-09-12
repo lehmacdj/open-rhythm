@@ -2,6 +2,77 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testContinuousDensityCentersZeroAndExcludesOnlyHoldTicks() throws {
+    let samples = (0..<100).map {
+      NoteTiming(id: $0, songTime: Double($0), noteType: "TransientHiddenTickNote",
+        judgement: .perfect, accuracy: 0)
+    } + [NoteTiming(id: 100, songTime: 101, noteType: "TapNote",
+      judgement: .perfect, accuracy: 0)]
+    let stats = PlayStatistics(samples: samples)
+    XCTAssertEqual(stats.distributionCount, 1)
+    XCTAssertEqual(stats.excludedHoldTicks, 100)
+    XCTAssertEqual(stats.samples.count, 101, "Scatterplot and score keep hold ticks")
+    let peak = try XCTUnwrap(stats.density.max { $0.density < $1.density })
+    XCTAssertEqual(peak.timingMS, 0)
+    for index in 0..<stats.density.count {
+      XCTAssertEqual(stats.density[index].density,
+        stats.density[stats.density.count - 1 - index].density, accuracy: 1e-10)
+    }
+    XCTAssertTrue(PlayStatistics(samples: samples,
+      noteType: "TransientHiddenTickNote").density.isEmpty)
+    let flick = NoteTiming(id: 1, songTime: 1, noteType: "SlideEndFlickNote",
+      judgement: .perfect, accuracy: 0)
+    XCTAssertEqual(PlayStatistics(samples: [flick]).distributionCount, 1)
+  }
+
+  func testDensityRetainsJudgementMassAndTranslationWithoutBins() {
+    let samples = (0..<40).map {
+      NoteTiming(id: $0, songTime: Double($0), noteType: "TapNote",
+        judgement: $0 < 30 ? .perfect : .great, accuracy: Double($0 - 20) * 0.001)
+    }
+    let stats = PlayStatistics(samples: samples)
+    for (grade, expected) in [(NoteJudgement.perfect, 30.0), (.great, 10)] {
+      let curve = stats.density.filter { $0.judgement == grade }
+      let integral = zip(curve, curve.dropFirst()).reduce(0.0) {
+        $0 + ($1.0.density + $1.1.density) / 2 * ($1.1.timingMS - $1.0.timingMS)
+      }
+      XCTAssertEqual(integral, expected, accuracy: 0.03)
+    }
+  }
+
+  func testDensityDoesNotLoseNarrowOutlierPeaks() {
+    let samples = (0..<100).map {
+      NoteTiming(id: $0, songTime: Double($0), noteType: "TapNote",
+        judgement: .perfect, accuracy: $0.isMultiple(of: 2) ? -0.0001 : 0.0001)
+    } + [NoteTiming(id: 100, songTime: 100, noteType: "TapNote",
+      judgement: .great, accuracy: 1)]
+    let curve = PlayStatistics(samples: samples).density.filter { $0.judgement == .great }
+    XCTAssertGreaterThan(curve.first { $0.timingMS == 1000 }?.density ?? 0, 0)
+    let integral = zip(curve, curve.dropFirst()).reduce(0.0) {
+      $0 + ($1.0.density + $1.1.density) / 2 * ($1.1.timingMS - $1.0.timingMS)
+    }
+    XCTAssertEqual(integral, 1, accuracy: 0.03)
+  }
+
+  func testDensityPreservesInteriorSupportZerosAndBoundedRenderingWork() {
+    let samples = (0..<100).map {
+      NoteTiming(id: $0, songTime: Double($0), noteType: "TapNote",
+        judgement: .perfect, accuracy: $0.isMultiple(of: 2) ? -0.0001 : 0.0001)
+    } + [NoteTiming(id: 100, songTime: 100, noteType: "TapNote",
+      judgement: .great, accuracy: 0.03034),
+      NoteTiming(id: 101, songTime: 101, noteType: "TapNote",
+        judgement: .good, accuracy: 1)]
+    let curve = PlayStatistics(samples: samples).density.filter { $0.judgement == .great }
+    let integral = zip(curve, curve.dropFirst()).reduce(0.0) {
+      $0 + ($1.0.density + $1.1.density) / 2 * ($1.1.timingMS - $1.0.timingMS)
+    }
+    XCTAssertEqual(integral, 1, accuracy: 0.03)
+    let many = (0..<10000).map {
+      NoteTiming(id: $0, songTime: Double($0), noteType: "TapNote",
+        judgement: .perfect, accuracy: Double($0) / 50000)
+    }
+    XCTAssertLessThan(PlayStatistics(samples: many).density.count, 1024)
+  }
   func testEngineLifeAndFailureSurviveHistoryRoundTrip() throws {
     var play = result(levelID: "life", perfect: 9)
     play.finalLife = 0
