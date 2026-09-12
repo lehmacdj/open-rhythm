@@ -45,6 +45,8 @@ struct OfflineCatalogView: View {
   @State private var model = OfflineCatalogModel()
   @State private var query = ""
   @State private var showsFilters = false
+  @State private var deleting = Set<String>()
+  @State private var deletionError: String?
 
   var body: some View {
     List {
@@ -69,9 +71,22 @@ struct OfflineCatalogView: View {
         } label: {
           SongRow(song: song)
         }
+        .swipeActions(edge: .trailing) {
+          if !playedSongs {
+            Button("Delete", systemImage: "trash", role: .destructive) {
+              deleteDownload(song)
+            }
+            .disabled(deleting.contains(song.id))
+          }
+        }
       }
     }
     .navigationTitle(playedSongs ? "Played Songs" : "Offline")
+    .alert("Couldn’t Delete Download", isPresented: Binding(
+      get: { deletionError != nil },
+      set: { if !$0 { deletionError = nil } })) {
+      Button("OK", role: .cancel) { deletionError = nil }
+    } message: { Text(deletionError ?? "") }
     .searchable(text: queryBinding, prompt: "Title or artist")
     .toolbar {
       ToolbarItem(placement: .topBarTrailing) {
@@ -92,6 +107,22 @@ struct OfflineCatalogView: View {
         try Task.checkCancellation()
         model.filter.query = query
       } catch { }
+    }
+  }
+
+  private func deleteDownload(_ song: CatalogSong) {
+    guard deleting.insert(song.id).inserted else { return }
+    Task {
+      defer { deleting.remove(song.id) }
+      do {
+        try await OfflineStore.shared.remove(song: song)
+        await model.refresh(playedSongs: false)
+      } catch {
+        deletionError = error.localizedDescription
+        // A filesystem failure can follow a partial deletion. Reload the
+        // surviving difficulties instead of leaving stale rows on screen.
+        await model.refresh(playedSongs: false)
+      }
     }
   }
 
