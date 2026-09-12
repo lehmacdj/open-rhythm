@@ -127,7 +127,7 @@ struct SongDetailView: View {
       if let selectedLevel {
         Section("Protocol Information") {
           LabeledContent("Level", value: selectedLevel.name)
-          LabeledContent("Rating", value: String(selectedLevel.rating))
+          LabeledContent("Rating", value: selectedLevel.rating.formatted())
           LabeledContent("Server", value: song.server.name)
         }
       }
@@ -193,7 +193,7 @@ struct SongDetailView: View {
   }
 
   private func levelLabel(_ level: SonolusLevelItem) -> String {
-    let base = "\(level.difficulty.displayName) · \(level.rating)"
+    let base = "\(level.difficulty.displayName) · \(level.rating.formatted())"
     let matching = song.variants.filter {
       $0.difficulty == level.difficulty && $0.rating == level.rating
     }
@@ -253,7 +253,7 @@ struct ResultDetailView: View {
       Section("Song") {
         Text(result.title).font(.headline)
         LabeledContent("Difficulty",
-          value: "\(result.difficulty.displayName) \(result.rating)")
+          value: "\(result.difficulty.displayName) \(result.rating.formatted())")
         LabeledContent("Played", value: result.playedAt.formatted())
       }
       Section("Result") {

@@ -3,6 +3,96 @@ import XCTest
 
 final class OfflineStoreTests: XCTestCase {
   @MainActor
+  func testPaginationModeChangeDoesNotSilentlyAppendAnUnrelatedPage() async throws {
+    StubURLProtocol.handler = { request in
+      let hasCursor = request.url!.absoluteString.contains("cursor=")
+      return Data((hasCursor ? #"{"pageCount":3,"items":[]}"#
+        : #"{"pageCount":-1,"cursor":"next","items":[]}"#).utf8)
+    }
+    defer { StubURLProtocol.handler = nil }
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    await model.refresh()
+    await model.prefetchNextPages()
+    await model.loadNextPage()
+    XCTAssertEqual(model.loadedPageCount, 1)
+    XCTAssertTrue(model.hasMorePages)
+    XCTAssertNotNil(model.errorMessage)
+  }
+  @MainActor
+  func testCursorPaginationPrefetchesTwoPagesAndUsesQuickSearch() async throws {
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+      XCTAssertEqual(query.first { $0.name == "type" }?.value, "quick")
+      let cursor = query.first { $0.name == "cursor" }?.value
+      switch cursor {
+      case nil: return Data(#"{"pageCount":-1,"cursor":"opaque +/?","items":[]}"#.utf8)
+      case "opaque +/?": return Data(#"{"pageCount":-1,"cursor":"last","items":[]}"#.utf8)
+      case "last": return Data(#"{"pageCount":-1,"items":[]}"#.utf8)
+      default: throw SonolusClientError.invalidResponse
+      }
+    }
+    defer { StubURLProtocol.handler = nil }
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    model.query = "song"
+    await model.refresh()
+    XCTAssertTrue(model.hasMorePages)
+    await model.prefetchNextPages()
+    XCTAssertEqual(recorder.urls.count, 3)
+    await model.loadNextPage()
+    XCTAssertTrue(model.hasMorePages)
+    await model.loadNextPage()
+    XCTAssertFalse(model.hasMorePages)
+    XCTAssertEqual(model.loadedPageCount, 3)
+    XCTAssertEqual(recorder.urls.count, 3, "Use buffered cursor pages")
+    await model.refresh(forceReload: true)
+    XCTAssertEqual(URLComponents(url: recorder.urls.last!,
+      resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "cursor" }, nil)
+  }
+
+  func testDifficultyDiscoveryFollowsCursorsAndRejectsCycles() async throws {
+    let levels = (1...2).map { index in
+      SonolusLevelItem(name: "chart-\(index)", source: nil, version: 1,
+        rating: Double(index) + 0.9, title: LocalizedText("Song"),
+        artists: LocalizedText("Artist"), author: "Fixture", tags: [],
+        cover: ResourceLocator(hash: nil, url: nil),
+        bgm: ResourceLocator(hash: nil, url: "music"),
+        data: ResourceLocator(hash: nil, url: "chart-\(index)"))
+    }
+    let server = ServerDescriptor.defaults[0]
+    let song = CatalogBuilder.group(levels: [levels[0]], server: server)[0]
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let client = SonolusClient(session: session)
+    let first = try JSONEncoder().encode(SonolusLevelList(pageCount: -1,
+      items: [levels[0]], cursor: "next"))
+    let last = try JSONEncoder().encode(SonolusLevelList(pageCount: -1,
+      items: [levels[1]]))
+    StubURLProtocol.handler = { request in
+      request.url!.absoluteString.contains("cursor=") ? last : first
+    }
+    let complete = try await client.completeSong(song)
+    XCTAssertEqual(complete.variants.map(\.rating), [1.9, 2.9])
+    StubURLProtocol.handler = { _ in first }
+    do {
+      _ = try await client.completeSong(song)
+      XCTFail("A cursor loop must not report a partial download as complete")
+    } catch { }
+  }
+  @MainActor
   func testAppendingPagesPreservesRowsUntilExplicitSortChange() async throws {
     let pages = try ["Zulu", "Alpha"].map { title in
       try JSONEncoder().encode(SonolusLevelList(pageCount: 2, items: [
@@ -199,7 +289,7 @@ final class OfflineStoreTests: XCTestCase {
       baseURL: URL(string: "https://server.example")!)
     let levels = (0..<2).map { index in
       SonolusLevelItem(name: "level-\(index)", source: nil, version: 1,
-        rating: index + 1, title: LocalizedText("Song"),
+        rating: Double(index + 1), title: LocalizedText("Song"),
         artists: LocalizedText("Artist"), author: "Fixture", tags: [],
         cover: ResourceLocator(hash: nil, url: nil),
         bgm: ResourceLocator(hash: nil, url: "https://assets.example/data"),
@@ -335,7 +425,7 @@ final class OfflineStoreTests: XCTestCase {
       url: "https://assets.example/data")
     let levels = ["#EASY", "#EXPERT"].enumerated().map { index, difficulty in
       SonolusLevelItem(name: "level-\(index)", source: nil, version: 1,
-        rating: index + 1, title: LocalizedText("Song"),
+        rating: Double(index + 1), title: LocalizedText("Song"),
         artists: LocalizedText("Artist"), author: "Fixture",
         tags: [SonolusTag(title: difficulty)],
         cover: ResourceLocator(hash: nil, url: nil), bgm: locator, data: locator)

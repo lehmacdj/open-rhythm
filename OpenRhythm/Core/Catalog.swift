@@ -44,7 +44,7 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
     Set(variants.map(\.difficulty))
   }
 
-  var ratings: ClosedRange<Int> {
+  var ratings: ClosedRange<Double> {
     let values = variants.map(\.rating)
     return (values.min() ?? 0)...(values.max() ?? 0)
   }
@@ -119,8 +119,8 @@ struct CatalogFilter: Codable, Equatable, Sendable {
   var query = ""
   var difficulties = Set(Difficulty.allCases)
   var sort = CatalogSort.title
-  var minimumRating: Int? = nil
-  var maximumRating: Int? = nil
+  var minimumRating: Double? = nil
+  var maximumRating: Double? = nil
 
   // Search is deliberately session-only.
   private enum CodingKeys: String, CodingKey {

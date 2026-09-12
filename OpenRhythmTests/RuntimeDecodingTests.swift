@@ -3,6 +3,35 @@ import UIKit
 @testable import OpenRhythm
 
 final class RuntimeDecodingTests: XCTestCase {
+  func testFractionalCallbackOrderIsNotRestrictedToKnownEngineFixtures() throws {
+    let callback = try JSONDecoder().decode(EngineCallback.self,
+      from: Data(#"{"index":0,"order":-0.5}"#.utf8))
+    XCTAssertEqual(callback.order, -0.5)
+  }
+
+  func testOptionalProtocolFieldsAreNotMadeMandatoryByFixtures() throws {
+    let tag = try JSONDecoder().decode(SonolusTag.self,
+      from: Data(#"{"icon":"heart"}"#.utf8))
+    XCTAssertNil(tag.title)
+    XCTAssertEqual(tag.icon, "heart")
+    XCTAssertEqual(Difficulty(tags: [tag]), .unknown)
+    let bucket = try JSONDecoder().decode(EngineBucket.self,
+      from: Data(#"{"sprites":[]}"#.utf8))
+    XCTAssertNil(bucket.unit)
+  }
+  func testExecuteZeroEvaluatesAllChildrenInOrderAndReturnsZero() throws {
+    let memory = EngineMemory()
+    let nodes = [EngineDataNode(value: 2000), EngineDataNode(value: 0),
+      EngineDataNode(value: 3), EngineDataNode(value: 4),
+      EngineDataNode(function: "Set", arguments: [0, 1, 2]),
+      EngineDataNode(function: "SetMultiply", arguments: [0, 1, 3]),
+      EngineDataNode(function: "Execute0", arguments: [4, 5]),
+      EngineDataNode(function: "Execute0", arguments: [])]
+    let interpreter = EngineInterpreter(nodes: nodes, memory: memory)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 6), 0)
+    XCTAssertEqual(memory.value(block: 2000, index: 0), 12)
+    XCTAssertEqual(try interpreter.execute(nodeAt: 7), 0)
+  }
   private func evaluate(_ name: String, _ values: [Double],
     memory: EngineMemory = EngineMemory(), limit: Int = 1_000_000) throws -> Double {
     let nodes = values.map { EngineDataNode(value: $0) }

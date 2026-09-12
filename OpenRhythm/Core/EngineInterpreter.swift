@@ -138,6 +138,7 @@ final class EngineInterpreter {
     case `easeInCubic` = "EaseInCubic"
     case `easeOutCubic` = "EaseOutCubic"
     case `execute` = "Execute"
+    case execute0 = "Execute0"
     case `floor` = "Floor"
     case `get` = "Get"
     case `getShifted` = "GetShifted"
@@ -358,6 +359,9 @@ final class EngineInterpreter {
         result = try evaluate(argument)
       }
       return result
+    case .execute0:
+      for argument in arguments { _ = try evaluate(argument) }
+      return 0
     case .`floor`: return try unary(arguments, floor)
     case .`get`:
       let address = try memoryAddress(arguments, function: function)

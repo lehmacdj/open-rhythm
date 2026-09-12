@@ -20,7 +20,7 @@ struct EngineParticleDefinition: Decodable, Sendable {
 
 struct EngineCallback: Decodable, Sendable {
   let index: Int
-  let order: Int?
+  let order: Double?
 }
 
 struct EngineArchetypeImport: Decodable, Sendable {
@@ -97,7 +97,7 @@ struct EngineBucketSprite: Decodable, Sendable {
 
 struct EngineBucket: Decodable, Sendable {
   let sprites: [EngineBucketSprite]
-  let unit: String
+  let unit: String?
 }
 
 struct EnginePlayData: Decodable, Sendable {

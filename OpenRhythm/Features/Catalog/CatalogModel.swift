@@ -13,6 +13,8 @@ final class CatalogModel {
   private var firstPageFetchedAt: Date?
   private var reloadPages = false
   private var prefetchedPages = [Int: SonolusLevelList]()
+  private var pageCursors = [Int: String]()
+  private var usesCursors = false
 
   private(set) var songs = [CatalogSong]()
   var query = ""
@@ -72,6 +74,8 @@ final class CatalogModel {
     activeQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
     reloadPages = forceReload
     prefetchedPages.removeAll()
+    pageCursors.removeAll()
+    usesCursors = false
     songs.removeAll()
     visibleSongs.removeAll()
     loadedPageCount = 0
@@ -118,19 +122,26 @@ final class CatalogModel {
     let currentGeneration = generation
     let query = activeQuery
     let start = loadedPageCount
-    let count = min(2, totalPageCount - start)
+    let count = usesCursors ? 2 : min(2, totalPageCount - start)
+    var cursor = pageCursors[start]
     for page in start..<(start + count) {
       guard !Task.isCancelled, generation == currentGeneration,
-        page < totalPageCount else { return }
-      if let buffered = prefetchedPages[page], isFresh(buffered.fetchedAt) { continue }
+        usesCursors ? cursor != nil : page < totalPageCount else { return }
+      if let buffered = prefetchedPages[page], isFresh(buffered.fetchedAt) {
+        cursor = buffered.cursor
+        continue
+      }
       do {
         let response = try await client.levels(on: server, page: page,
-          query: query, forceReload: reloadPages)
+          query: query, cursor: cursor, forceReload: reloadPages)
         // A list append cancels its old prefetch task. Keep a completed
         // response in the same generation so forced refreshes don't fetch
         // that page twice when the replacement task starts.
         guard generation == currentGeneration else { return }
+        guard (response.pageCount < 0) == usesCursors else { return }
         if page >= loadedPageCount { prefetchedPages[page] = response }
+        if usesCursors, response.cursor == cursor { return }
+        cursor = response.cursor
       } catch { return } // A visible load reports errors and offers retry.
     }
   }
@@ -156,10 +167,18 @@ final class CatalogModel {
         response = buffered
       } else {
         response = try await client.levels(on: server, page: page,
-          query: requestedQuery, forceReload: forceReload || reloadPages)
+          query: requestedQuery, cursor: pageCursors[page],
+          forceReload: forceReload || reloadPages)
       }
       try Task.checkCancellation()
       guard currentGeneration == generation else { return }
+      if page > 0, (response.pageCount < 0) != usesCursors {
+        throw SonolusClientError.invalidResponse
+      }
+      if response.pageCount < 0, let next = response.cursor,
+        pageCursors.values.contains(next) {
+        throw SonolusClientError.invalidResponse
+      }
       let previous = songs
       let server = server
       let grouped = await Task.detached(priority: .userInitiated) {
@@ -179,7 +198,13 @@ final class CatalogModel {
       updateVisibleSongs(preservingOrder: page > 0)
       needsMoreMatches = !previousIDs.isEmpty
         && Set(visibleSongs.map(\.id)).subtracting(previousIDs).isEmpty
-      totalPageCount = max(0, response.pageCount)
+      usesCursors = response.pageCount < 0
+      if usesCursors {
+        pageCursors[page + 1] = response.cursor
+        totalPageCount = page + (response.cursor == nil ? 1 : 2)
+      } else {
+        totalPageCount = max(0, response.pageCount)
+      }
       loadedPageCount = page + 1
     } catch is CancellationError {
       return

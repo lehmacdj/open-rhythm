@@ -20,14 +20,15 @@ struct ResourceLocator: Codable, Hashable, Sendable {
 }
 
 struct SonolusTag: Codable, Hashable, Sendable {
-  let title: String
+  let title: String?
+  var icon: String? = nil
 }
 
 struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
   let name: String
   let source: String?
   let version: Int
-  let rating: Int
+  let rating: Double
   let title: LocalizedText
   let artists: LocalizedText
   let author: String
@@ -77,8 +78,9 @@ struct SonolusEngineIdentity: Codable, Hashable, Sendable {
 struct SonolusLevelList: Codable, Sendable {
   let pageCount: Int
   let items: [SonolusLevelItem]
+  var cursor: String? = nil
   var fetchedAt = Date()
-  private enum CodingKeys: String, CodingKey { case pageCount, items }
+  private enum CodingKeys: String, CodingKey { case pageCount, items, cursor }
 }
 
 enum Difficulty: String, CaseIterable, Codable, Hashable, Sendable {
@@ -87,10 +89,11 @@ enum Difficulty: String, CaseIterable, Codable, Hashable, Sendable {
   case hard
   case expert
   case master
+  case pro
   case unknown
 
   init(tags: [SonolusTag]) {
-    let value = tags.map(\.title).joined(separator: " ").lowercased()
+    let value = tags.compactMap(\.title).joined(separator: " ").lowercased()
     self = Self.allCases.first {
       $0 != .unknown && value.contains($0.rawValue)
     } ?? .unknown
@@ -107,7 +110,8 @@ enum Difficulty: String, CaseIterable, Codable, Hashable, Sendable {
     case .hard: 2
     case .expert: 3
     case .master: 4
-    case .unknown: 5
+    case .pro: 5
+    case .unknown: 6
     }
   }
 }

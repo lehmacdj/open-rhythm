@@ -29,6 +29,7 @@ actor SonolusClient {
     on server: ServerDescriptor,
     page: Int,
     query: String = "",
+    cursor: String? = nil,
     locale: Locale = .current,
     forceReload: Bool = false
   ) async throws -> SonolusLevelList {
@@ -42,9 +43,10 @@ actor SonolusClient {
       URLQueryItem(name: "page", value: String(page))
     ]
     if !query.isEmpty {
-      queryItems.append(URLQueryItem(name: "type", value: "advanced"))
+      queryItems.append(URLQueryItem(name: "type", value: "quick"))
       queryItems.append(URLQueryItem(name: "keywords", value: query))
     }
+    if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
     components?.queryItems = queryItems
 
     guard let url = components?.url else {
@@ -105,7 +107,23 @@ actor SonolusClient {
       throw RuntimeBundleError.missingResource("a bounded song difficulty search")
     }
     var items = firstPage.items
-    if firstPage.pageCount > 1 {
+    if firstPage.pageCount < 0 {
+      var cursor = firstPage.cursor
+      var seen = Set<String>()
+      var page = 1
+      while let next = cursor {
+        guard page < 20, seen.insert(next).inserted else {
+          throw RuntimeBundleError.missingResource("a bounded song difficulty search")
+        }
+        try Task.checkCancellation()
+        let response = try await levels(on: server, page: page, query: query,
+          cursor: next, forceReload: forceReload)
+        guard response.pageCount < 0 else { throw SonolusClientError.invalidResponse }
+        items += response.items
+        cursor = response.cursor
+        page += 1
+      }
+    } else if firstPage.pageCount > 1 {
       for page in 1..<firstPage.pageCount {
         try Task.checkCancellation()
         items += try await levels(on: server, page: page, query: query,

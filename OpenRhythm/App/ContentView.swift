@@ -83,7 +83,7 @@ struct PlayHistoryView: View {
         } label: {
           VStack(alignment: .leading, spacing: 4) {
             Text(result.title)
-            Text("\(result.difficulty.displayName) \(result.rating) · \(result.score.formatted())")
+            Text("\(result.difficulty.displayName) \(result.rating.formatted()) · \(result.score.formatted())")
               .font(.subheadline)
             Text(result.playedAt.formatted(date: .abbreviated, time: .shortened))
               .font(.caption).foregroundStyle(.secondary)

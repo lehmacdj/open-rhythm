@@ -2,6 +2,35 @@ import XCTest
 @testable import OpenRhythm
 
 final class CatalogTests: XCTestCase {
+  @MainActor
+  func testFractionalRatingsDecodeFilterAndPersistWithoutTruncation() throws {
+    let json = #"""
+      {"pageCount":1,"items":[{"name":"nanaon-pro","version":1,
+      "rating":4.9,"title":"Song","artists":"Artist","author":"Fixture",
+      "tags":[{"title":"#PRO"}],"cover":{},"bgm":{"url":"music.mp3"},"data":{}}]}
+      """#
+    let page = try JSONDecoder().decode(SonolusLevelList.self, from: Data(json.utf8))
+    XCTAssertEqual(page.items[0].rating, 4.9)
+    XCTAssertEqual(page.items[0].difficulty, .pro)
+    let variants = [page.items[0], level(name: "hard", rating: 2.9, difficulty: "#HARD"),
+      level(name: "expert", rating: 3.4, difficulty: "#EXPERT")]
+    var song = CatalogBuilder.group(levels: [page.items[0]], server: server)[0]
+    // Helpers use different BGM URLs; explicitly compose this one-song fixture.
+    song = CatalogSong(id: song.id, server: server, title: song.title,
+      artists: song.artists, coverURL: nil, variants: variants, levelOrigins: [])
+    var filter = CatalogFilter()
+    filter.minimumRating = 2.9
+    filter.maximumRating = 3.4
+    XCTAssertEqual(filter.matchingVariants(in: song).map(\.rating), [2.9, 3.4])
+    let suite = "FractionalRatings.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    UserPreferences(defaults: defaults).save(filter, for: "nanaon")
+    XCTAssertEqual(UserPreferences(defaults: defaults).filter(for: "nanaon"), filter)
+    let integerJSON = json.replacingOccurrences(of: "4.9", with: "18")
+    XCTAssertEqual(try JSONDecoder().decode(SonolusLevelList.self,
+      from: Data(integerJSON.utf8)).items[0].rating, 18)
+  }
   func testRemovedEngineScoreChoiceFallsBackToCurrentDefault() throws {
     let option = try JSONDecoder().decode(EngineConfiguration.Option.self,
       from: Data(#"{"def":1,"name":"Score Mode","values":["Flat","Combo"]}"#.utf8))
@@ -171,7 +200,7 @@ final class CatalogTests: XCTestCase {
 
   private func level(
     name: String,
-    rating: Int,
+    rating: Double,
     difficulty: String,
     title: LocalizedText? = nil,
     source: String? = "https://sonolus.milkbun.org/llsif"

@@ -140,7 +140,7 @@ struct CatalogFilterPanel: View {
   let engines: [CatalogEngineChoice]
   @Binding var selectedEngineKey: String
   let songs: [CatalogSong]
-  @State private var initialRatingLimit = 1
+  @State private var initialRatingLimit = 1.0
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
@@ -158,7 +158,7 @@ struct CatalogFilterPanel: View {
         }
         Section("Difficulty Rating") {
           DifficultyRangeSlider(minimum: $filter.minimumRating,
-            maximum: $filter.maximumRating, limit: ratingLimit)
+            maximum: $filter.maximumRating, limit: ratingLimit, step: ratingStep)
         }
         Section("Chart Types") {
           ForEach(Difficulty.allCases, id: \.self) { difficulty in
@@ -182,10 +182,17 @@ struct CatalogFilterPanel: View {
     }
   }
 
-  private var ratingLimit: Int {
+  private var ratingStep: Double {
+    let ratings = songs.filter { $0.engineKey == selectedEngineKey }
+      .flatMap(\.variants).map(\.rating)
+      + [filter.minimumRating, filter.maximumRating].compactMap { $0 }
+    return ratings.contains { $0.rounded() != $0 } ? 0.1 : 1
+  }
+
+  private var ratingLimit: Double {
     let largest = songs.filter { $0.engineKey == selectedEngineKey }
       .flatMap(\.variants).map(\.rating).max() ?? 10
-    let estimated = Int(ceil(min(1_000_000, max(1, Double(largest) * 1.2))))
+    let estimated = ceil(min(1_000_000, max(1, largest * 1.2)))
     return max(estimated, initialRatingLimit)
   }
 
@@ -208,20 +215,21 @@ struct CatalogFilterPanel: View {
 }
 
 private struct DifficultyRangeSlider: View {
-  @Binding var minimum: Int?
-  @Binding var maximum: Int?
-  let limit: Int
+  @Binding var minimum: Double?
+  @Binding var maximum: Double?
+  let limit: Double
+  let step: Double
   @State private var draggingLower: Bool?
 
-  private var lower: Int { min(limit, max(0, minimum ?? 0)) }
-  private var upper: Int { min(limit, max(lower, maximum ?? limit)) }
+  private var lower: Double { min(limit, max(0, minimum ?? 0)) }
+  private var upper: Double { min(limit, max(lower, maximum ?? limit)) }
 
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        Text("\(lower)")
+        Text(lower.formatted())
         Spacer()
-        Text(maximum.map(String.init) ?? "Any")
+        Text(maximum.map { $0.formatted() } ?? "Any")
       }
       .monospacedDigit()
       GeometryReader { geometry in
@@ -242,7 +250,8 @@ private struct DifficultyRangeSlider: View {
           if draggingLower == nil {
             draggingLower = value.startLocation.x <= (left + right) / 2
           }
-          let rating = Int(((value.location.x - 22) / width * Double(limit)).rounded())
+          let raw = (value.location.x - 22) / width * limit
+          let rating = (raw / step).rounded() * step
           set(rating, lower: draggingLower == true)
         }.onEnded { _ in draggingLower = nil })
       }
@@ -257,15 +266,17 @@ private struct DifficultyRangeSlider: View {
       .frame(width: 44, height: 44)
       .accessibilityElement()
       .accessibilityLabel(isLower ? "Minimum Difficulty" : "Maximum Difficulty")
-      .accessibilityValue(String(isLower ? lower : upper))
+      .accessibilityValue((isLower ? lower : upper).formatted())
       .accessibilityAdjustableAction { direction in
         let current = isLower ? lower : upper
-        if direction == .increment { set(current + 1, lower: isLower) }
-        if direction == .decrement { set(current - 1, lower: isLower) }
+        if direction == .increment { set(current + step, lower: isLower) }
+        if direction == .decrement { set(current - step, lower: isLower) }
       }
   }
 
-  private func set(_ value: Int, lower isLower: Bool) {
+  private func set(_ value: Double, lower isLower: Bool) {
+    // Normalize decimal steps so a 2.9 upper bound includes a 2.9 chart.
+    let value = (value * 10).rounded() / 10
     if isLower {
       let bounded = min(upper, max(0, value))
       minimum = bounded == 0 ? nil : bounded
@@ -301,7 +312,7 @@ struct SongRow: View {
 
   private var difficultySummary: String {
     song.variants
-      .map { "\($0.difficulty.displayName) \($0.rating)" }
+      .map { "\($0.difficulty.displayName) \($0.rating.formatted())" }
       .joined(separator: " · ")
   }
 }

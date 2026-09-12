@@ -5,7 +5,7 @@ struct PlayResult: Codable, Identifiable, Sendable {
   let levelID: String
   let title: String
   let difficulty: Difficulty
-  let rating: Int
+  let rating: Double
   let playedAt: Date
   let maxCombo: Int
   let perfect: Int
