@@ -86,7 +86,7 @@ those in lazy successful-hit branches and dynamically spawnable archetypes.
 This is a capability check, not proof of semantic conformance or playability.
 
 General third-party engine compatibility is **not yet guaranteed**. Known gaps
-include stack functions, curved drawing, full skin render-mode
+include stack functions, full skin render-mode
 semantics, accuracy/error-heatmap HUD metrics, combo animations, timing-indicator
 styles beyond Early/Late text, and generic engine-option controls. The native
 exit/restart menu remains app-positioned. Unknown metric names display a dash,
@@ -135,6 +135,16 @@ The exact advanced runtime is retained and audio seeks to the corresponding
 media time; streamed intros remain untrimmed when silence cannot be verified.
 Cached Hikari starts at chart -2 seconds instead of -9, with first hold inputs
 judged Perfect on two runs; physical-device audio/touch alignment is unverified.
+
+The curved-drawing pass implements all six DrawCurved variants using the
+[public Bézier/control-coordinate contract](
+https://wiki.sonolus.com/engine-specs/functions/draw-curved-lr). Synthetic tests
+cover UV slices, asymmetric and corner-coupled transforms, alpha, reflections,
+and actual folded overlap. A bounded software triangle rasterizer fixes shared
+edge seams without suppressing genuine overlap; whole mesh frames share its
+allocation and work budgets. Cached Hikari rendered 360 Metal frames plus three
+software frames at 360×200, then resolved 563/563 inputs without touches.
+These offscreen probes are not physical-device performance measurements.
 
 Interpreter control flow follows the public [Sonolus function specifications](
 https://wiki.sonolus.com/engine-specs/functions/jump-loop), with lazy branches

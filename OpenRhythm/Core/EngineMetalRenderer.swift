@@ -191,7 +191,8 @@ final class EngineMetalRenderer {
 
   static func vertices(for sprite: EngineRenderSprite, size: CGSize) -> [Vertex] {
     guard size.width > 0, size.height > 0, sprite.alpha.isFinite,
-      sprite.alpha > 0, sprite.points.count == 4 else { return [] }
+      sprite.alpha > 0, sprite.points.count == 4, sprite.matrix.count == 16,
+      sprite.textureRegion.isValid else { return [] }
     let quad = sprite.points.map {
       EngineGeometry.screenPoint($0, matrix: sprite.matrix, size: size)
     }
@@ -203,6 +204,7 @@ final class EngineMetalRenderer {
     // of allocating weights and recomputing four corners for every cell.
     let stride = divisions + 1
     let alpha = Float(min(1, sprite.alpha))
+    let region = sprite.textureRegion
     var grid = [Vertex]()
     grid.reserveCapacity(stride * stride)
     for row in 0...divisions {
@@ -217,7 +219,8 @@ final class EngineMetalRenderer {
         let y = leftY + (rightY - leftY) * u
         grid.append(Vertex(position: SIMD2(Float(x / size.width * 2 - 1),
           Float(1 - y / size.height * 2)),
-          uv: SIMD2(Float(u), Float(1 - v)), alpha: alpha))
+          uv: SIMD2(Float(region.minU + u * (region.maxU - region.minU)),
+            Float(1 - region.minV - v * (region.maxV - region.minV))), alpha: alpha))
       }
     }
     guard grid.allSatisfy({

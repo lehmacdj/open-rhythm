@@ -690,6 +690,12 @@ final class GameplayModel {
     saveResult()
   }
 
+  func renderingFailed(_ error: Error) {
+    guard phase == .playing else { return }
+    stop()
+    phase = .failed(error.localizedDescription)
+  }
+
   private func record(_ judgement: NoteJudgement, accuracy: Double? = nil,
     at time: Double? = nil, noteType: String = "Unknown") {
     let validAccuracy = judgement != .miss && accuracy.map {

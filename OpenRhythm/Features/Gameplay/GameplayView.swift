@@ -653,8 +653,12 @@ private final class EnginePlayfieldView: UIView {
       let context = UIGraphicsGetCurrentContext() else { return }
     UIColor.black.setFill()
     context.fill(bounds)
-    EngineRenderer.draw(host: runtime.host, assets: assets,
-      context: context, size: bounds.size)
+    do {
+      try EngineRenderer.draw(host: runtime.host, assets: assets,
+        context: context, size: bounds.size)
+    } catch {
+      model?.renderingFailed(error)
+    }
   }
 
   private func receive(_ touches: Set<UITouch>, started: Bool, ended: Bool) {

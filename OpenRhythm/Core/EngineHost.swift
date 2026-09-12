@@ -5,6 +5,29 @@ struct EnginePoint: Equatable, Sendable {
   let y: Double
 }
 
+struct EngineCurve: Equatable, Sendable {
+  enum Edge: String, Sendable {
+    case bottom = "B", top = "T", left = "L", right = "R"
+    case bottomTop = "BT", leftRight = "LR"
+  }
+  let edge: Edge
+  let segments: Int
+  let controls: [EnginePoint]
+}
+
+struct EngineTextureRegion: Equatable, Sendable {
+  let minU: Double
+  let minV: Double
+  let maxU: Double
+  let maxV: Double
+  static let full = Self(minU: 0, minV: 0, maxU: 1, maxV: 1)
+  var isValid: Bool {
+    minU.isFinite && minV.isFinite && maxU.isFinite && maxV.isFinite
+      && minU >= 0 && minV >= 0 && maxU <= 1 && maxV <= 1
+      && minU < maxU && minV < maxV
+  }
+}
+
 struct EngineDrawCommand: Equatable, Sendable {
   let spriteID: Int
   // Bottom-left, top-left, top-right, bottom-right, in engine coordinates.
@@ -13,6 +36,7 @@ struct EngineDrawCommand: Equatable, Sendable {
   var z: Double { zValues[0] }
   let alpha: Double
   let transform: [Double]
+  var curve: EngineCurve? = nil
 }
 
 struct EngineAudioCommand: Equatable, Sendable {
@@ -64,6 +88,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     "AddLifeScheduled", "BeatToStartingBeat", "BeatToStartingTime",
     "BeatToTime", "BeatToBPM", "Judge", "JudgeSimple", "HasSkinSprite",
     "HasParticleEffect", "HasEffectClip", "Draw", "Play", "PlayScheduled",
+    "DrawCurvedB", "DrawCurvedT", "DrawCurvedL", "DrawCurvedR",
+    "DrawCurvedBT", "DrawCurvedLR",
     "PlayLooped", "PlayLoopedScheduled", "StopLooped", "StopLoopedScheduled",
     "SpawnParticleEffect", "DestroyParticleEffect", "MoveParticleEffect",
     "StreamSet", "StreamHas", "StreamGetValue", "StreamGetNextKey",
@@ -95,6 +121,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private var entityIndex: Int?
   private var exportCount = 0
   private let commandLimit = 16_384
+  private var drawSegmentCount = 0
 
   init(
     memory: EngineMemory,
@@ -127,6 +154,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     self.time = time
     loopStops = loopStops.filter { $0.value > time }
     draws.removeAll(keepingCapacity: true)
+    drawSegmentCount = 0
     particles = particles.filter {
       $0.value.isLooped || time < $0.value.startTime + $0.value.duration
     }
@@ -219,18 +247,39 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       default: effectClipIDs
       }
       return available.contains(id) ? 1 : 0
-    case "Draw":
-      guard (11...14).contains(a.count), a.allSatisfy(\.isFinite) else {
+    case "Draw", "DrawCurvedB", "DrawCurvedT", "DrawCurvedL", "DrawCurvedR",
+      "DrawCurvedBT", "DrawCurvedLR":
+      let edge = EngineCurve.Edge(rawValue: String(function.dropFirst(10)))
+      let paired = edge == .bottomTop || edge == .leftRight
+      let required = edge == nil ? 11 : paired ? 16 : 14
+      guard (required...(required + 3)).contains(a.count),
+        a.allSatisfy(\.isFinite) else {
         throw EngineInterpreterError.invalidArguments(function)
       }
+      let curve: EngineCurve?
+      if let edge {
+        let segments = try identifier(a[11], function: function)
+        guard (1...1024).contains(segments) else {
+          throw EngineInterpreterError.invalidArguments("\(function) segments")
+        }
+        curve = EngineCurve(edge: edge, segments: segments,
+          controls: stride(from: 12, to: required, by: 2).map {
+            EnginePoint(x: a[$0], y: a[$0 + 1])
+          })
+      } else { curve = nil }
       let id = try identifier(a[0], function: function)
       guard skinSpriteIDs.contains(id) else { return 0 }
-      try checkLimit(draws.count)
+      let segments = curve?.segments ?? 1
+      guard drawSegmentCount <= commandLimit - segments else {
+        throw EngineInterpreterError.operationLimitExceeded
+      }
+      drawSegmentCount += segments
       draws.append(EngineDrawCommand(
         spriteID: id, points: points(a),
-        zValues: [a[9]] + Array(a.dropFirst(11))
-          + Array(repeating: 0, count: 14 - a.count),
-        alpha: min(1, max(0, a[10])), transform: transform(block: 1003)
+        zValues: [a[9]] + Array(a.dropFirst(required))
+          + Array(repeating: 0, count: required + 3 - a.count),
+        alpha: min(1, max(0, a[10])), transform: transform(block: 1003),
+        curve: curve
       ))
       return 0
     case "Play", "PlayScheduled":

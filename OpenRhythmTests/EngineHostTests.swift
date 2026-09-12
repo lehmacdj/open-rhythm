@@ -4,6 +4,277 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  @MainActor
+  func testCurvesApplyCornerCoupledSkinTransformBeforeControlInterpolation() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[{"id":7,"name":"note"}]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let png = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).pngData {
+      UIColor.white.setFill(); $0.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8),
+        "skinData": Data(#"""
+          {"width":1,"height":1,"interpolation":false,"sprites":[
+            {"name":"note","x":0,"y":0,"w":1,"h":1,"transform":{
+              "x1":{"x1":0.5,"x3":0.5},"y1":{"y1":0.5,"y3":0.5},
+              "x2":{"x2":1},"y2":{"y2":1},
+              "x3":{"x3":1},"y3":{"y3":1},
+              "x4":{"x4":1},"y4":{"y4":1}}}]}
+          """#.utf8),
+        "skinTexture": png,
+        "particleData": Data(#"""
+          {"width":1,"height":1,"interpolation":false,"sprites":[],"effects":[]}
+          """#.utf8),
+        "particleTexture": png
+      ]))
+    let host = makeHost()
+    host.memory.set(block: 1003, index: 3, value: 0.1)
+    _ = try host.call(function: "DrawCurvedLR", arguments:
+      [7] + quad + [0, 1, 2, 0, 0, 1, 0])
+    host.memory.set(block: 1003, index: 3, value: 0.9)
+    let sprites = EngineRenderer.sprites(host: host, assets: assets)
+    XCTAssertEqual(sprites.count, 2)
+    XCTAssertEqual(sprites[0].points[0], EnginePoint(x: 0, y: 0))
+    XCTAssertEqual(sprites[0].points[1], EnginePoint(x: -0.125, y: 0.375))
+    XCTAssertEqual(sprites[0].points[2], EnginePoint(x: 1, y: 0))
+    XCTAssertEqual(sprites[0].matrix[3], 0.1)
+    let vertices = EngineMetalRenderer.vertices(for: sprites[0],
+      size: CGSize(width: 200, height: 100))
+    XCTAssertEqual(try XCTUnwrap(vertices.first).position.x, 0.05, accuracy: 1e-6)
+  }
+  @MainActor
+  func testOrdinaryWarpedDrawsShareOneSoftwareFrameBudget() throws {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1),
+      format: format).image {
+      UIColor.white.setFill(); $0.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    let sprite = EngineRenderSprite(image: image,
+      points: [EnginePoint(x: -1, y: -1), EnginePoint(x: -0.5, y: 1),
+        EnginePoint(x: 0.5, y: 1), EnginePoint(x: 1, y: -1)],
+      matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+      alpha: 0.5, interpolation: false)
+    let context = try XCTUnwrap(CGContext(data: nil, width: 40, height: 40,
+      bitsPerComponent: 8, bytesPerRow: 160, space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    XCTAssertNoThrow(try EngineRenderer.draw([sprite], context: context,
+      size: CGSize(width: 40, height: 40), pixelBudget: 10000))
+    XCTAssertThrowsError(try EngineRenderer.draw(Array(repeating: sprite, count: 64),
+      context: context, size: CGSize(width: 40, height: 40), pixelBudget: 10000))
+  }
+
+  @MainActor
+  func testSoftwareCoveragePreservesTranslucentReflectedAndFoldedCurves() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("Metal is unavailable on this test device")
+    }
+    let metal = try EngineMetalRenderer(device: device)
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm, width: 40, height: 40, mipmapped: false)
+    descriptor.storageMode = .shared
+    descriptor.usage = [.renderTarget]
+    let target = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4),
+      format: format).image {
+      UIColor.red.withAlphaComponent(0.5).setFill()
+      $0.fill(CGRect(x: 0, y: 0, width: 2, height: 4))
+    }
+    let blue = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1),
+      format: format).image {
+      UIColor.blue.setFill(); $0.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    let identity: [Double] = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+    let reflected: [Double] = [-1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+    let full = [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
+      EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)]
+    let folded = [EnginePoint(x: -0.8, y: -0.8), EnginePoint(x: -0.8, y: 0.2),
+      EnginePoint(x: 0.8, y: 0.2), EnginePoint(x: 0.8, y: -0.8)]
+    for (folding, linear) in [(false, false), (false, true), (true, false), (true, true)] {
+      let patches = EngineGeometry.curvedPatches(folding ? folded : full,
+        curve: EngineCurve(edge: .leftRight, segments: 8,
+          controls: [EnginePoint(x: -1, y: folding ? 3 : 0),
+            EnginePoint(x: 1, y: folding ? 3 : 0)]))
+      let background = EngineRenderSprite(image: blue, points: full,
+        matrix: identity, alpha: 1, interpolation: false)
+      let sprites = [background] + patches.map {
+        EngineRenderSprite(image: image, points: $0.points, matrix: reflected,
+          alpha: 0.5, interpolation: linear, textureRegion: $0.region)
+      }
+      let cpu = try EngineSoftwareRenderer.render(sprites, size: CGSize(width: 40, height: 40))
+      let bytes = try XCTUnwrap(cpu.dataProvider?.data) as Data
+      let command = try XCTUnwrap(metal.queue.makeCommandBuffer())
+      try metal.encode(sprites, size: CGSize(width: 40, height: 40),
+        target: target, commandBuffer: command)
+      command.commit(); command.waitUntilCompleted()
+      XCTAssertNil(command.error)
+      var gpu = [UInt8](repeating: 0, count: 40 * 40 * 4)
+      target.getBytes(&gpu, bytesPerRow: 160,
+        from: MTLRegionMake2D(0, 0, 40, 40), mipmapLevel: 0)
+      for y in 12..<28 {
+        for x in [14, 19, 20, 26] {
+          let offset = (y * 40 + x) * 4
+          for channel in 0..<3 {
+            XCTAssertEqual(Double(bytes[offset + channel]),
+              Double(gpu[offset + 2 - channel]), accuracy: 1)
+          }
+        }
+      }
+      let red = bytes[(13 * 40 + 26) * 4]
+      XCTAssertEqual(Double(red), folding ? 112 : 64, accuracy: 1,
+        "Real folded overlap blends twice; shared triangle edges blend once")
+      XCTAssertEqual(bytes[(13 * 40 + 14) * 4 + 2], 255,
+        "Transparent texels must leave the earlier blue sprite intact")
+      XCTAssertThrowsError(try EngineSoftwareRenderer.render(sprites,
+        size: CGSize(width: 40, height: 40), pixelBudget: 1))
+      XCTAssertThrowsError(try EngineSoftwareRenderer.render(sprites,
+        size: CGSize(width: 1e100, height: 40)))
+      let scaled = try EngineSoftwareRenderer.render(sprites,
+        size: CGSize(width: 40, height: 40), scale: 2)
+      XCTAssertEqual(scaled.width, 80)
+    }
+  }
+  func testEveryCurvedDrawRetainsControlsDepthAndSharesAFrameBudget() throws {
+    let host = makeHost()
+    let base: [Double] = [7, -1, -1, -1, 1, 1, 1, 1, -1, 4, 0.5]
+    for suffix in ["B", "T", "L", "R", "BT", "LR"] {
+      try host.beginFrame(at: 0)
+      let controls: [Double] = suffix.count == 2 ? [0, 0, 0.5, 0.5] : [0, 0]
+      let function = "DrawCurved" + suffix
+      XCTAssertTrue(CommandEngineRuntimeHost.supportedFunctions.contains(function))
+      _ = try host.call(function: function, arguments: base + [8] + controls + [5, 6, 7])
+      let draw = try XCTUnwrap(host.draws.first)
+      XCTAssertEqual(draw.curve?.edge.rawValue, suffix)
+      XCTAssertEqual(draw.curve?.segments, 8)
+      XCTAssertEqual(draw.curve?.controls.count, suffix.count)
+      XCTAssertEqual(draw.zValues, [4, 5, 6, 7])
+      XCTAssertEqual(draw.alpha, 0.5)
+      XCTAssertThrowsError(try host.call(function: function, arguments: base + [0] + controls))
+      XCTAssertThrowsError(try host.call(function: function, arguments: base + [0.5] + controls))
+      XCTAssertThrowsError(try host.call(function: function, arguments: base + [1025] + controls))
+    }
+    try host.beginFrame(at: 0)
+    for _ in 0..<16 {
+      _ = try host.call(function: "DrawCurvedB", arguments: base + [1024, 0, 0])
+    }
+    XCTAssertThrowsError(try host.call(function: "Draw", arguments: base))
+    try host.beginFrame(at: 1)
+    XCTAssertNoThrow(try host.call(function: "Draw", arguments: base))
+  }
+
+  func testCurvedEdgesUseBilinearControlsAndContiguousTextureSlices() throws {
+    let quad = [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
+      EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)]
+    for edge in [EngineCurve.Edge.bottom, .top, .left, .right, .bottomTop, .leftRight] {
+      let paired = edge == .bottomTop || edge == .leftRight
+      let patches = EngineGeometry.curvedPatches(quad,
+        curve: EngineCurve(edge: edge, segments: 2,
+          controls: Array(repeating: EnginePoint(x: 0, y: 0), count: paired ? 2 : 1)))
+      XCTAssertEqual(patches.count, 2)
+      let vertical = [.left, .right, .leftRight].contains(edge)
+      if vertical {
+        XCTAssertEqual(patches[0].points[1], patches[1].points[0])
+        XCTAssertEqual(patches[0].points[2], patches[1].points[3])
+        XCTAssertEqual(patches[0].region.maxV, patches[1].region.minV)
+        XCTAssertEqual(patches[0].points[1].x, edge == .right ? -1 : -0.5)
+        XCTAssertEqual(patches[0].points[2].x, edge == .left ? 1 : 0.5)
+      } else {
+        XCTAssertEqual(patches[0].points[3], patches[1].points[0])
+        XCTAssertEqual(patches[0].points[2], patches[1].points[1])
+        XCTAssertEqual(patches[0].region.maxU, patches[1].region.minU)
+        XCTAssertEqual(patches[0].points[3].y, edge == .top ? -1 : -0.5)
+        XCTAssertEqual(patches[0].points[2].y, edge == .bottom ? 1 : 0.5)
+      }
+      XCTAssertEqual(patches[0].points[0], quad[0])
+      XCTAssertEqual(patches[1].points[2], quad[2])
+      XCTAssertTrue(patches.allSatisfy { $0.region.isValid })
+    }
+    let warped = [EnginePoint(x: -2, y: -1), EnginePoint(x: -1, y: 2),
+      EnginePoint(x: 3, y: 1), EnginePoint(x: 1, y: -2)]
+    let patches = EngineGeometry.curvedPatches(warped,
+      curve: EngineCurve(edge: .left, segments: 2,
+        controls: [EnginePoint(x: 0.5, y: -0.5)]))
+    // Bilinear weights at (u=.75,v=.25): 3/16,1/16,3/16,9/16.
+    let control = EnginePoint(x: 0.6875, y: -1)
+    XCTAssertEqual(patches[0].points[1].x,
+      0.25 * warped[0].x + 0.5 * control.x + 0.25 * warped[1].x)
+    XCTAssertEqual(patches[0].points[1].y,
+      0.25 * warped[0].y + 0.5 * control.y + 0.25 * warped[1].y)
+  }
+
+  @MainActor
+  func testCurveTextureSlicesRenderOnceAndWithoutAlphaSeamsInBothBackends() throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("Metal is unavailable on this test device")
+    }
+    let metal = try EngineMetalRenderer(device: device)
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm, width: 40, height: 40, mipmapped: false)
+    descriptor.storageMode = .shared
+    descriptor.usage = [.renderTarget]
+    let target = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4),
+      format: format).image {
+      for (rect, color) in [(CGRect(x: 0, y: 0, width: 2, height: 2), UIColor.red),
+        (CGRect(x: 2, y: 0, width: 2, height: 2), .green),
+        (CGRect(x: 0, y: 2, width: 2, height: 2), .blue),
+        (CGRect(x: 2, y: 2, width: 2, height: 2), .white)] {
+        color.setFill(); $0.fill(rect)
+      }
+    }
+    let quad = [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
+      EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)]
+    let matrix: [Double] = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+    for edge in [EngineCurve.Edge.leftRight, .bottomTop] {
+      let patches = EngineGeometry.curvedPatches(quad, curve: EngineCurve(
+        edge: edge, segments: 8, controls: [EnginePoint(x: 0, y: 0),
+          EnginePoint(x: 0, y: 0)]))
+      let sprites = patches.map {
+        EngineRenderSprite(image: image, points: $0.points, matrix: matrix,
+          alpha: 0.5, interpolation: false, textureRegion: $0.region)
+      }
+      let command = try XCTUnwrap(metal.queue.makeCommandBuffer())
+      try metal.encode(sprites, size: CGSize(width: 40, height: 40),
+        target: target, commandBuffer: command)
+      command.commit(); command.waitUntilCompleted()
+      XCTAssertNil(command.error)
+      var gpu = [UInt8](repeating: 0, count: 40 * 40 * 4)
+      target.getBytes(&gpu, bytesPerRow: 160,
+        from: MTLRegionMake2D(0, 0, 40, 40), mipmapLevel: 0)
+      let output = UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40),
+        format: format).image { output in
+        output.cgContext.interpolationQuality = .none
+        try! EngineRenderer.draw(sprites, context: output.cgContext,
+          size: CGSize(width: 40, height: 40))
+      }
+      var cpu = [UInt8](repeating: 0, count: 40 * 40 * 4)
+      let context = try XCTUnwrap(CGContext(data: &cpu, width: 40, height: 40,
+        bitsPerComponent: 8, bytesPerRow: 160, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(try XCTUnwrap(output.cgImage),
+        in: CGRect(x: 0, y: 0, width: 40, height: 40))
+      for (x, y, rgb) in [(14, 14, [128, 0, 0]), (26, 14, [0, 128, 0]),
+        (14, 26, [0, 0, 128]), (26, 26, [128, 128, 128])] {
+        let pixel = (y * 40 + x) * 4
+        for channel in 0..<3 {
+          XCTAssertEqual(Double(gpu[pixel + 2 - channel]), Double(rgb[channel]), accuracy: 1)
+          XCTAssertEqual(Double(cpu[pixel + channel]), Double(rgb[channel]), accuracy: 1)
+        }
+      }
+      for y in 12..<28 {
+        for x in 18..<22 {
+          XCTAssertEqual(Double(cpu[(y * 40 + x) * 4 + 3]), 128, accuracy: 1)
+        }
+      }
+    }
+  }
   func testStartupDetectsInputEvenWhenItDespawnsInTheActivationFrame() throws {
     let builder = RuntimeNodeBuilder()
     let now = builder.call("Get", [builder.value(1001), builder.value(0)])
@@ -959,7 +1230,7 @@ final class EngineHostTests: XCTestCase {
     }
     let tinted = EnginePresentationAssets.tinted(original, color: .red)
     let rendered = UIGraphicsImageRenderer(size: size, format: format).image {
-      EngineRenderer.drawImage(tinted,
+      try! EngineRenderer.drawImage(tinted,
         points: [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
           EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)],
         matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
@@ -1009,7 +1280,7 @@ final class EngineHostTests: XCTestCase {
     let output = UIGraphicsImageRenderer(size: CGSize(width: 20, height: 20),
       format: format).image { output in
       output.cgContext.interpolationQuality = .none
-      EngineRenderer.drawImage(image,
+      try! EngineRenderer.drawImage(image,
         points: [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
           EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)],
         matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],

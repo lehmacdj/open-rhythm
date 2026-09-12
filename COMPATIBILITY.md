@@ -24,11 +24,18 @@ integration probes, including successful inputs and restart/buffering paths.
   queued pre-resume events, startup seek bounds, and surviving audio commands.
 - Timing plots with exact-zero taps, automatic hold ticks, interior/outer
   outliers, multiple judgments, and large result payloads.
+- All six DrawCurved edge variants, bilinear control coordinates, paired
+  controls, corner-coupled skin transforms, captured runtime transforms,
+  optional depth keys, and contiguous texture slices. Commands accept 1–1024
+  integer segments within a shared 16,384-segment frame budget.
+- Metal/software pixel comparisons for nearest/linear sampling, translucent
+  textures and draw alpha, mirrored geometry, transparent texels, and genuine
+  folded overlap. Software mesh frames share one texture cache and work budget;
+  ordinary all-affine frames retain their Core Graphics fast path.
 
 ## Remaining checks, including engines we have not sampled
 
-- Stack layout/control semantics; curved drawing geometry, UV subdivisions,
-  transforms, alpha, and bounded tessellation; all skin render modes.
+- Stack layout/control semantics and all skin render modes.
 - Optional/missing resources, callback-specific memory access and defaults,
   dynamically spawned inputs, generic options, and unknown enum values.
 - Accuracy/error-heatmap HUD metrics, combo animations, alternate timing

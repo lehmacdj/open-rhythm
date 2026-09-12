@@ -227,6 +227,52 @@ enum EngineGeometry {
     }
     return values
   }
+
+  static func curvedPatches(_ quad: [EnginePoint], curve: EngineCurve)
+    -> [(points: [EnginePoint], region: EngineTextureRegion)] {
+    guard quad.count == 4, (1...1024).contains(curve.segments),
+      curve.controls.count == (curve.edge == .bottomTop || curve.edge == .leftRight ? 2 : 1)
+    else { return [] }
+    let controls = curve.controls.map {
+      bilinear(quad, u: ($0.x + 1) / 2, v: ($0.y + 1) / 2)
+    }
+    let vertical = [.left, .right, .leftRight].contains(curve.edge)
+    let firstControl: EnginePoint? = [.left, .bottom, .leftRight, .bottomTop]
+      .contains(curve.edge) ? controls[0] : nil
+    let secondControl: EnginePoint? = [.right, .top].contains(curve.edge)
+      ? controls[0] : controls.count == 2 ? controls[1] : nil
+    func edge(_ start: EnginePoint, _ end: EnginePoint,
+      control: EnginePoint?, at t: Double) -> EnginePoint {
+      guard let control else {
+        return EnginePoint(x: start.x * (1 - t) + end.x * t,
+          y: start.y * (1 - t) + end.y * t)
+      }
+      let a = (1 - t) * (1 - t)
+      let b = 2 * t * (1 - t)
+      let c = t * t
+      return EnginePoint(x: a * start.x + b * control.x + c * end.x,
+        y: a * start.y + b * control.y + c * end.y)
+    }
+    // Compute shared boundaries once to prevent tiny cracks between strips.
+    let first = (0...curve.segments).map {
+      edge(quad[0], quad[vertical ? 1 : 3], control: firstControl,
+        at: Double($0) / Double(curve.segments))
+    }
+    let second = (0...curve.segments).map {
+      edge(quad[vertical ? 3 : 1], quad[2], control: secondControl,
+        at: Double($0) / Double(curve.segments))
+    }
+    return (0..<curve.segments).map { index in
+      let lower = Double(index) / Double(curve.segments)
+      let upper = Double(index + 1) / Double(curve.segments)
+      if vertical {
+        return ([first[index], first[index + 1], second[index + 1], second[index]],
+          EngineTextureRegion(minU: 0, minV: lower, maxU: 1, maxV: upper))
+      }
+      return ([first[index], second[index], second[index + 1], first[index + 1]],
+        EngineTextureRegion(minU: lower, minV: 0, maxU: upper, maxV: 1))
+    }
+  }
 }
 
 enum EngineEasing {
@@ -435,6 +481,7 @@ struct EngineRenderSprite {
   let matrix: [Double]
   let alpha: Double
   let interpolation: Bool
+  var textureRegion: EngineTextureRegion = .full
 }
 
 @MainActor
@@ -442,11 +489,33 @@ enum EngineRenderer {
   static func draw(
     host: CommandEngineRuntimeHost, assets: EnginePresentationAssets,
     context: CGContext, size: CGSize
-  ) {
-    for sprite in sprites(host: host, assets: assets) {
+  ) throws {
+    try draw(sprites(host: host, assets: assets), context: context, size: size)
+  }
+
+  static func draw(_ sprites: [EngineRenderSprite], context: CGContext,
+    size: CGSize, pixelBudget: Int = 64_000_000) throws {
+    if sprites.contains(where: { sprite in
+      guard sprite.textureRegion == .full, sprite.points.count == 4,
+        sprite.matrix.count == 16 else { return true }
+      let quad = sprite.points.map {
+        EngineGeometry.screenPoint($0, matrix: sprite.matrix, size: size)
+      }
+      let warp = hypot(quad[0].x + quad[2].x - quad[1].x - quad[3].x,
+        quad[0].y + quad[2].y - quad[1].y - quad[3].y)
+      return !warp.isFinite || warp >= 0.01
+    }) {
+      // One frame, one scratch surface/cache/budget, including ordinary Draw
+      // connectors. Otherwise each warped sprite would reset the limits.
+      try EngineSoftwareRenderer.draw(sprites, context: context, size: size,
+        pixelBudget: pixelBudget)
+      return
+    }
+    for sprite in sprites {
       context.interpolationQuality = sprite.interpolation ? .medium : .none
-      drawImage(sprite.image, points: sprite.points, matrix: sprite.matrix,
-        alpha: sprite.alpha, context: context, size: size)
+      try drawImage(sprite.image, points: sprite.points, matrix: sprite.matrix,
+        alpha: sprite.alpha, context: context, size: size,
+        textureRegion: sprite.textureRegion)
     }
   }
 
@@ -459,11 +528,19 @@ enum EngineRenderer {
       return $0.element.zValues.lexicographicallyPrecedes($1.element.zValues)
     }
     for (_, command) in ordered {
-      guard let sprite = assets.skin[command.spriteID] else { continue }
+      guard command.alpha > 0, let sprite = assets.skin[command.spriteID] else { continue }
       let points = EngineGeometry.transformed(command.points, by: sprite.transform)
-      result.append(EngineRenderSprite(image: sprite.image, points: points,
-        matrix: command.transform, alpha: command.alpha,
-        interpolation: assets.interpolation))
+      if let curve = command.curve {
+        for patch in EngineGeometry.curvedPatches(points, curve: curve) {
+          result.append(EngineRenderSprite(image: sprite.image, points: patch.points,
+            matrix: command.transform, alpha: command.alpha,
+            interpolation: assets.interpolation, textureRegion: patch.region))
+        }
+      } else {
+        result.append(EngineRenderSprite(image: sprite.image, points: points,
+          matrix: command.transform, alpha: command.alpha,
+          interpolation: assets.interpolation))
+      }
     }
     for instance in host.particles.values.sorted(by: { $0.id < $1.id }) {
       guard let effect = assets.particles[instance.effectID] else { continue }
@@ -522,51 +599,35 @@ enum EngineRenderer {
 
   static func drawImage(
     _ image: UIImage, points: [EnginePoint], matrix: [Double],
-    alpha: Double, context: CGContext, size: CGSize
-  ) {
-    guard alpha.isFinite, alpha > 0 else { return }
+    alpha: Double, context: CGContext, size: CGSize,
+    textureRegion: EngineTextureRegion = .full
+  ) throws {
+    guard alpha.isFinite, alpha > 0, points.count == 4, matrix.count == 16,
+      textureRegion.isValid else { return }
     let quad = points.map { EngineGeometry.screenPoint($0, matrix: matrix, size: size) }
     guard quad.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return }
     let error = hypot(quad[0].x + quad[2].x - quad[1].x - quad[3].x,
       quad[0].y + quad[2].y - quad[1].y - quad[3].y)
     guard error.isFinite else { return }
+    if error >= 0.01 || textureRegion != .full {
+      try EngineSoftwareRenderer.draw([EngineRenderSprite(image: image,
+        points: points, matrix: matrix, alpha: alpha,
+        interpolation: context.interpolationQuality != .none,
+        textureRegion: textureRegion)], context: context, size: size)
+      return
+    }
+    // Retain Quartz's efficient affine path for ordinary rectangular sprites.
     context.saveGState()
     defer { context.restoreGState() }
     context.setAlpha(min(1, alpha))
-    // Most sprites are parallelograms; avoid tessellating that common case.
-    if error < 0.01 {
-      context.concatenate(CGAffineTransform(
-        a: (quad[2].x - quad[1].x) / image.size.width,
-        b: (quad[2].y - quad[1].y) / image.size.width,
-        c: (quad[0].x - quad[1].x) / image.size.height,
-        d: (quad[0].y - quad[1].y) / image.size.height,
-        tx: quad[1].x, ty: quad[1].y
-      ))
-      drawUpright(image, context: context)
-      return
-    }
-    // A bilinear patch's triangle error is at most warp / (4 * divisions²).
-    // Target 0.25 points, capped at the previous 8x8 quality/budget. Mildly
-    // warped hold connectors do not need 128 clipped image draws each frame.
-    let divisions = tessellationDivisions(warp: error)
-    let converted = quad.map { EnginePoint(x: $0.x, y: $0.y) }
-    context.setShouldAntialias(false)
-    for row in 0..<divisions {
-      for column in 0..<divisions {
-        let uv = [(column,row), (column,row+1), (column+1,row+1), (column+1,row)]
-          .map { (Double($0.0) / Double(divisions), Double($0.1) / Double(divisions)) }
-        let destination = uv.map {
-          EngineGeometry.bilinear(converted, u: $0.0, v: $0.1)
-        }.map { CGPoint(x: $0.x, y: $0.y) }
-        let source = uv.map {
-          CGPoint(x: $0.0 * image.size.width, y: (1 - $0.1) * image.size.height)
-        }
-        for indices in [[0,1,2], [0,2,3]] {
-          triangle(image, source: indices.map { source[$0] },
-            destination: indices.map { destination[$0] }, context: context)
-        }
-      }
-    }
+    context.concatenate(CGAffineTransform(
+      a: (quad[2].x - quad[1].x) / image.size.width,
+      b: (quad[2].y - quad[1].y) / image.size.width,
+      c: (quad[0].x - quad[1].x) / image.size.height,
+      d: (quad[0].y - quad[1].y) / image.size.height,
+      tx: quad[1].x, ty: quad[1].y
+    ))
+    drawUpright(image, context: context)
   }
 
   static func tessellationDivisions(warp: Double) -> Int {
@@ -574,22 +635,6 @@ enum EngineRenderer {
     return max(1, Int(ceil(sqrt(min(64, max(0, warp))))))
   }
 
-  private static func triangle(
-    _ image: UIImage, source: [CGPoint], destination: [CGPoint], context: CGContext
-  ) {
-    func basis(_ p: [CGPoint]) -> CGAffineTransform {
-      CGAffineTransform(a: p[1].x-p[0].x, b: p[1].y-p[0].y,
-        c: p[2].x-p[0].x, d: p[2].y-p[0].y, tx: p[0].x, ty: p[0].y)
-    }
-    context.saveGState()
-    defer { context.restoreGState() }
-    context.beginPath()
-    context.addLines(between: destination)
-    context.closePath()
-    context.clip()
-    context.concatenate(basis(source).inverted().concatenating(basis(destination)))
-    drawUpright(image, context: context)
-  }
 
   private static func drawUpright(_ image: UIImage, context: CGContext) {
     guard let cgImage = image.cgImage else { return }
