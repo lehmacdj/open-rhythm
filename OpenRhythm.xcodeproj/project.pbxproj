@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B00000000000000000000008 /* PlaybackClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* PlaybackClockTests.swift */; };
+		A00000000000000000000020 /* PlaybackEventClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* PlaybackEventClock.swift */; };
 		A0000000000000000000001E /* PlayStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001E /* PlayStatistics.swift */; };
 		A0000000000000000000001F /* ResultStatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001F /* ResultStatisticsView.swift */; };
 		A00000000000000000000001 /* OpenRhythmApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OpenRhythmApp.swift */; };
@@ -58,6 +60,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		B10000000000000000000008 /* PlaybackClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackClockTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000020 /* PlaybackEventClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackEventClock.swift; sourceTree = "<group>"; };
 		A1000000000000000000001E /* PlayStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayStatistics.swift; sourceTree = "<group>"; };
 		A1000000000000000000001F /* ResultStatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStatisticsView.swift; sourceTree = "<group>"; };
 		A10000000000000000000001 /* OpenRhythmApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenRhythmApp.swift; sourceTree = "<group>"; };
@@ -173,6 +177,7 @@
 				A10000000000000000000013 /* RhythmChart.swift */,
 				A10000000000000000000016 /* ResultStore.swift */,
 				A1000000000000000000001E /* PlayStatistics.swift */,
+				A10000000000000000000020 /* PlaybackEventClock.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -202,6 +207,7 @@
 			children = (
 				B10000000000000000000001 /* LocalizedTextTests.swift */,
 				B10000000000000000000002 /* CatalogTests.swift */,
+				B10000000000000000000008 /* PlaybackClockTests.swift */,
 				B10000000000000000000004 /* OfflineStoreTests.swift */,
 				B10000000000000000000005 /* RuntimeDecodingTests.swift */,
 				B10000000000000000000007 /* EngineHostTests.swift */,
@@ -365,6 +371,7 @@
 				A00000000000000000000015 /* GameplayView.swift in Sources */,
 				A00000000000000000000016 /* ResultStore.swift in Sources */,
 				A0000000000000000000001E /* PlayStatistics.swift in Sources */,
+				A00000000000000000000020 /* PlaybackEventClock.swift in Sources */,
 				A0000000000000000000001F /* ResultStatisticsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -375,6 +382,7 @@
 			files = (
 				B00000000000000000000001 /* LocalizedTextTests.swift in Sources */,
 				B00000000000000000000002 /* CatalogTests.swift in Sources */,
+				B00000000000000000000008 /* PlaybackClockTests.swift in Sources */,
 				B00000000000000000000004 /* OfflineStoreTests.swift in Sources */,
 				B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */,
 				B00000000000000000000007 /* EngineHostTests.swift in Sources */,

@@ -191,6 +191,7 @@ final class EnginePlayRuntime {
   let inputCount: Int
   private(set) var judgments = [EngineJudgment]()
   private(set) var resolvedInputCount = 0
+  private(set) var hasActivatedInput = false
   private(set) var arcadeScore: EngineArcadeScore?
   private(set) var life = EngineLife(configuration: [0, 0, 0, 0, 0, 0, 1000, 1000])
   private let engine: EnginePlayData
@@ -379,6 +380,9 @@ final class EnginePlayRuntime {
       newlyActive.append(entity)
     }
     active.append(contentsOf: newlyActive)
+    if newlyActive.contains(where: { engine.archetypes[$0.archetype].hasInput }) {
+      hasActivatedInput = true
+    }
     for entity in newlyActive {
       _ = try execute(entity, callback: \.initialize)
     }

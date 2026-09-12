@@ -4,6 +4,42 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testStartupDetectsInputEvenWhenItDespawnsInTheActivationFrame() throws {
+    let builder = RuntimeNodeBuilder()
+    let now = builder.call("Get", [builder.value(1001), builder.value(0)])
+    let spawn = builder.call("GreaterOr", [now, builder.value(-2)])
+    let despawn = builder.call("Set", [builder.value(4004), builder.value(0),
+      builder.value(1)])
+    let engine = try builder.engine(archetypes: [
+      ["name": "Note", "hasInput": true, "imports": [], "exports": [],
+       "shouldSpawn": ["index": spawn], "initialize": ["index": despawn]]
+    ])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 9, entities: [
+        LevelEntity(archetype: "Note", name: nil, data: [])]),
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    try runtime.update(at: -3)
+    XCTAssertFalse(runtime.hasActivatedInput)
+    try runtime.update(at: -2)
+    XCTAssertTrue(runtime.hasActivatedInput)
+    XCTAssertEqual(runtime.resolvedInputCount, 1)
+    try runtime.update(at: -1)
+    XCTAssertTrue(runtime.hasActivatedInput)
+  }
+
+  func testStartupAudioBoundaryDoesNotConsumeScheduledOrLoopCommands() throws {
+    let host = makeHost()
+    try host.beginFrame(at: -9)
+    _ = try host.call(function: "PlayScheduled", arguments: [8, -1, 0])
+    _ = try host.call(function: "PlayLoopedScheduled", arguments: [8, -2])
+    XCTAssertEqual(host.nextAudioStartTime, -2)
+    try host.beginFrame(at: -2)
+    XCTAssertEqual(host.nextAudioStartTime, -2)
+    XCTAssertEqual(host.takeAudioCommands().count, 1)
+    XCTAssertEqual(host.takeLoopCommands().count, 1)
+    XCTAssertNil(host.nextAudioStartTime)
+  }
   func testCompatibilityChecksLazyAndSpawnablePathsButNotOrphanedNodes() throws {
     let builder = RuntimeNodeBuilder()
     let unknown = builder.call("UnimplementedHitEffect", [])

@@ -59,7 +59,7 @@ struct GameplayView: View {
     } description: {
       Text(
         "\(model.noteCount) notes · "
-          + "\(level.difficulty.displayName) \(level.rating)"
+          + "\(level.difficulty.displayName) \(level.rating.formatted())"
       )
     } actions: {
       Button("Start", systemImage: "play.fill") {
@@ -631,7 +631,7 @@ private final class EnginePlayfieldView: UIView {
     model?.engineFrame(size: bounds.size,
       touches: touchPool.touches, safeAreaInsets: safeAreaInsets)
     touchPool.nextFrame(at: sampleTime)
-    guard present else { return }
+    guard present, model?.isStartingPlayback == false else { return }
     if let metal, let runtime = model?.engineRuntime,
       let assets = model?.presentationAssets {
       do {
@@ -666,8 +666,7 @@ private final class EnginePlayfieldView: UIView {
         x: (point.x - bounds.midX) * 2 / bounds.height,
         y: (bounds.midY - point.y) * 2 / bounds.height
       )
-      let time = model.playbackTime
-        + touch.timestamp - ProcessInfo.processInfo.systemUptime
+      let time = model.inputTime(at: touch.timestamp)
       touchPool.receive(key: key, position: position, time: time,
         started: started, ended: ended)
     }
@@ -723,7 +722,9 @@ private final class LaneInputView: UIView {
       guard let lane = lane(for: touch) else { continue }
       let occupied = lanes.values.contains(lane)
       lanes[ObjectIdentifier(touch)] = lane
-      if !occupied { model?.press(lane: lane) }
+      if !occupied {
+        model?.press(lane: lane, at: model?.inputTime(at: touch.timestamp))
+      }
     }
   }
 
@@ -732,28 +733,28 @@ private final class LaneInputView: UIView {
       let id = ObjectIdentifier(touch)
       let next = lane(for: touch)
       guard lanes[id] != next else { continue }
-      release(id)
+      release(id, at: touch.timestamp)
       if let next {
         lanes[id] = next
-        model?.slide(lane: next)
+        model?.slide(lane: next, at: model?.inputTime(at: touch.timestamp))
       }
     }
   }
 
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-    for touch in touches { release(ObjectIdentifier(touch)) }
+    for touch in touches { release(ObjectIdentifier(touch), at: touch.timestamp) }
   }
 
   override func touchesCancelled(
     _ touches: Set<UITouch>, with event: UIEvent?
   ) {
-    for touch in touches { release(ObjectIdentifier(touch)) }
+    for touch in touches { release(ObjectIdentifier(touch), at: touch.timestamp) }
   }
 
-  private func release(_ id: ObjectIdentifier) {
+  private func release(_ id: ObjectIdentifier, at timestamp: TimeInterval) {
     guard let lane = lanes.removeValue(forKey: id),
       !lanes.values.contains(lane)
     else { return }
-    model?.release(lane: lane)
+    model?.release(lane: lane, at: model?.inputTime(at: timestamp))
   }
 }

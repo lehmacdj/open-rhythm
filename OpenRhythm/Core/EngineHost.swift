@@ -142,6 +142,13 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     return audio
   }
 
+  var nextAudioStartTime: Double? {
+    (audio.map(\.time) + loopAudio.compactMap {
+      if case .start(_, _, let time) = $0 { return time }
+      return nil
+    }).min()
+  }
+
   func takeLoopCommands() -> [EngineLoopCommand] {
     defer { loopAudio.removeAll(keepingCapacity: true) }
     return loopAudio

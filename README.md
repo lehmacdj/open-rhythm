@@ -86,15 +86,16 @@ those in lazy successful-hit branches and dynamically spawnable archetypes.
 This is a capability check, not proof of semantic conformance or playability.
 
 General third-party engine compatibility is **not yet guaranteed**. Known gaps
-include stack functions, curved drawing/Paint/Print, full skin render-mode
+include stack functions, curved drawing, full skin render-mode
 semantics, accuracy/error-heatmap HUD metrics, combo animations, timing-indicator
 styles beyond Early/Late text, and generic engine-option controls. The native
 exit/restart menu remains app-positioned. Unknown metric names display a dash,
 not a substituted score. Engines can also contain editor-only entities with no
 matching play archetype; these remain non-executing metadata. Resource
 optionality, callback access restrictions, and non-play modes need further
-conformance work. Do not infer arbitrary-engine support from the two tested
-engine families.
+conformance work. Paint and Print belong to tutorial and preview modes, not
+play-mode runtime gaps. Do not infer arbitrary-engine support from sampled
+engine families. See [the conformance checklist](COMPATIBILITY.md).
 
 Bounded compatibility checks on September 10, 2026 used one catalog page and one
 chart per candidate server. Both Project SEKAI and SIF Custom Charts returned
@@ -114,6 +115,26 @@ Hikari Hard 18 (563 inputs) resolve every input in 300-second no-touch runs.
 Engine HUD and top/bottom timing-label layouts have Xcode preview coverage.
 Independent review caught easing, pointer evaluation-order, and malformed HUD
 number defects; regression tests cover the fixes.
+
+The September 12 contract pass adds fractional ratings and callback ordering,
+optional tag titles/bucket units, Execute0, quick search, and opaque-cursor
+pagination. A single cached 22/7 catalog page exposed Pro 4.9 ratings; its
+シャンプーの匂いがした Pro chart resolves 949/949 inputs without touches.
+This is decoding/lifecycle coverage, not a claim of verified device playability.
+
+Timing distributions now use continuous density curves with no data bins.
+Known automatic hold checkpoints are excluded only from the distribution,
+not from scores or the scatterplot. Regression cases cover zero alignment,
+judgment-colored mass, narrow isolated modes, and bounded rendering work.
+
+Native and fallback inputs map UIKit event timestamps through the audio
+timebase, retaining rate-transition history for queued touches across stalls.
+No calibration offset was added. Local songs can skip verified leading silence,
+stopping conservatively at the first engine input activation or engine sound.
+The exact advanced runtime is retained and audio seeks to the corresponding
+media time; streamed intros remain untrimmed when silence cannot be verified.
+Cached Hikari starts at chart -2 seconds instead of -9, with first hold inputs
+judged Perfect on two runs; physical-device audio/touch alignment is unverified.
 
 Interpreter control flow follows the public [Sonolus function specifications](
 https://wiki.sonolus.com/engine-specs/functions/jump-loop), with lazy branches
