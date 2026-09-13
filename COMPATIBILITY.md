@@ -43,6 +43,9 @@ integration probes, including successful inputs and restart/buffering paths.
   Scores persist in history; old miss-free samples do not invent legacy scores.
 - Spawned entities have no input, even if their archetype declares hasInput;
   they must not introduce a false first-note boundary while skipping silence.
+- Unused skin, effect, and particle families need no placeholder assets.
+  Skin-only and particle-only initialization preserve the other family and
+  interpolation settings. Declared families still require valid resources.
 
 ## Remaining checks, including engines we have not sampled
 

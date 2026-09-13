@@ -225,6 +225,10 @@ final class EngineAudioPlayback {
   private var nextID = 0
 
   convenience init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
+    guard !engine.effect.clips.isEmpty else {
+      try self.init(clips: [:])
+      return
+    }
     let data = try CompressedJSONDecoder.decode(
       EffectData.self, from: presentation.data("effectData")
     )

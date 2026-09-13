@@ -3,6 +3,81 @@ import UIKit
 @testable import OpenRhythm
 
 final class RuntimeDecodingTests: XCTestCase {
+  @MainActor
+  func testSkinOnlyAndParticleOnlyEnginesPrepareWithoutOtherFamily() throws {
+    let png = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+      .pngData { UIColor.white.setFill(); $0.fill(CGRect(x: 0, y: 0, width: 1, height: 1)) }
+    for family in ["skin", "particle"] {
+      let list = family == "skin" ? "sprites" : "effects"
+      var object: [String: Any] = ["skin": ["sprites": []],
+        "effect": ["clips": []], "particle": ["effects": []],
+        "nodes": [], "buckets": [], "archetypes": []]
+      object[family] = [list: [["id": 1, "name": "required"]]]
+      let engine = try JSONDecoder().decode(EnginePlayData.self,
+        from: JSONSerialization.data(withJSONObject: object))
+      let data = family == "skin" ? #"""
+        {"width":1,"height":1,"interpolation":true,"sprites":[
+        {"name":"required","x":0,"y":0,"w":1,"h":1,"transform":{}}]}
+        """# : #"""
+        {"width":1,"height":1,"interpolation":true,"sprites":[],"effects":[
+        {"name":"required","transform":{},"groups":[]}]}
+        """#
+      let assets = try EnginePresentationAssets(engine: engine,
+        presentation: RuntimePresentation(resources: [
+          "configuration": Data(#"{"options":[]}"#.utf8),
+          family + "Data": Data(data.utf8), family + "Texture": png
+        ]))
+      XCTAssertEqual(assets.skin.count, family == "skin" ? 1 : 0)
+      XCTAssertEqual(assets.particles.count, family == "particle" ? 1 : 0)
+      XCTAssertEqual(assets.interpolation, family == "skin")
+      XCTAssertEqual(assets.particleInterpolation, family == "particle")
+    }
+  }
+
+  @MainActor
+  func testUnusedPresentationFamiliesDoNotRequirePlaceholderAssets() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},
+       "nodes":[],"buckets":[],"archetypes":[]}
+      """#.utf8))
+    let presentation = RuntimePresentation(resources: [
+      "configuration": Data(#"{"options":[]}"#.utf8)
+    ])
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: presentation)
+    let audio = try EngineAudioPlayback(engine: engine, presentation: presentation)
+    XCTAssertTrue(assets.skin.isEmpty)
+    XCTAssertTrue(assets.particles.isEmpty)
+    XCTAssertTrue(assets.preparedImages.isEmpty)
+    XCTAssertTrue(audio.clipIDs.isEmpty)
+    XCTAssertEqual(audio.allocatedVoiceCount, 0)
+    XCTAssertNoThrow(try audio.start())
+    audio.stop()
+  }
+
+  @MainActor
+  func testDeclaredPresentationFamiliesStillRequireTheirResources() throws {
+    let presentation = RuntimePresentation(resources: [
+      "configuration": Data(#"{"options":[]}"#.utf8)
+    ])
+    for (family, list) in [("skin", "sprites"), ("effect", "clips"),
+      ("particle", "effects")] {
+      var object: [String: Any] = ["skin": ["sprites": []],
+        "effect": ["clips": []], "particle": ["effects": []],
+        "nodes": [], "buckets": [], "archetypes": []]
+      object[family] = [list: [["id": 1, "name": "required"]]]
+      let engine = try JSONDecoder().decode(EnginePlayData.self,
+        from: JSONSerialization.data(withJSONObject: object))
+      if family == "effect" {
+        XCTAssertThrowsError(try EngineAudioPlayback(engine: engine,
+          presentation: presentation))
+      } else {
+        XCTAssertThrowsError(try EnginePresentationAssets(engine: engine,
+          presentation: presentation))
+      }
+    }
+  }
+
   func testGenericEngineOptionsValidatePersistedValuesAndKeepProtocolOrder() throws {
     let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
       {"options":[

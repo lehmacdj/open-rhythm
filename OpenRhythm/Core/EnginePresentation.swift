@@ -474,21 +474,33 @@ final class EnginePresentationAssets {
     }
     scoreModeIndex = configuration.options.firstIndex(where: \.usesScoreModeControl)
     scoreModeOption = scoreModeIndex.map { configuration.options[$0] }
-    let skinData = try CompressedJSONDecoder.decode(
-      SkinData.self, from: presentation.data("skinData")
-    )
-    guard let texture = UIImage(data: try presentation.data("skinTexture"))?.cgImage
-    else { throw RuntimeBundleError.missingResource("valid skin texture") }
-    interpolation = skinData.interpolation
     var sprites = [Int: Sprite]()
-    for definition in engine.skin.sprites {
-      guard let sprite = skinData.sprites.first(where: { $0.name == definition.name })
-      else { continue }
-      let image = try Self.crop(texture, x: sprite.x, y: sprite.y,
-        w: sprite.w, h: sprite.h)
-      sprites[definition.id] = Sprite(image: image, transform: sprite.transform)
+    if engine.skin.sprites.isEmpty {
+      interpolation = false
+    } else {
+      let skinData = try CompressedJSONDecoder.decode(
+        SkinData.self, from: presentation.data("skinData")
+      )
+      guard let texture = UIImage(data: try presentation.data("skinTexture"))?.cgImage
+      else { throw RuntimeBundleError.missingResource("valid skin texture") }
+      interpolation = skinData.interpolation
+      for definition in engine.skin.sprites {
+        guard let sprite = skinData.sprites.first(where: { $0.name == definition.name })
+        else { continue }
+        let image = try Self.crop(texture, x: sprite.x, y: sprite.y,
+          w: sprite.w, h: sprite.h)
+        sprites[definition.id] = Sprite(image: image, transform: sprite.transform)
+      }
     }
     skin = sprites
+    // Engines can omit entire presentation families they do not use. Do not
+    // require a particle texture merely because a skin or configuration exists.
+    guard !engine.particle.effects.isEmpty else {
+      particleInterpolation = false
+      particleImages = []
+      particles = [:]
+      return
+    }
     let particleData = try CompressedJSONDecoder.decode(
       ParticleData.self, from: presentation.data("particleData")
     )

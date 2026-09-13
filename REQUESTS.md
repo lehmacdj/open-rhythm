@@ -34,6 +34,7 @@ phone audio alignment, touch handling, or frame pacing is correct.
 | Remove automatic hold ticks from histogram and fix zero alignment | Continuous density curves (no histogram bins), known intermediate ticks excluded only from distribution; exact-zero, outlier and bounded-work tests |
 | Fill named host-function gaps, including PlayLooped | Draw/Judge/audio scheduling and loops/particles/BPM/Spawn/exports/resource checks implemented; preflight includes lazy and spawnable branches |
 | Anticipate compatibility beyond known engines | Fractional protocol fields, optional tags/buckets, cursor modes, curved drawing, lifecycle/memory/easing contract tests and `COMPATIBILITY.md` |
+| Unused presentation resources | Skin-only, particle-only, and no-effect engines do not require unused placeholder textures or audio; required resources still fail explicitly |
 | Independent review after fixes | Independent read-only reviews found the update-selection, alias crash/stale-read, first-page Retry and option-control-routing issues; fixes have regressions |
 
 ## Reported search crash: now verified against Apple's log
