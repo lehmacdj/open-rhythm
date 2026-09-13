@@ -53,6 +53,26 @@ final class CatalogTests: XCTestCase {
 
   private let server = ServerDescriptor.defaults[0]
 
+  func testUpdatedDownloadRepairsRemovedDifficultySelection() {
+    let levels = [level(name: "easy", rating: 1, difficulty: "#EASY"),
+      level(name: "hard", rating: 7, difficulty: "#HARD"),
+      level(name: "expert", rating: 9, difficulty: "#EXPERT")]
+    let base = CatalogBuilder.group(levels: [levels[0]], server: server)[0]
+    let updated = CatalogSong(id: base.id, server: server, title: base.title,
+      artists: base.artists, coverURL: nil, variants: levels, levelOrigins: [])
+    var filter = CatalogFilter()
+    filter.minimumRating = 7
+    filter.maximumRating = 9
+    XCTAssertEqual(filter.selectedLevelID(in: updated, preserving: "retired"), "hard")
+    XCTAssertEqual(filter.selectedLevelID(in: updated, preserving: "expert"), "expert")
+    XCTAssertEqual(filter.selectedLevelID(in: updated), "hard")
+    filter.minimumRating = 20
+    XCTAssertEqual(filter.selectedLevelID(in: updated, preserving: "retired"), "easy")
+    let empty = CatalogSong(id: base.id, server: server, title: base.title,
+      artists: base.artists, coverURL: nil, variants: [], levelOrigins: [])
+    XCTAssertEqual(filter.selectedLevelID(in: empty, preserving: "retired"), "")
+  }
+
   func testRangeSelectsLowestMatchingChartAndSeparatesEngines() {
     var levels = zip([1, 5, 7, 9, 11],
       ["#EASY", "#NORMAL", "#HARD", "#EXPERT", "#MASTER"]).map {

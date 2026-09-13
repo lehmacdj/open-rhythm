@@ -141,6 +141,14 @@ struct CatalogFilter: Codable, Equatable, Sendable {
     }
   }
 
+  func selectedLevelID(in song: CatalogSong, preserving preferred: String? = nil)
+    -> String {
+    if let preferred, song.variants.contains(where: { $0.id == preferred }) {
+      return preferred
+    }
+    return matchingVariants(in: song).first?.id ?? song.variants.first?.id ?? ""
+  }
+
   func apply(to songs: [CatalogSong], locale: Locale = .current)
     -> [CatalogSong]
   {

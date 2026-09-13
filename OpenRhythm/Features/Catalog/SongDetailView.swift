@@ -19,8 +19,7 @@ struct SongDetailView: View {
     _song = State(initialValue: song)
     self.isOffline = isOffline
     self.filter = filter
-    _selectedLevelID = State(initialValue:
-      filter.matchingVariants(in: song).first?.id ?? song.variants.first?.id ?? "")
+    _selectedLevelID = State(initialValue: filter.selectedLevelID(in: song))
   }
 
   var body: some View {
@@ -156,8 +155,7 @@ struct SongDetailView: View {
         let complete = try await SonolusClient().completeSong(song)
         try Task.checkCancellation()
         song = complete
-        selectedLevelID = filter.matchingVariants(in: complete).first?.id
-          ?? selectedLevelID
+        selectedLevelID = filter.selectedLevelID(in: complete)
         discoverySucceeded = true
         await updateDownloadStatus()
       } catch is CancellationError {
@@ -231,6 +229,8 @@ struct SongDetailView: View {
             && $0.engineKey == complete.engineKey
         } ?? complete
       } else { song = complete }
+      selectedLevelID = filter.selectedLevelID(in: song,
+        preserving: selectedLevelID)
       discoverySucceeded = true
       isDownloaded = true
     } catch {
