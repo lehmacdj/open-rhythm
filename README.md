@@ -90,7 +90,7 @@ This is a capability check, not proof of semantic conformance or playability.
 
 General third-party engine compatibility is **not yet guaranteed**. Known gaps
 include stack functions, full skin render-mode
-semantics, accuracy/error-heatmap HUD metrics, and timing-indicator
+semantics, error-heatmap HUD metrics, and timing-indicator
 styles beyond Early/Late text. The native
 exit/restart menu remains app-positioned. Unknown metric names display a dash,
 not a substituted score. Engines can also contain editor-only entities with no

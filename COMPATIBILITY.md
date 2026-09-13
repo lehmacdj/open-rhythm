@@ -38,6 +38,9 @@ integration probes, including successful inputs and restart/buffering paths.
 - Engine playback speed changes BGM rate and BPM values together; chart and
   event clocks remain in real seconds, including lead-in and audio EOF tails.
 - Engine combo animations and judgment animation final-state retention.
+- Accuracy scoring consumes final EntityInput values, including misses and
+  automatic ticks, independently of arcade weights or timing-plot filters.
+  Scores persist in history; old miss-free samples do not invent legacy scores.
 - Spawned entities have no input, even if their archetype declares hasInput;
   they must not introduce a false first-note boundary while skipping silence.
 
@@ -46,7 +49,7 @@ integration probes, including successful inputs and restart/buffering paths.
 - Stack layout/control semantics and all skin render modes.
 - Optional/missing resources, callback-specific memory access and defaults,
   and unknown enum values.
-- Accuracy/error-heatmap HUD metrics and alternate timing
+- Error-heatmap HUD metrics and alternate timing
   indicator styles; tutorial/watch/preview modes are separate capability sets.
 - Expired cursors, changing remote ordering, and sparse filtered results
   without unbounded crawls.
@@ -71,3 +74,11 @@ The public contracts for [options](
 https://wiki.sonolus.com/engine-specs/resources/engine-configuration-option) and
 [Spawn](https://wiki.sonolus.com/engine-specs/functions/spawn) inform the tests.
 See [the thread request audit](REQUESTS.md) for delivery vs verification status.
+
+Accuracy follows the [public result-screen formula](
+https://wiki.sonolus.com/getting-started/explore/result-screen), using absolute
+errors from [EntityInput](https://wiki.sonolus.com/engine-specs/play-blocks/entity-input).
+The public description does not specify live count-up behavior or rounding:
+OpenRhythm normalizes resolved contributions by the full input count, rounds
+to an integer, and clamps the display to 0–1,000,000. Countdown reserves perfect
+credit for unresolved inputs. These display policies do not adjust touch timing.

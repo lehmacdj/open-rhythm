@@ -4,6 +4,51 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testAccuracyUsesAbsoluteEngineErrorsAndBothScoreDirections() throws {
+    var score = EngineAccuracyScore()
+    XCTAssertNil(score.snapshot(noteCount: 0))
+    XCTAssertEqual(score.snapshot(noteCount: 4),
+      EngineScoreSnapshot(earned: 0, remaining: 1_000_000))
+    score.record(accuracy: -0.02)
+    XCTAssertEqual(score.snapshot(noteCount: 4),
+      EngineScoreSnapshot(earned: 245_000, remaining: 995_000))
+    score.record(accuracy: 0.02)
+    score.record(accuracy: 0.12) // Engine-assigned miss error still counts.
+    score.record(accuracy: 0) // Automatic ticks remain part of engine scoring.
+    XCTAssertEqual(score.snapshot(noteCount: 4),
+      EngineScoreSnapshot(earned: 960_000, remaining: 960_000))
+    XCTAssertEqual(score.resolvedCount, 4)
+    var extreme = EngineAccuracyScore()
+    extreme.record(accuracy: .greatestFiniteMagnitude)
+    extreme.record(accuracy: -.greatestFiniteMagnitude)
+    XCTAssertEqual(extreme.snapshot(noteCount: 2),
+      EngineScoreSnapshot(earned: 0, remaining: 0))
+  }
+
+  func testRuntimeAccuracyConsumesMissAtDespawnExactlyOnce() throws {
+    let builder = RuntimeNodeBuilder()
+    let accuracy = builder.call("Set", [builder.value(4005), builder.value(1),
+      builder.value(-0.125)])
+    let despawn = builder.call("Set", [builder.value(4004), builder.value(0),
+      builder.value(1)])
+    let callback = builder.call("Execute", [accuracy, despawn])
+    let engine = try builder.engine(archetypes: [
+      ["name": "Miss", "hasInput": true, "imports": [], "exports": [],
+       "updateParallel": ["index": callback]]
+    ])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Miss", name: nil, data: [])
+      ]), options: [], aspectRatio: 1, skinSpriteIDs: [],
+      effectClipIDs: [], particleEffectIDs: [])
+    try runtime.update(at: 0)
+    XCTAssertEqual(runtime.judgments.first?.grade, 0)
+    XCTAssertEqual(runtime.accuracyScore.snapshot(noteCount: runtime.inputCount),
+      EngineScoreSnapshot(earned: 875_000, remaining: 875_000))
+    try runtime.update(at: 1)
+    XCTAssertEqual(runtime.accuracyScore.resolvedCount, 1)
+  }
+
   @MainActor
   func testCurvesApplyCornerCoupledSkinTransformBeforeControlInterpolation() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""

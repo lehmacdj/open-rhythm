@@ -220,6 +220,9 @@ struct GameplayView: View {
     Form {
       Section("Result") {
         LabeledContent("Score", value: model.score.formatted())
+        if let accuracy = model.accuracyScore {
+          LabeledContent("Accuracy Score", value: accuracy.formatted())
+        }
         LabeledContent("Max Combo", value: model.maxCombo.formatted())
         if let life = model.engineLife {
           LabeledContent("Life", value: "\(life.value.formatted()) / \(life.maximum.formatted())")

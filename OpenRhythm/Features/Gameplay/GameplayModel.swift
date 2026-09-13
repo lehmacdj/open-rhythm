@@ -108,6 +108,7 @@ final class GameplayModel {
   private(set) var skippedIntroDuration = 0.0
   private var preparedInputCount: Int?
   private var engineScore: EngineScoreSnapshot?
+  private var engineAccuracy: EngineScoreSnapshot?
   private(set) var engineLife: EngineLife?
   private(set) var engineUI = [EngineUIElement]()
   private var musicHasEnded = false
@@ -123,6 +124,12 @@ final class GameplayModel {
     case "arcade", "arcadePercentage":
       return metric(Double(displayedScore), 1_000_000,
         percentage: name == "arcadePercentage")
+    case "accuracy", "accuracyPercentage":
+      guard let engineAccuracy else { return nil }
+      let value = settings.scoreDisplay == .countDown
+        ? engineAccuracy.remaining : engineAccuracy.earned
+      return metric(Double(value), 1_000_000,
+        percentage: name == "accuracyPercentage")
     case "life":
       guard let engineLife else { return nil }
       return metric(engineLife.value, engineLife.maximum)
@@ -182,6 +189,8 @@ final class GameplayModel {
   var score: Int {
     engineScore?.earned ?? NoteJudgement.score(for: judgements, noteCount: noteCount)
   }
+
+  var accuracyScore: Int? { engineAccuracy?.earned }
 
   var modifiedOptions: [EngineOptionOverride] {
     presentationAssets?.configuration.modifiedStandardOptions(preferences: settings) ?? []
@@ -347,6 +356,7 @@ final class GameplayModel {
     startupSteps = 0
     engineRuntime = nil
     engineScore = nil
+    engineAccuracy = nil
     engineLife = nil
     engineUI = []
     engineAspectRatio = nil
@@ -686,6 +696,7 @@ final class GameplayModel {
   }
 
   private func ingestJudgments(from runtime: EnginePlayRuntime) {
+    engineAccuracy = runtime.accuracyScore.snapshot(noteCount: runtime.inputCount)
     for judgment in runtime.judgments {
       let metadata = inputMetadata.indices.contains(judgment.entityIndex)
         ? inputMetadata[judgment.entityIndex] : (time: nil, type: "Unknown")
@@ -775,7 +786,7 @@ final class GameplayModel {
       level: level, server: resultServer, engineScore: engineScore?.earned,
       scoreMode: scoreModeName, finalLife: engineLife?.value,
       maximumLife: engineLife?.maximum, failed: engineLife?.failed,
-      modifiedOptions: modifiedOptions
+      modifiedOptions: modifiedOptions, accuracyScore: accuracyScore
     )
     resultSaveTask = Task {
       do {

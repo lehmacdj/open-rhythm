@@ -29,6 +29,9 @@ struct PlayResult: Codable, Identifiable, Sendable {
   var maximumLife: Double? = nil
   var failed: Bool? = nil
   var modifiedOptions: [EngineOptionOverride]? = nil
+  // Older records omit engine miss accuracy. Do not reconstruct this score
+  // from their plot samples, which deliberately exclude miss timing values.
+  var accuracyScore: Int? = nil
 
   /// Engine scores depend on note weights and judgement order, so retain the
   /// actual result. Legacy plays lack that information; preserve their prior

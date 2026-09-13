@@ -2,6 +2,19 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testAccuracyScoreSurvivesHistoryWithoutInventingLegacyValues() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var play = result(levelID: "chart", perfect: 3)
+    play.accuracyScore = 975_000
+    try await ResultStore(rootURL: root).record(play)
+    let reopened = try await ResultStore(rootURL: root).allResults()
+    XCTAssertEqual(reopened.first?.accuracyScore, 975_000)
+    let data = try JSONEncoder().encode(result(levelID: "legacy", perfect: 1))
+    XCTAssertNil(try JSONDecoder().decode(PlayResult.self, from: data).accuracyScore)
+  }
+
   func testModifiedEngineOptionsSurviveHistoryPersistence() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)

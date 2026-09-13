@@ -46,6 +46,33 @@ struct EngineScoreSnapshot: Equatable {
   let remaining: Int
 }
 
+/// Accuracy uses every engine input's absolute error in seconds, including
+/// the value the engine assigns to a miss. It is independent of arcade note
+/// weights and combo bonuses. Do not derive it from filtered timing plots.
+struct EngineAccuracyScore {
+  private(set) var resolvedCount = 0
+  private var totalError = 0.0
+
+  mutating func record(accuracy: Double) {
+    resolvedCount += 1
+    totalError += abs(accuracy)
+  }
+
+  func snapshot(noteCount: Int) -> EngineScoreSnapshot? {
+    guard noteCount > 0, !totalError.isNaN else { return nil }
+    func normalized(_ fraction: Double) -> Int {
+      Int((min(1, max(0, fraction)) * 1_000_000).rounded())
+    }
+    // Both display directions converge to 1M minus 1,000 points for each
+    // millisecond of mean absolute error. Unresolved notes contribute only
+    // to the countdown display, just as they do for arcade score.
+    let loss = totalError / Double(noteCount)
+    return EngineScoreSnapshot(
+      earned: normalized(Double(resolvedCount) / Double(noteCount) - loss),
+      remaining: normalized(1 - loss))
+  }
+}
+
 struct EngineLife: Equatable {
   private(set) var value: Double
   let maximum: Double
@@ -193,6 +220,7 @@ final class EnginePlayRuntime {
   private(set) var resolvedInputCount = 0
   private(set) var hasActivatedInput = false
   private(set) var arcadeScore: EngineArcadeScore?
+  private(set) var accuracyScore = EngineAccuracyScore()
   private(set) var life = EngineLife(configuration: [0, 0, 0, 0, 0, 0, 1000, 1000])
   private let engine: EnginePlayData
   private let interpreter: EngineInterpreter
@@ -410,6 +438,11 @@ final class EnginePlayRuntime {
       _ = try execute(entity, callback: \.terminate)
       if let index = entity.index, engine.archetypes[entity.archetype].hasInput {
         let grade = memory.value(block: 4005, index: 0)
+        let accuracy = memory.value(block: 4005, index: 1)
+        guard accuracy.isFinite else {
+          throw EngineInterpreterError.invalidArguments("EntityInput accuracy")
+        }
+        accuracyScore.record(accuracy: accuracy)
         arcadeScore?.record(entity: index, grade: Int(exactly: grade) ?? 0)
         let lifeGrade = Int(exactly: grade) ?? 0
         let gradeIndex = (1...3).contains(lifeGrade) ? lifeGrade - 1 : 3
@@ -418,7 +451,7 @@ final class EnginePlayRuntime {
             + memory.value(block: 4007, index: gradeIndex))
         judgments.append(EngineJudgment(
           entityIndex: index, grade: Int(exactly: grade) ?? 0,
-          accuracy: memory.value(block: 4005, index: 1)
+          accuracy: accuracy
         ))
         resolvedInputCount += 1
       }

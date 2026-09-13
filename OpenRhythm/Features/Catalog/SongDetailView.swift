@@ -258,6 +258,9 @@ struct ResultDetailView: View {
       }
       Section("Result") {
         LabeledContent("Score", value: result.score.formatted())
+        if let accuracy = result.accuracyScore {
+          LabeledContent("Accuracy Score", value: accuracy.formatted())
+        }
         if let mode = result.scoreMode { LabeledContent("Score Mode", value: mode) }
         LabeledContent("Max Combo", value: result.maxCombo.formatted())
         if let life = result.finalLife, let maximum = result.maximumLife {
