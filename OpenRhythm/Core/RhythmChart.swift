@@ -24,7 +24,7 @@ struct BPMTimeline: Sendable {
 
   let segments: [Segment]
 
-  init(level: LevelData) {
+  init(level: LevelData, speed: Double = 1) {
     var changes = level.entities
       .filter { $0.archetype == "#BPM_CHANGE" }
       .compactMap { entity -> (beat: Double, bpm: Double)? in
@@ -33,12 +33,12 @@ struct BPMTimeline: Sendable {
           let bpm = entity.value(named: "#BPM"),
           beat.isFinite, bpm.isFinite, bpm > 0
         else { return nil }
-        return (beat, bpm)
+        return (beat, bpm * speed)
       }
       .sorted { $0.beat < $1.beat }
 
     if changes.isEmpty || changes[0].beat > 0 {
-      changes.insert((beat: 0, bpm: 60), at: 0)
+      changes.insert((beat: 0, bpm: 60 * speed), at: 0)
     }
 
     var result = [Segment]()

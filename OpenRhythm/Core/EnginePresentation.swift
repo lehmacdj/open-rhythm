@@ -11,6 +11,62 @@ struct EngineConfiguration: Decodable {
     let max: Double?
     let step: Double?
     var values: [LocalizedText]? = nil
+    var type: String? = nil
+    var title: String? = nil
+    var description: String? = nil
+    var category: String? = nil
+    var unit: String? = nil
+    var standard: Bool? = nil
+    var advanced: Bool? = nil
+
+    var controlType: String? {
+      switch type {
+      case "toggle": return "toggle"
+      case "select": return values?.isEmpty == false ? "select" : nil
+      case "slider": return sliderRange != nil ? "slider" : nil
+      case nil:
+        if values?.isEmpty == false { return "select" }
+        return sliderRange != nil ? "slider" : nil
+      default: return nil
+      }
+    }
+
+    static func label(_ text: String) -> String {
+      text.hasPrefix("#")
+        ? text.dropFirst().replacingOccurrences(of: "_", with: " ").capitalized
+        : text
+    }
+
+    var displayName: String { Self.label(title ?? name ?? "Option") }
+    var usesNoteSpeedControl: Bool {
+      name == "#NOTE_SPEED" && controlType == "slider"
+    }
+    var usesScoreModeControl: Bool {
+      name == "Score Mode" && controlType == "select"
+    }
+
+    func value(_ preferred: Double?) -> Double {
+      guard let preferred, preferred.isFinite else { return def }
+      switch controlType {
+      case "toggle": return preferred == 0 || preferred == 1 ? preferred : def
+      case "select": return Double(selectedIndex(Int(exactly: preferred)) ?? 0)
+      case "slider": return clamped(preferred)
+      default: return def
+      }
+    }
+
+    func valueLabel(_ value: Double) -> String {
+      if controlType == "toggle" { return value == 0 ? "Off" : "On" }
+      if controlType == "select", let values,
+        let index = Int(exactly: value), values.indices.contains(index) {
+        return Self.label(values[index].displayValue())
+      }
+      if unit == "#PERCENTAGE_UNIT" {
+        return (value * 100).formatted(.number.precision(.fractionLength(0...2))) + "%"
+      }
+      let suffix = unit.map { " " + Self.label($0) } ?? ""
+      return value.formatted(.number.precision(.fractionLength(0...3))) + suffix
+    }
 
     func selectedIndex(_ preferred: Int?) -> Int? {
       guard let values, !values.isEmpty else { return nil }
@@ -20,7 +76,8 @@ struct EngineConfiguration: Decodable {
     }
 
     var sliderRange: ClosedRange<Double>? {
-      guard let min, let max, min.isFinite, max.isFinite, max > min else { return nil }
+      guard let min, let max, min.isFinite, max.isFinite, max > min,
+        (max - min).isFinite else { return nil }
       return min...max
     }
 
@@ -29,6 +86,7 @@ struct EngineConfiguration: Decodable {
       let bounded = Swift.min(range.upperBound, Swift.max(range.lowerBound, value))
       guard let step, step.isFinite, step > 0 else { return bounded }
       let rounded = range.lowerBound + ((bounded - range.lowerBound) / step).rounded() * step
+      guard rounded.isFinite else { return bounded }
       return Swift.min(range.upperBound, Swift.max(range.lowerBound, rounded))
     }
   }
@@ -82,6 +140,7 @@ struct EngineConfiguration: Decodable {
     let primaryMetric: String?
     let secondaryMetric: String?
     let judgmentAnimation: Animation?
+    let comboAnimation: Animation?
     let judgmentErrorPlacement: String?
     let judgmentErrorMin: Double?
 
@@ -93,6 +152,60 @@ struct EngineConfiguration: Decodable {
   }
   let options: [Option]
   let ui: UI?
+
+  func validateOptions() throws {
+    var names = Set<String>()
+    for option in options {
+      if let name = option.name, !names.insert(name).inserted {
+        throw EngineInterpreterError.invalidArguments("duplicate engine option: \(name)")
+      }
+      var valid = option.def.isFinite
+      switch option.controlType {
+      case "slider":
+        valid = valid && option.sliderRange?.contains(option.def) == true
+          && (option.step == nil || (option.step!.isFinite && option.step! > 0))
+      case "select":
+        valid = valid && Int(exactly: option.def).map {
+          option.values?.indices.contains($0) == true
+        } == true
+      case "toggle": valid = valid && (option.def == 0 || option.def == 1)
+      default:
+        // Unknown future kinds retain their numeric default and an explicit
+        // unavailable control. Malformed known kinds must not reach SwiftUI.
+        valid = valid && !["slider", "select"].contains(option.type ?? "")
+      }
+      guard valid else {
+        throw EngineInterpreterError.invalidArguments("engine option: \(option.displayName)")
+      }
+    }
+  }
+
+  func runtimeOptions(preferences: GameplayPreferences) -> [Double] {
+    options.map { option in
+      if option.usesNoteSpeedControl, let speed = preferences.noteSpeed {
+        return option.value(speed)
+      }
+      if option.usesScoreModeControl, let score = preferences.scoreMode {
+        return option.value(Double(score))
+      }
+      return option.value(option.name.flatMap { preferences.engineOptions[$0] })
+    }
+  }
+
+  func playbackSpeed(preferences: GameplayPreferences) -> Double {
+    guard let index = options.firstIndex(where: { $0.name == "#SPEED" })
+    else { return 1 }
+    return runtimeOptions(preferences: preferences)[index]
+  }
+
+  func modifiedStandardOptions(preferences: GameplayPreferences)
+    -> [EngineOptionOverride] {
+    zip(options, runtimeOptions(preferences: preferences)).compactMap { option, value in
+      guard option.standard == true, value != option.def else { return nil }
+      return EngineOptionOverride(name: option.displayName,
+        value: option.valueLabel(value))
+    }
+  }
 }
 
 struct EngineUIElement: Equatable {
@@ -332,6 +445,7 @@ final class EnginePresentationAssets {
     let transform: EngineQuadTransform
   }
   let options: [Double]
+  let configuration: EngineConfiguration
   let ui: EngineConfiguration.UI?
   let noteSpeedOption: EngineConfiguration.Option?
   let judgementErrorMinimum: Double?
@@ -349,16 +463,16 @@ final class EnginePresentationAssets {
     let configuration = try CompressedJSONDecoder.decode(
       EngineConfiguration.self, from: presentation.data("configuration")
     )
+    self.configuration = configuration
+    try configuration.validateOptions()
     options = configuration.options.map(\.def)
     ui = configuration.ui
-    noteSpeedIndex = configuration.options.firstIndex { $0.name == "#NOTE_SPEED" }
+    noteSpeedIndex = configuration.options.firstIndex(where: \.usesNoteSpeedControl)
     noteSpeedOption = noteSpeedIndex.map { configuration.options[$0] }
     judgementErrorMinimum = configuration.ui?.judgmentErrorMin.flatMap {
       $0.isFinite && $0 >= 0 ? $0 / 1000 : nil
     }
-    scoreModeIndex = configuration.options.firstIndex {
-      $0.name == "Score Mode" && $0.values?.isEmpty == false
-    }
+    scoreModeIndex = configuration.options.firstIndex(where: \.usesScoreModeControl)
     scoreModeOption = scoreModeIndex.map { configuration.options[$0] }
     let skinData = try CompressedJSONDecoder.decode(
       SkinData.self, from: presentation.data("skinData")
@@ -411,14 +525,8 @@ final class EnginePresentationAssets {
   }
 
   func runtimeOptions(noteSpeed: Double?, scoreMode: Int? = nil) -> [Double] {
-    var result = options
-    if let noteSpeed, let noteSpeedIndex, let noteSpeedOption {
-      result[noteSpeedIndex] = noteSpeedOption.clamped(noteSpeed)
-    }
-    if let scoreModeIndex, let index = scoreModeOption?.selectedIndex(scoreMode) {
-      result[scoreModeIndex] = Double(index)
-    }
-    return result
+    configuration.runtimeOptions(preferences:
+      GameplayPreferences(noteSpeed: noteSpeed, scoreMode: scoreMode))
   }
 
   var preparedImages: [UIImage] {

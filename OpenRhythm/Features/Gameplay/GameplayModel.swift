@@ -12,11 +12,12 @@ enum GameplayPhase: Equatable {
 
 struct BGMClockMapping {
   let offset: Double
+  var speed: Double = 1
   // The offset aligns two timelines; it is not permission to trim audio.
   var initialMediaTime: Double { 0 }
   var initialChartTime: Double { chartTime(mediaTime: initialMediaTime) }
-  func chartTime(mediaTime: Double) -> Double { mediaTime - offset }
-  func mediaTime(chartTime: Double) -> Double { chartTime + offset }
+  func chartTime(mediaTime: Double) -> Double { (mediaTime - offset) / speed }
+  func mediaTime(chartTime: Double) -> Double { chartTime * speed + offset }
 }
 
 struct JudgementFeedback: Hashable {
@@ -139,7 +140,8 @@ final class GameplayModel {
     case "time":
       let elapsed = max(0, currentTime)
       guard let seconds = Int(exactly: elapsed.rounded(.towardZero)) else { return nil }
-      let duration = player?.currentItem?.duration.seconds ?? 0
+      let duration = clockMapping.chartTime(
+        mediaTime: player?.currentItem?.duration.seconds ?? 0)
       return ("\(seconds / 60):" + String(format: "%02d", seconds % 60),
         duration.isFinite && duration > 0 ? min(1, elapsed / duration) : 0)
     default: return nil // Do not substitute arcade score for a different metric.
@@ -181,6 +183,10 @@ final class GameplayModel {
     engineScore?.earned ?? NoteJudgement.score(for: judgements, noteCount: noteCount)
   }
 
+  var modifiedOptions: [EngineOptionOverride] {
+    presentationAssets?.configuration.modifiedStandardOptions(preferences: settings) ?? []
+  }
+
   var playbackTime: TimeInterval {
     if isStartingPlayback { return currentTime }
     if let tailStart {
@@ -198,8 +204,9 @@ final class GameplayModel {
   private let loader: RuntimeBundleLoader
   private let resultStore: ResultStore
   private var bgmOffset = 0.0
+  private var playbackSpeed = 1.0
   private var clockMapping: BGMClockMapping {
-    BGMClockMapping(offset: bgmOffset)
+    BGMClockMapping(offset: bgmOffset, speed: playbackSpeed)
   }
   private var player: AVPlayer?
   private var eventClock: PlaybackEventClock?
@@ -308,6 +315,21 @@ final class GameplayModel {
 
   func start() {
     guard phase == .ready, let player else { return }
+    let speed = presentationAssets?.configuration.playbackSpeed(preferences: settings) ?? 1
+    guard speed.isFinite, (0.05...4).contains(speed) else {
+      phase = .failed("This playback speed is outside the supported range (0.05–4×).")
+      return
+    }
+    playbackSpeed = speed
+    player.defaultRate = Float(speed)
+    if let bundle = runtimeBundle {
+      let timeline = BPMTimeline(level: bundle.level, speed: speed)
+      inputMetadata = bundle.level.entities.map { entity in
+        (entity.data.first { $0.name == "#BEAT" }?.value.map {
+          timeline.time(at: $0)
+        }, entity.archetype)
+      }
+    }
     playbackGeneration += 1
     let generation = playbackGeneration
     isStartingPlayback = true
@@ -622,8 +644,7 @@ final class GameplayModel {
         engineAspectRatio = aspect
         engineRuntime = try EnginePlayRuntime(
           engine: bundle.engine, level: bundle.level,
-          options: assets.runtimeOptions(noteSpeed: settings.noteSpeed,
-            scoreMode: settings.scoreMode),
+          options: assets.configuration.runtimeOptions(preferences: settings),
           aspectRatio: aspect, skinSpriteIDs: Set(assets.skin.keys),
           effectClipIDs: engineAudio?.clipIDs ?? [],
           particleEffectIDs: Set(assets.particles.keys), rom: bundle.engineROM,
@@ -633,7 +654,7 @@ final class GameplayModel {
             aspect - Double(safeAreaInsets.right * 2 / size.height),
             -1 + Double(safeAreaInsets.bottom * 2 / size.height),
             1 - Double(safeAreaInsets.top * 2 / size.height)
-          ]
+          ], playbackSpeed: playbackSpeed
         )
         if let runtime = engineRuntime {
           engineUI = (0..<8).map { EngineUIElement(memory: runtime.memory, index: $0) }
@@ -753,7 +774,8 @@ final class GameplayModel {
       noteTimings: noteTimings, duration: currentTime,
       level: level, server: resultServer, engineScore: engineScore?.earned,
       scoreMode: scoreModeName, finalLife: engineLife?.value,
-      maximumLife: engineLife?.maximum, failed: engineLife?.failed
+      maximumLife: engineLife?.maximum, failed: engineLife?.failed,
+      modifiedOptions: modifiedOptions
     )
     resultSaveTask = Task {
       do {

@@ -1,5 +1,10 @@
 import Foundation
 
+struct EngineOptionOverride: Codable, Equatable, Sendable {
+  let name: String
+  let value: String
+}
+
 struct PlayResult: Codable, Identifiable, Sendable {
   let id: UUID
   let levelID: String
@@ -23,6 +28,7 @@ struct PlayResult: Codable, Identifiable, Sendable {
   var finalLife: Double? = nil
   var maximumLife: Double? = nil
   var failed: Bool? = nil
+  var modifiedOptions: [EngineOptionOverride]? = nil
 
   /// Engine scores depend on note weights and judgement order, so retain the
   /// actual result. Legacy plays lack that information; preserve their prior

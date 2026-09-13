@@ -209,9 +209,11 @@ final class EnginePlayRuntime {
     skinSpriteIDs: Set<Int>, effectClipIDs: Set<Int>,
     particleEffectIDs: Set<Int>, rom: Data? = nil,
     uiConfiguration: [Double] = Array(repeating: 1, count: 10),
-    safeArea: [Double]? = nil
+    safeArea: [Double]? = nil,
+    playbackSpeed: Double = 1
   ) throws {
     guard aspectRatio.isFinite, aspectRatio > 0,
+      playbackSpeed.isFinite, (0.05...4).contains(playbackSpeed),
       level.entities.count <= 100_000,
       uiConfiguration.count == 10, uiConfiguration.allSatisfy(\.isFinite),
       safeArea == nil || (safeArea?.count == 4
@@ -228,7 +230,7 @@ final class EnginePlayRuntime {
     host = CommandEngineRuntimeHost(
       memory: memory, level: level, skinSpriteIDs: skinSpriteIDs,
       effectClipIDs: effectClipIDs, particleEffectIDs: particleEffectIDs,
-      archetypeCount: engine.archetypes.count
+      archetypeCount: engine.archetypes.count, playbackSpeed: playbackSpeed
     )
     interpreter = EngineInterpreter(
       nodes: engine.nodes, memory: memory, host: host
@@ -295,7 +297,9 @@ final class EnginePlayRuntime {
           }
           value = Double(index)
         } else {
-          value = datum?.value ?? field.def ?? 0
+          let rawValue = datum?.value ?? field.def ?? 0
+          value = source.archetype == "#BPM_CHANGE" && field.name == "#BPM"
+            ? rawValue * playbackSpeed : rawValue
         }
         memory.set(block: 4001, index: field.index, value: value)
       }
@@ -380,7 +384,9 @@ final class EnginePlayRuntime {
       newlyActive.append(entity)
     }
     active.append(contentsOf: newlyActive)
-    if newlyActive.contains(where: { engine.archetypes[$0.archetype].hasInput }) {
+    if newlyActive.contains(where: {
+      $0.index != nil && engine.archetypes[$0.archetype].hasInput
+    }) {
       hasActivatedInput = true
     }
     for entity in newlyActive {

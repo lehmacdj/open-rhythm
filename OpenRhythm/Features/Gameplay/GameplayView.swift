@@ -38,7 +38,7 @@ struct GameplayView: View {
       GameplaySettingsPanel(settings: $model.settings,
         noteSpeed: model.presentationAssets?.noteSpeedOption,
         scoreMode: model.presentationAssets?.scoreModeOption,
-        engineName: song.engineName)
+        options: model.presentationAssets?.configuration.options ?? [])
     }
     .task {
       await model.prepare(
@@ -180,10 +180,12 @@ struct GameplayView: View {
       }
       if model.combo > 0 {
         EngineUIPlacement(element: model.engineUI[2], size: size) {
-          Text(model.combo.formatted())
+          EngineComboText(combo: model.combo,
+            animation: model.presentationAssets?.ui?.comboAnimation)
         }
         EngineUIPlacement(element: model.engineUI[3], size: size) {
-          Text("COMBO")
+          EngineComboText(combo: model.combo, isLabel: true,
+            animation: model.presentationAssets?.ui?.comboAnimation)
         }
       }
       metricUI(model.presentationAssets?.ui?.primaryMetric ?? "arcade",
@@ -232,6 +234,7 @@ struct GameplayView: View {
           )
         }
       }
+      ModifiedEngineOptionsSection(options: model.modifiedOptions)
       ResultStatisticsSections(samples: model.noteTimings,
         duration: model.currentTime)
       Section {
@@ -322,17 +325,12 @@ private struct GameplaySettingsPanel: View {
   @Binding var settings: GameplayPreferences
   let noteSpeed: EngineConfiguration.Option?
   let scoreMode: EngineConfiguration.Option?
-  let engineName: String
+  let options: [EngineConfiguration.Option]
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
     NavigationStack {
       Form {
-        Section {
-          Text(engineName)
-          Text("These preferences are saved for this engine.")
-            .foregroundStyle(.secondary)
-        }
         Section("Score Display") {
           if let option = scoreMode, let values = option.values {
             Picker("Engine Score Mode", selection: Binding(
@@ -370,9 +368,75 @@ private struct GameplaySettingsPanel: View {
               .foregroundStyle(.secondary)
           }
         }
+        ForEach(options.indices, id: \.self) { index in
+          let option = options[index]
+          if let name = option.name,
+            !option.usesNoteSpeedControl, !option.usesScoreModeControl {
+            Section(option.displayName) {
+              engineOption(option, name: name)
+              if let description = option.description, !description.isEmpty {
+                Text(EngineConfiguration.Option.label(description))
+                  .font(.footnote).foregroundStyle(.secondary)
+              }
+              if option.standard == true {
+                Text("Changes gameplay; recorded with your result.")
+                  .font(.footnote).foregroundStyle(.secondary)
+              }
+            }
+          }
+        }
       }
       .navigationTitle("Gameplay Settings")
       .toolbar { Button("Done") { dismiss() } }
+    }
+  }
+
+  @ViewBuilder private func engineOption(_ option: EngineConfiguration.Option,
+    name: String) -> some View {
+    let value = option.value(settings.engineOptions[name])
+    Group {
+      switch option.controlType {
+      case "toggle":
+        Toggle(option.displayName, isOn: Binding(get: { value != 0 },
+          set: { settings.engineOptions[name] = $0 ? 1 : 0 }))
+      case "select":
+        if let values = option.values {
+          Picker(option.displayName, selection: Binding(get: { value },
+            set: { settings.engineOptions[name] = $0 })) {
+            ForEach(values.indices, id: \.self) { index in
+              Text(option.valueLabel(Double(index))).tag(Double(index))
+            }
+          }
+        }
+      case "slider":
+        if let range = option.sliderRange {
+          LabeledContent(option.displayName, value: option.valueLabel(value))
+          Slider(value: Binding(get: { value },
+            set: { settings.engineOptions[name] = option.clamped($0) }), in: range)
+            .accessibilityLabel(option.displayName)
+        }
+      default:
+        Text("Unsupported option type: \(option.type ?? "unknown")")
+          .foregroundStyle(.secondary)
+      }
+      if option.controlType != nil {
+        Button("Use Engine Default") { settings.engineOptions[name] = nil }
+          .disabled(settings.engineOptions[name] == nil)
+      }
+    }
+  }
+}
+
+struct ModifiedEngineOptionsSection: View {
+  let options: [EngineOptionOverride]
+
+  var body: some View {
+    if !options.isEmpty {
+      Section("Modified Gameplay") {
+        ForEach(options.indices, id: \.self) { index in
+          LabeledContent(options[index].name, value: options[index].value)
+        }
+      }
     }
   }
 }
@@ -384,11 +448,13 @@ private struct JudgementOverlay: View {
   var timingPlacement: String? = nil
   var fontSize: CGFloat? = nil
   @State private var visible = false
+  @State private var isAnimating = false
   @State private var started = Date()
 
   var body: some View {
-    TimelineView(.animation(paused: !visible)) { context in
-      let elapsed = max(0, context.date.timeIntervalSince(started))
+    TimelineView(.animation(paused: !isAnimating)) { context in
+      let elapsed = isAnimating ? max(0, context.date.timeIntervalSince(started))
+        : animation?.duration ?? 0.65
       JudgementLabel(feedback: feedback, mode: mode, fontSize: fontSize,
         timingPlacement: timingPlacement)
         .scaleEffect(animation?.scale.value(at: elapsed) ?? 1)
@@ -398,11 +464,42 @@ private struct JudgementOverlay: View {
       .task(id: feedback) {
         started = Date()
         visible = feedback != nil
+        isAnimating = visible
         do {
           try await Task.sleep(for: .seconds(animation?.duration ?? 0.65))
-          visible = false
+          isAnimating = false
+          // Engine animations own their final alpha; a tween ending at one
+          // keeps the grade visible, rather than imposing our own timeout.
+          if animation == nil { visible = false }
         } catch { }
       }
+  }
+}
+
+private struct EngineComboText: View {
+  let combo: Int
+  var isLabel = false
+  let animation: EngineConfiguration.UI.Animation?
+  @State private var started = Date()
+  @State private var isAnimating = false
+
+  var body: some View {
+    TimelineView(.animation(paused: !isAnimating)) { context in
+      let elapsed = isAnimating ? max(0, context.date.timeIntervalSince(started))
+        : animation?.duration ?? 0
+      Text(isLabel ? "COMBO" : combo.formatted())
+        .scaleEffect(animation?.scale.value(at: elapsed) ?? 1)
+        .opacity(min(1, max(0, animation?.alpha.value(at: elapsed) ?? 1)))
+    }
+    .task(id: combo) {
+      guard let animation else { return }
+      started = Date()
+      isAnimating = true
+      do {
+        try await Task.sleep(for: .seconds(animation.duration))
+        isAnimating = false
+      } catch { }
+    }
   }
 }
 
@@ -502,6 +599,20 @@ private struct EngineAnchorLayout: Layout {
     JudgementLabel(feedback: JudgementFeedback(sequence: 1,
       judgement: .perfect, accuracy: -0.03, minimumError: 0.02), mode: .timing)
   }
+}
+
+#Preview("Engine Options") {
+  let configuration = try! JSONDecoder().decode(EngineConfiguration.self,
+    from: Data(#"""
+    {"options":[
+    {"name":"#SPEED","type":"slider","def":1,"min":0.5,"max":2,
+     "step":0.05,"unit":"#PERCENTAGE_UNIT","standard":true},
+    {"name":"#MIRROR","type":"toggle","def":0,"standard":true},
+    {"name":"Input Mode","type":"select","def":0,
+     "values":["Normal","Strict"]}]}
+    """#.utf8))
+  GameplaySettingsPanel(settings: .constant(GameplayPreferences()),
+    noteSpeed: nil, scoreMode: nil, options: configuration.options)
 }
 
 #Preview("Engine Timing Positions", traits: .fixedLayout(width: 420, height: 280)) {

@@ -3,6 +3,91 @@ import UIKit
 @testable import OpenRhythm
 
 final class RuntimeDecodingTests: XCTestCase {
+  func testGenericEngineOptionsValidatePersistedValuesAndKeepProtocolOrder() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
+      {"options":[
+      {"name":"#NOTE_SIZE","type":"slider","def":1,"min":0.5,"max":2,
+       "step":0.25,"unit":"#PERCENTAGE_UNIT"},
+      {"name":"#MIRROR","type":"toggle","def":0,"standard":true},
+      {"name":"Mode","title":"Input Mode","type":"select","def":1,
+       "values":["#OFF","#ON","Strict"],"standard":true},
+      {"name":"#SPEED","type":"slider","def":1,"min":0.5,"max":2,"step":0.05},
+      {"name":"Future","type":"future","def":17},
+      {"name":"#NOTE_SPEED","def":5,"min":1,"max":12,"step":0.1},
+      {"name":"Score Mode","def":1,"values":["Flat","Combo"]}]}
+      """#.utf8))
+    var settings = GameplayPreferences(noteSpeed: 9, scoreMode: 0,
+      engineOptions: ["#NOTE_SIZE": 1.37, "#MIRROR": 1, "Mode": 2,
+        "#SPEED": 1.5, "Future": 999, "#NOTE_SPEED": 2, "removed": 99])
+    XCTAssertNoThrow(try config.validateOptions())
+    XCTAssertEqual(config.runtimeOptions(preferences: settings),
+      [1.25, 1, 2, 1.5, 17, 9, 0])
+    XCTAssertEqual(config.playbackSpeed(preferences: settings), 1.5)
+    XCTAssertEqual(config.modifiedStandardOptions(preferences: settings), [
+      EngineOptionOverride(name: "Mirror", value: "On"),
+      EngineOptionOverride(name: "Input Mode", value: "Strict")])
+    XCTAssertEqual(config.options[0].valueLabel(1.25), "125%")
+    settings.engineOptions["Mode"] = 99
+    settings.engineOptions["#MIRROR"] = 0.5
+    settings.engineOptions["#NOTE_SIZE"] = 999
+    XCTAssertEqual(Array(config.runtimeOptions(preferences: settings).prefix(3)), [2, 0, 1])
+    settings.engineOptions["Mode"] = 0.5
+    XCTAssertEqual(config.runtimeOptions(preferences: settings)[2], 1)
+    settings.engineOptions["Mode"] = .infinity
+    XCTAssertEqual(config.runtimeOptions(preferences: settings)[2], 1)
+    let restored = try JSONDecoder().decode(GameplayPreferences.self,
+      from: Data(#"{"scoreDisplay":"countDown"}"#.utf8))
+    XCTAssertEqual(restored.engineOptions, [:])
+    XCTAssertEqual(config.runtimeOptions(preferences: restored), [1, 0, 1, 1, 17, 5, 1])
+  }
+
+  func testMalformedEngineOptionsCannotReachSliderOrPickerControls() throws {
+    for option in [
+      #"{"name":"bad","type":"slider","def":3,"min":0,"max":1,"step":0.1}"#,
+      #"{"name":"bad","type":"slider","def":0,"min":1,"max":0}"#,
+      #"{"name":"bad","type":"slider","def":0,"min":0,"max":1,"step":0}"#,
+      #"{"name":"bad","type":"select","def":0,"values":[]}"#,
+      #"{"name":"bad","type":"select","def":0.5,"values":["a"]}"#,
+      #"{"name":"bad","type":"toggle","def":2}"#
+    ] {
+      let config = try JSONDecoder().decode(EngineConfiguration.self,
+        from: Data("{\"options\":[\(option)]}".utf8))
+      XCTAssertThrowsError(try config.validateOptions())
+    }
+    let duplicate = try JSONDecoder().decode(EngineConfiguration.self,
+      from: Data(#"{"options":[{"name":"same","def":0},{"name":"same","def":1}]}"#.utf8))
+    XCTAssertThrowsError(try duplicate.validateOptions())
+  }
+
+  func testSpecialOptionNamesRouteByDeclaredControlKind() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self,
+      from: Data(#"""
+      {"options":[{"name":"Score Mode","type":"toggle","def":0},
+      {"name":"#NOTE_SPEED","type":"select","def":0,"values":["Slow","Fast"]}]}
+      """#.utf8))
+    XCTAssertFalse(config.options[0].usesScoreModeControl)
+    XCTAssertFalse(config.options[1].usesNoteSpeedControl)
+    XCTAssertEqual(config.options.map(\.controlType), ["toggle", "select"])
+    let preferences = GameplayPreferences(noteSpeed: 9, scoreMode: 9,
+      engineOptions: ["Score Mode": 1, "#NOTE_SPEED": 1])
+    XCTAssertEqual(config.runtimeOptions(preferences: preferences), [1, 1],
+      "Dedicated preferences from an old definition must not override a new kind")
+  }
+
+  func testComboAnimationUsesEngineTweenAndRetainsItsFinalState() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
+      {"options":[],"ui":{"comboAnimation":{
+      "scale":{"from":1.5,"to":1,"duration":0.2,"ease":"linear"},
+      "alpha":{"from":0,"to":0.8,"duration":0.1,"ease":"linear"}}}}
+      """#.utf8))
+    let animation = try XCTUnwrap(config.ui?.comboAnimation)
+    XCTAssertEqual(animation.duration, 0.2)
+    XCTAssertEqual(animation.scale.value(at: 0.1), 1.25)
+    XCTAssertEqual(animation.alpha.value(at: 0.05), 0.4)
+    XCTAssertEqual(animation.scale.value(at: 9), 1)
+    XCTAssertEqual(animation.alpha.value(at: 9), 0.8)
+  }
+
   func testFractionalCallbackOrderIsNotRestrictedToKnownEngineFixtures() throws {
     let callback = try JSONDecoder().decode(EngineCallback.self,
       from: Data(#"{"index":0,"order":-0.5}"#.utf8))

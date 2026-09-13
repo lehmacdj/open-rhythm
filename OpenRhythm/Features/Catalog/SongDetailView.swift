@@ -273,6 +273,7 @@ struct ResultDetailView: View {
         LabeledContent("Good", value: result.good.formatted())
         LabeledContent("Miss", value: result.miss.formatted())
       }
+      ModifiedEngineOptionsSection(options: result.modifiedOptions ?? [])
       if hasTimings && timingSamples == nil {
         Section("Timing Analysis") {
           if let timingError {

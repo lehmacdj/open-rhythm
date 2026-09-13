@@ -35,17 +35,20 @@ struct GameplayPreferences: Codable, Equatable {
   var noteSpeed: Double? = nil
   var judgementDisplay = JudgementDisplayMode.timing
   var scoreMode: Int? = nil
+  var engineOptions: [String: Double] = [:]
 
   init(scoreDisplay: ScoreDisplayMode = .countUp, noteSpeed: Double? = nil,
-    judgementDisplay: JudgementDisplayMode = .timing, scoreMode: Int? = nil) {
+    judgementDisplay: JudgementDisplayMode = .timing, scoreMode: Int? = nil,
+    engineOptions: [String: Double] = [:]) {
     self.scoreDisplay = scoreDisplay
     self.noteSpeed = noteSpeed
     self.judgementDisplay = judgementDisplay
     self.scoreMode = scoreMode
+    self.engineOptions = engineOptions
   }
 
   private enum CodingKeys: String, CodingKey {
-    case scoreDisplay, noteSpeed, judgementDisplay, scoreMode
+    case scoreDisplay, noteSpeed, judgementDisplay, scoreMode, engineOptions
   }
 
   init(from decoder: Decoder) throws {
@@ -54,6 +57,8 @@ struct GameplayPreferences: Codable, Equatable {
       forKey: .scoreDisplay) ?? .countUp
     noteSpeed = try values.decodeIfPresent(Double.self, forKey: .noteSpeed)
     scoreMode = try values.decodeIfPresent(Int.self, forKey: .scoreMode)
+    engineOptions = try values.decodeIfPresent([String: Double].self,
+      forKey: .engineOptions) ?? [:]
     judgementDisplay = try values.decodeIfPresent(JudgementDisplayMode.self,
       forKey: .judgementDisplay) ?? .timing
   }

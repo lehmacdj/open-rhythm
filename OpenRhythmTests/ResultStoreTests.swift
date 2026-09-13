@@ -2,6 +2,18 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testModifiedEngineOptionsSurviveHistoryPersistence() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var play = result(levelID: "chart", perfect: 3)
+    play.modifiedOptions = [EngineOptionOverride(name: "Mirror", value: "On"),
+      EngineOptionOverride(name: "Speed", value: "150%")]
+    try await ResultStore(rootURL: root).record(play)
+    let reopened = try await ResultStore(rootURL: root).allResults()
+    XCTAssertEqual(reopened.first?.modifiedOptions, play.modifiedOptions)
+    XCTAssertNil(result(levelID: "legacy", perfect: 1).modifiedOptions)
+  }
   func testContinuousDensityCentersZeroAndExcludesOnlyHoldTicks() throws {
     let samples = (0..<100).map {
       NoteTiming(id: $0, songTime: Double($0), noteType: "TransientHiddenTickNote",

@@ -4,6 +4,51 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class PlaybackClockTests: XCTestCase {
+  func testPlaybackSpeedScalesTempoAndClocksWithoutScalingJudgmentErrors() throws {
+    let level = try JSONDecoder().decode(LevelData.self, from: Data(#"""
+      {"bgmOffset":9,"entities":[
+      {"archetype":"#BPM_CHANGE","data":[{"name":"#BEAT","value":0},
+       {"name":"#BPM","value":120}]},
+      {"archetype":"#BPM_CHANGE","data":[{"name":"#BEAT","value":4},
+       {"name":"#BPM","value":60}]}]}
+      """#.utf8))
+    for speed in [0.5, 1, 1.5, 2] {
+      let clock = BGMClockMapping(offset: 9, speed: speed)
+      let tempo = BPMTimeline(level: level, speed: speed)
+      XCTAssertEqual(tempo.time(at: 6), 4 / speed, accuracy: 1e-9)
+      XCTAssertEqual(tempo.bpm(at: 6), 60 * speed)
+      XCTAssertEqual(clock.initialChartTime, -9 / speed)
+      XCTAssertEqual(clock.mediaTime(chartTime: tempo.time(at: 6)), 13)
+      XCTAssertEqual(clock.chartTime(mediaTime: 13), tempo.time(at: 6))
+      var events = PlaybackClockHistory()
+      events.record(.init(hostTime: 100, mediaTime: 13, rate: speed))
+      let late = try XCTUnwrap(events.mediaTime(at: 100.02))
+      XCTAssertEqual(clock.chartTime(mediaTime: late) - tempo.time(at: 6),
+        0.02, accuracy: 1e-9, "20 ms remains 20 ms in the engine's judgment window")
+      XCTAssertEqual(BPMTimeline(level: LevelData(bgmOffset: 0, entities: []),
+        speed: speed).bpm(at: 0), 60 * speed)
+    }
+  }
+
+  func testRuntimeSpeedFeedsBothBPMImportsAndBuiltInTempoFunctions() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},
+      "nodes":[],"buckets":[],"archetypes":[{"name":"#BPM_CHANGE",
+      "hasInput":false,"imports":[{"name":"#BPM","index":0}],"exports":[]}]}
+      """#.utf8))
+    let level = try JSONDecoder().decode(LevelData.self, from: Data(#"""
+      {"bgmOffset":0,"entities":[{"archetype":"#BPM_CHANGE",
+      "data":[{"name":"#BEAT","value":0},{"name":"#BPM","value":120}]}]}
+      """#.utf8))
+    let runtime = try EnginePlayRuntime(engine: engine, level: level, options: [1.5],
+      aspectRatio: 1.8, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [],
+      playbackSpeed: 1.5)
+    XCTAssertEqual(runtime.host.timeline.bpm(at: 0), 180)
+    XCTAssertEqual(runtime.host.timeline.time(at: 6), 2)
+    XCTAssertEqual(runtime.memory.value(block: 4001, index: 0), 180)
+    XCTAssertEqual(runtime.memory.value(block: 2002, index: 0), 1.5)
+  }
+
   func testIntroAdvanceStopsAtAudioAndCannotHangOnExtremeOffsets() {
     XCTAssertEqual(IntroAdvance.nextTime(current: -3, limit: 0,
       nextAudio: -2.99, steps: 1), -2.99)

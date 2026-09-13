@@ -311,6 +311,25 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(host.takeLoopCommands().count, 1)
     XCTAssertNil(host.nextAudioStartTime)
   }
+
+  func testDynamicSpawnsDoNotInventAnInputBoundaryDuringSilentIntro() throws {
+    let builder = RuntimeNodeBuilder()
+    let spawn = builder.call("Spawn", [builder.value(1)])
+    let engine = try builder.engine(archetypes: [
+      ["name": "Init", "hasInput": false, "imports": [], "exports": [],
+       "initialize": ["index": spawn]],
+      ["name": "Dynamic", "hasInput": true, "imports": [], "exports": []]
+    ])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Init", name: nil, data: [])]), options: [],
+      aspectRatio: 1.8, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [])
+    try runtime.update(at: -3)
+    try runtime.update(at: -2)
+    XCTAssertEqual(runtime.inputCount, 0)
+    XCTAssertFalse(runtime.hasActivatedInput,
+      "Spawn has no input, even when its archetype declares hasInput")
+  }
   func testCompatibilityChecksLazyAndSpawnablePathsButNotOrphanedNodes() throws {
     let builder = RuntimeNodeBuilder()
     let unknown = builder.call("UnimplementedHitEffect", [])

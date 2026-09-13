@@ -130,10 +130,11 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     effectClipIDs: Set<Int>,
     particleEffectIDs: Set<Int>,
     archetypeCount: Int,
-    streamEntryLimit: Int = 262_144
+    streamEntryLimit: Int = 262_144,
+    playbackSpeed: Double = 1
   ) {
     self.memory = memory
-    timeline = BPMTimeline(level: level)
+    timeline = BPMTimeline(level: level, speed: playbackSpeed)
     timeScale = TimeScaleTimeline(level: level, bpm: timeline)
     self.skinSpriteIDs = skinSpriteIDs
     self.effectClipIDs = effectClipIDs
