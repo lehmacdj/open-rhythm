@@ -134,6 +134,10 @@ actor OfflineStore {
     let id = manifestID(level: level, server: server)
     var versions = expectedVersions
     if versions[id] == nil { versions[id] = deletionVersions[id, default: 0] }
+    let originID = originKey(level: level, server: server)
+    if versions[originID] == nil {
+      versions[originID] = deletionVersions[originID, default: 0]
+    }
     try checkVersions(versions)
     activeDownloads += 1
     defer { finishDownload() }
@@ -239,14 +243,20 @@ actor OfflineStore {
     activeDownloads += 1
     defer { finishDownload() }
     let startVersions = deletionVersions
-    var expectedVersions = Dictionary(uniqueKeysWithValues: song.variants.map {
+    var expectedVersions = Dictionary(song.variants.map {
       let id = manifestID(level: $0, server: song.server(for: $0))
       return (id, startVersions[id, default: 0])
-    })
+    }, uniquingKeysWith: { first, _ in first })
+    for level in song.variants {
+      let id = originKey(level: level, server: song.server(for: level))
+      expectedVersions[id] = startVersions[id, default: 0]
+    }
     let complete = try await client.completeSong(song, forceReload: forceReload)
     for level in complete.variants {
       let id = manifestID(level: level, server: complete.server(for: level))
       expectedVersions[id] = startVersions[id, default: 0]
+      let originID = originKey(level: level, server: complete.server(for: level))
+      expectedVersions[originID] = startVersions[originID, default: 0]
     }
     var refreshedResources = [URL: OfflineResource]()
     await progress(0, complete.variants.count)
@@ -292,14 +302,14 @@ actor OfflineStore {
       }
       return candidates.count == 1 ? candidates[0] : nil
     }
-    let id = Data("\(server.id):\(level.id)".utf8).sha256Hex
-    let url = manifestsURL.appendingPathComponent("\(id).json")
-    guard fileManager.fileExists(atPath: url.path) else { return nil }
-    let manifest = try JSONDecoder.offline.decode(
-      OfflineLevelManifest.self,
-      from: Data(contentsOf: url)
-    )
-    return resourcesAreValid(in: manifest) ? manifest : nil
+    // History can retain an old server-list ID after removal/re-addition.
+    // Always resolve the newest valid canonical copy, including when an old
+    // exact-ID manifest still exists. No metadata needs destructive migration.
+    let key = originKey(level: level, server: server)
+    return try manifests().first {
+      originKey(level: $0.level, server: $0.server) == key
+        && resourcesAreValid(in: $0)
+    }
   }
 
   func runtimeBundle(
@@ -384,27 +394,23 @@ actor OfflineStore {
     level: SonolusLevelItem,
     from server: ServerDescriptor
   ) -> Bool {
-    let id = Data("\(server.id):\(level.id)".utf8).sha256Hex
-    let url = manifestsURL.appendingPathComponent("\(id).json")
-    guard
-      let data = try? Data(contentsOf: url),
-      let manifest = try? JSONDecoder.offline.decode(
-        OfflineLevelManifest.self,
-        from: data
-      )
-    else { return false }
-    return resourcesAreValid(in: manifest)
+    (try? manifest(level: level, from: server)) != nil
   }
 
   func catalogSongs() throws -> [CatalogSong] {
-    let entries = try manifests()
+    // Older builds may have retained one manifest per alias of a server.
+    // Prefer the newest copy without deleting recoverable on-disk metadata.
+    let entries = Dictionary(try manifests().map {
+      (originKey(level: $0.level, server: $0.server), $0)
+    }, uniquingKeysWith: { first, _ in first }).values
     let offlineServer = ServerDescriptor(
       id: "offline",
       name: "Offline",
       baseURL: rootURL
     )
     let grouped = Dictionary(grouping: entries) { manifest in
-      manifest.catalogLevel.songKey(server: manifest.server)
+      serverOrigin(manifest.server) + "\u{0}"
+        + manifest.catalogLevel.songKey(server: manifest.server)
     }
 
     return grouped.map { key, manifests in
@@ -452,6 +458,8 @@ actor OfflineStore {
     // Derive the filename, never trust a path from a decoded manifest.
     let id = Data("\(manifest.server.id):\(manifest.level.id)".utf8).sha256Hex
     deletionVersions[id, default: 0] += 1
+    deletionVersions[originKey(level: manifest.level, server: manifest.server),
+      default: 0] += 1
     let url = manifestsURL.appendingPathComponent("\(id).json")
     if fileManager.fileExists(atPath: url.path) {
       try fileManager.removeItem(at: url)
@@ -464,15 +472,20 @@ actor OfflineStore {
     let targets = Set(song.variants.map { level in
       Data("\(song.server(for: level).id):\(level.id)".utf8).sha256Hex
     })
+    let origins = Set(song.variants.map {
+      originKey(level: $0, server: song.server(for: $0))
+    })
     // Read all manifests before deleting any; malformed metadata must not
     // cause shared assets to be mistaken for unreferenced files.
     let entries = try manifests()
     // Mark even missing charts so a first download cannot resurrect the song.
     for id in targets { deletionVersions[id, default: 0] += 1 }
+    for id in origins { deletionVersions[id, default: 0] += 1 }
     activeDownloads += 1
     defer { finishDownload() }
     for entry in entries where targets.contains(
-      Data("\(entry.server.id):\(entry.level.id)".utf8).sha256Hex) {
+      Data("\(entry.server.id):\(entry.level.id)".utf8).sha256Hex)
+      || origins.contains(originKey(level: entry.level, server: entry.server)) {
       try remove(entry)
     }
   }
@@ -487,6 +500,16 @@ actor OfflineStore {
   private func manifestID(level: SonolusLevelItem, server: ServerDescriptor)
     -> String {
     Data("\(server.id):\(level.id)".utf8).sha256Hex
+  }
+
+  private func serverOrigin(_ server: ServerDescriptor) -> String {
+    (try? ServerDescriptor.normalizedURL(server.baseURL.absoluteString))?
+      .absoluteString ?? server.baseURL.absoluteString
+  }
+
+  private func originKey(level: SonolusLevelItem, server: ServerDescriptor)
+    -> String {
+    serverOrigin(server) + "\u{0}" + level.id
   }
 
   private func checkVersions(_ expected: [String: Int]) throws {
@@ -673,7 +696,9 @@ extension Data {
 private extension JSONEncoder {
   static var offline: JSONEncoder {
     let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .iso8601
+    // Preserve subsecond ordering when two server aliases are updated during
+    // one second; ISO8601's default encoding discards those fractions.
+    encoder.dateEncodingStrategy = .deferredToDate
     encoder.outputFormatting = [.sortedKeys]
     return encoder
   }
@@ -682,7 +707,18 @@ private extension JSONEncoder {
 private extension JSONDecoder {
   static var offline: JSONDecoder {
     let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
+    decoder.dateDecodingStrategy = .custom { decoder in
+      let value = try decoder.singleValueContainer()
+      if let seconds = try? value.decode(Double.self) {
+        return Date(timeIntervalSinceReferenceDate: seconds)
+      }
+      let text = try value.decode(String.self)
+      guard let date = ISO8601DateFormatter().date(from: text) else {
+        throw DecodingError.dataCorruptedError(in: value,
+          debugDescription: "Invalid download date")
+      }
+      return date
+    }
     return decoder
   }
 }

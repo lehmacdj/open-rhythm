@@ -40,8 +40,9 @@ final class CatalogModel {
 
   var hasMorePages: Bool { loadedPageCount < totalPageCount }
   var showsPaginationStatus: Bool {
-    loadedPageCount > 0 && (isLoading || (hasMorePages
-      && (errorMessage != nil || visibleSongs.isEmpty || needsMoreMatches)))
+    if errorMessage != nil && !isLoading { return true }
+    return loadedPageCount > 0 && (isLoading || (hasMorePages
+      && (visibleSongs.isEmpty || needsMoreMatches)))
   }
 
   init(server: ServerDescriptor, client: SonolusClient = SonolusClient(),

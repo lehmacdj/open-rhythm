@@ -3,6 +3,93 @@ import XCTest
 
 final class OfflineStoreTests: XCTestCase {
   @MainActor
+  func testFirstPageFailureOffersRetryWithoutAnEmptySuccessRow() async {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    StubURLProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+    await model.refresh()
+    XCTAssertEqual(model.loadedPageCount, 0)
+    XCTAssertTrue(model.showsPaginationStatus)
+    XCTAssertTrue(model.hasMorePages)
+    StubURLProtocol.handler = { _ in Data(#"{"pageCount":0,"items":[]}"#.utf8) }
+    await model.loadNextPage()
+    XCTAssertNil(model.errorMessage)
+    XCTAssertFalse(model.showsPaginationStatus)
+  }
+
+  @MainActor
+  func testReaddingServerReusesDownloadsAndLegacyAliasesCanUpdateAndDelete()
+    async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let servers = ServerStore(fileURL: root.appendingPathComponent("servers.json"))
+    let original = servers.servers[0]
+    let level = SonolusLevelItem(name: "chart", source: nil, version: 1,
+      rating: 1, title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+      author: "Fixture", tags: [], cover: ResourceLocator(hash: nil, url: nil),
+      bgm: ResourceLocator(hash: nil, url: "https://assets.example/data"),
+      data: ResourceLocator(hash: nil, url: "https://assets.example/data"))
+    let details = Data(#"""
+      {"item":{"bgm":{"url":"https://assets.example/data"},
+      "data":{"url":"https://assets.example/data"},
+      "engine":{"version":13,"playData":{"url":"https://assets.example/data"}}}}
+      """#.utf8)
+    let list = try JSONEncoder().encode(SonolusLevelList(pageCount: 1, items: [level]))
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      if request.url?.host == "assets.example" { return Data("fixture".utf8) }
+      return request.url?.lastPathComponent == "list" ? list : details
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let store = OfflineStore(rootURL: root.appendingPathComponent("Offline"),
+      client: SonolusClient(session: session))
+    let saved = try await store.download(level: level, from: original)
+    try servers.remove(at: IndexSet(integer: 0))
+    try servers.add(url: original.baseURL, name: original.name)
+    let readded = servers.servers[0]
+    XCTAssertNotEqual(original.id, readded.id)
+    let before = recorder.urls.count
+    let reused = try await store.download(level: level, from: readded)
+    XCTAssertEqual(reused.id, saved.id)
+    XCTAssertEqual(recorder.urls.count, before, "Alias changes need no download")
+    // A forced refresh reproduces the duplicate manifests left by old builds.
+    StubURLProtocol.handler = { request in
+      if request.url?.host == "assets.example" { return Data("updated".utf8) }
+      return request.url?.lastPathComponent == "list" ? list : details
+    }
+    let refreshed = try await store.download(level: level, from: readded, forceReload: true)
+    let historyLookup = try await store.manifest(level: level, from: original)
+    let readdedLookup = try await store.manifest(level: level, from: readded)
+    XCTAssertEqual(historyLookup, refreshed)
+    XCTAssertEqual(readdedLookup, refreshed)
+    XCTAssertNotEqual(saved.resources, refreshed.resources)
+    let manifests = try await store.manifests()
+    XCTAssertEqual(manifests.count, 2)
+    let songs = try await store.catalogSongs()
+    XCTAssertEqual(songs.count, 1)
+    XCTAssertEqual(songs[0].variants.count, 1)
+    _ = try await store.download(song: songs[0], forceReload: true)
+    // A second URL is a distinct server, even with the same chart and audio.
+    let other = ServerDescriptor(id: "other", name: "Other",
+      baseURL: URL(string: "https://other.example")!)
+    _ = try await store.download(level: level, from: other)
+    let separate = try await store.catalogSongs()
+    XCTAssertEqual(separate.count, 2)
+    try await store.remove(song: songs[0])
+    let remaining = try await store.manifests()
+    XCTAssertEqual(remaining.map(\.server.id), [other.id])
+  }
+
+  @MainActor
   func testPaginationModeChangeDoesNotSilentlyAppendAnUnrelatedPage() async throws {
     StubURLProtocol.handler = { request in
       let hasCursor = request.url!.absoluteString.contains("cursor=")
