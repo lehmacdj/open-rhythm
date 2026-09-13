@@ -103,8 +103,12 @@ engine families. See [the conformance checklist](COMPATIBILITY.md).
 Bounded compatibility checks on September 10, 2026 used one catalog page and one
 chart per candidate server. Both Project SEKAI and SIF Custom Charts returned
 version-13 engines. SIF Custom Charts' LLSIF engine ran its first ten seconds
-(658 chart inputs, 34 resolved without touches); this is not a complete visual
-or audio verification. Project SEKAI's cached `next-sekai` chart now completes
+(658 chart inputs, 34 resolved without touches). The September 13 follow-up
+for UNSTOPPABLE rating 11 resolves all 658 inputs at 60 Hz. Two native 1×
+starts exercise successful holds/releases and paired taps, with inspected
+hit-effect frames. A complete native 2× run waits beyond the last input until
+audio EOF and saves the full result. Physical-device verification remains open.
+Project SEKAI's cached `next-sekai` chart now completes
 a 240-second no-touch simulation (1,210 inputs resolved, sampled at 10 Hz),
 with 70 inputs resolved in a separate first-ten-seconds run at 60 Hz. It uses
 the engine's compressed Float32 ROM, bounded streams, BPM lookup, easing, and

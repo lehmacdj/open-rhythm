@@ -71,8 +71,13 @@ per-note timing charts.
   release and simultaneous tap PERFECT; hit-effect frames were inspected.
   This does not certify every flick/hold variant or a whole physical play.
 - **SIF Custom Charts:** its 658-input LLSIF-family chart had a bounded first
-  ten seconds exercised. Full native visual/audio/input coverage is still less
-  extensive than the three fixtures above.
+  ten seconds exercised originally. The follow-up cached UNSTOPPABLE rating 11
+  run now resolves all 658 inputs at 97.55 s. Two native 1× starts judged the
+  opening hold, release, simultaneous release/tap and paired taps PERFECT,
+  with no backward clock jumps; pre-hit and hit-effect frames were inspected.
+  A complete native 2× run remained in gameplay at the last input (48.85 s),
+  finished at audio EOF (51.192 s), and retained all 658 timings with matching
+  live/saved accuracy scores. These are simulator checks, not phone sign-off.
 - **Timing:** touch uptime is mapped through AVPlayer's timebase and rate
   transition history instead of frame/delivery time. No guessed calibration
   offset was added. Simulator event-clock agreement is not output-latency or
@@ -97,7 +102,7 @@ per-note timing charts.
 3. Safe intro skipping currently analyzes local audio only. Streamed intros
    remain intact when silence is unknown; `bgmOffset` alone is not evidence
    of silence. First-input activation can be earlier than first visible pixels.
-4. More complete SIF Custom Charts and real-device engine integration runs.
+4. Real-device engine integration runs beyond the cached simulator fixtures.
 
 ## Deliberately not added / superseded requests
 
