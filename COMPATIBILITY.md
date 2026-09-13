@@ -32,13 +32,21 @@ integration probes, including successful inputs and restart/buffering paths.
   textures and draw alpha, mirrored geometry, transparent texels, and genuine
   folded overlap. Software mesh frames share one texture cache and work budget;
   ordinary all-affine frames retain their Core Graphics fast path.
+- Generic slider/toggle/select options, malformed defaults/ranges, unknown
+  types, dedicated-control routing by type rather than name, and persistence.
+  Standard gameplay overrides are retained with results.
+- Engine playback speed changes BGM rate and BPM values together; chart and
+  event clocks remain in real seconds, including lead-in and audio EOF tails.
+- Engine combo animations and judgment animation final-state retention.
+- Spawned entities have no input, even if their archetype declares hasInput;
+  they must not introduce a false first-note boundary while skipping silence.
 
 ## Remaining checks, including engines we have not sampled
 
 - Stack layout/control semantics and all skin render modes.
 - Optional/missing resources, callback-specific memory access and defaults,
-  dynamically spawned inputs, generic options, and unknown enum values.
-- Accuracy/error-heatmap HUD metrics, combo animations, alternate timing
+  and unknown enum values.
+- Accuracy/error-heatmap HUD metrics and alternate timing
   indicator styles; tutorial/watch/preview modes are separate capability sets.
 - Expired cursors, changing remote ordering, and sparse filtered results
   without unbounded crawls.
@@ -54,3 +62,12 @@ and [engine specifications](https://wiki.sonolus.com/engine-specs/).
 Download probes remain in ignored scratch storage; no third-party charts or
 assets belong in the regression fixtures. Avoid catalog crawls: use bounded
 pages and cached shared resources, and state exactly which paths were exercised.
+
+OpenRhythm intentionally keeps gameplay preferences per engine, following the
+requested settings policy, rather than sharing generic options across engines
+by Sonolus `scope` or saving unscoped options per level. Playback speed is
+bounded to 0.05–4×; unsupported values fail explicitly before music starts.
+The public contracts for [options](
+https://wiki.sonolus.com/engine-specs/resources/engine-configuration-option) and
+[Spawn](https://wiki.sonolus.com/engine-specs/functions/spawn) inform the tests.
+See [the thread request audit](REQUESTS.md) for delivery vs verification status.

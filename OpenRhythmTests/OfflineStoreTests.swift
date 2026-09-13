@@ -22,6 +22,55 @@ final class OfflineStoreTests: XCTestCase {
   }
 
   @MainActor
+  func testRepeatedEmptySearchAndShrinkingPagesNeverBuildAnInvalidRange()
+    async throws {
+    // Apple incident 68171806 (0.1.0 build 1): prefetch constructed a range
+    // with loadedPageCount 1 and a zero-page search response as its upper end.
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    StubURLProtocol.handler = { request in
+      let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+        .queryItems?.first { $0.name == "keywords" }?.value ?? ""
+      let count = query.count % 3
+      return Data("{\"pageCount\":\(count),\"items\":[]}".utf8)
+    }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    for length in 0..<30 {
+      model.query = String(repeating: "a", count: length)
+      await model.refresh()
+      await model.prefetchNextPages()
+      await model.loadNextPage()
+      await model.prefetchNextPages()
+      XCTAssertNil(model.errorMessage)
+      XCTAssertFalse(model.hasMorePages)
+    }
+  }
+
+  func testOfflineDateMigrationReadsLegacyISO8601AndPreciseNewDates() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("Manifests")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    let manifest: [String: Any] = ["id": "legacy", "downloadedAt": "2026-09-10T12:34:56Z",
+      "server": ["id": "legacy", "name": "Fixture", "baseURL": "https://example.com"],
+      "level": ["name": "chart", "version": 1, "rating": 1,
+        "title": "Song", "artists": "Artist", "author": "Fixture",
+        "tags": [], "cover": [:], "bgm": [:], "data": [:]],
+      "itemData": "e30=", "resources": []]
+    try JSONSerialization.data(withJSONObject: manifest)
+      .write(to: directory.appendingPathComponent("legacy.json"))
+    let store = OfflineStore(rootURL: root)
+    let loaded = try await store.manifests()
+    XCTAssertEqual(loaded.first?.downloadedAt,
+      ISO8601DateFormatter().date(from: "2026-09-10T12:34:56Z"))
+  }
+
+  @MainActor
   func testReaddingServerReusesDownloadsAndLegacyAliasesCanUpdateAndDelete()
     async throws {
     let root = FileManager.default.temporaryDirectory
@@ -543,7 +592,7 @@ final class OfflineStoreTests: XCTestCase {
       cache: SonolusResponseCache(rootURL: root.appendingPathComponent("Responses")))
     let store = OfflineStore(rootURL: root.appendingPathComponent("Offline"),
       client: client)
-    try await store.download(level: levels[0], from: server)
+    _ = try await store.download(level: levels[0], from: server)
     let partialStatus = await store.containsAllDifficulties(
       of: song, discoverySucceeded: false)
     XCTAssertFalse(partialStatus,

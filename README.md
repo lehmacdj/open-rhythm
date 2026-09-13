@@ -25,8 +25,11 @@ branding, or reverse-engineered implementation details.
 - Persist results with navigable score, combo, and judgement breakdowns.
 - Wait for the music to end before showing results; preserve chart/audio lead-in.
 - Save per-engine note speed and count-up/count-down score display settings.
+- Expose engine-defined slider/toggle/select settings and record changes to
+  standard gameplay options with results. Coordinate engine speed with BGM/BPM.
 - Use engine-defined score weights, life rules, HUD layout, judgment animation,
-  and Early/Late position and threshold. Store life/failure with new results.
+  combo animation, and Early/Late position and threshold. Store life/failure
+  with new results.
 
 This is still a compatibility milestone, not a complete Sonolus implementation.
 
@@ -87,8 +90,8 @@ This is a capability check, not proof of semantic conformance or playability.
 
 General third-party engine compatibility is **not yet guaranteed**. Known gaps
 include stack functions, full skin render-mode
-semantics, accuracy/error-heatmap HUD metrics, combo animations, timing-indicator
-styles beyond Early/Late text, and generic engine-option controls. The native
+semantics, accuracy/error-heatmap HUD metrics, and timing-indicator
+styles beyond Early/Late text. The native
 exit/restart menu remains app-positioned. Unknown metric names display a dash,
 not a substituted score. Engines can also contain editor-only entities with no
 matching play archetype; these remain non-executing metadata. Resource
@@ -121,6 +124,22 @@ optional tag titles/bucket units, Execute0, quick search, and opaque-cursor
 pagination. A single cached 22/7 catalog page exposed Pro 4.9 ratings; its
 シャンプーの匂いがした Pro chart resolves 949/949 inputs without touches.
 This is decoding/lifecycle coverage, not a claim of verified device playability.
+
+The September 13 audit additionally prepared that cached 22/7 chart's skin,
+particle, and audio resources. A native playback probe judged its first slide
+head, slide release, and simultaneous tap PERFECT. Software-rendered frames
+were visually inspected before and during hit effects. A 1,200-frame runtime
+and sprite-generation probe averaged 1.21 ms with 1.62 ms p95 on the simulator;
+these are not physical-device frame times. Seven missing resources were fetched
+once (six shared presentation assets and one song's BGM), with no new catalog
+pages. Cached Hikari native playback at 0.5× and 1.5× also retained monotonic
+clocks and event/playback mapping agreement within 10 microseconds.
+
+The uploaded TestFlight search crash was retrieved from Apple analytics for
+`is.devin.OpenRhythm`: build 1, September 10, `CatalogModel.prefetchNextPages`,
+Swift invalid-range trap. Existing empty/shrinking-page guards address it;
+the audit adds a repeated-search regression. This is not confirmation that a
+new TestFlight build containing these changes has been shipped.
 
 Timing distributions now use continuous density curves with no data bins.
 Known automatic hold checkpoints are excluded only from the distribution,
