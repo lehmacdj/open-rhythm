@@ -1,5 +1,134 @@
 import AVFoundation
+import CoreHaptics
 import zlib
+
+extension EngineHaptic {
+  // The engine contract names strengths, not platform-specific waveforms.
+  // Use short transients for impacts and a bounded continuous event for Long.
+  var parameters: (intensity: Float, sharpness: Float, duration: Double)? {
+    switch self {
+    case .none: nil
+    case .light: (0.35, 0.6, 0)
+    case .medium: (0.65, 0.5, 0)
+    case .heavy: (1, 0.4, 0)
+    case .long: (0.65, 0.4, 0.15)
+    }
+  }
+}
+
+@MainActor
+protocol EngineHapticBackend: AnyObject {
+  var interrupted: (() -> Void)? { get set }
+  func start() throws
+  func play(_ type: EngineHaptic) throws
+  func stop()
+}
+
+@MainActor
+private final class NativeHapticBackend: EngineHapticBackend {
+  var interrupted: (() -> Void)?
+  private let engine: CHHapticEngine
+  private var players = [EngineHaptic: any CHHapticPatternPlayer]()
+
+  init() throws {
+    engine = try CHHapticEngine()
+    engine.playsHapticsOnly = true
+    engine.isAutoShutdownEnabled = false
+    engine.resetHandler = { [weak self] in
+      Task { @MainActor in self?.interrupted?() }
+    }
+    engine.stoppedHandler = { [weak self] _ in
+      Task { @MainActor in self?.interrupted?() }
+    }
+  }
+
+  func start() throws {
+    players.removeAll()
+    try engine.start()
+    for type in EngineHaptic.allCases {
+      guard let values = type.parameters else { continue }
+      let event = CHHapticEvent(eventType: values.duration > 0
+        ? .hapticContinuous : .hapticTransient, parameters: [
+          CHHapticEventParameter(parameterID: .hapticIntensity, value: values.intensity),
+          CHHapticEventParameter(parameterID: .hapticSharpness, value: values.sharpness)
+        ], relativeTime: 0, duration: values.duration)
+      let pattern = try CHHapticPattern(events: [event], parameters: [])
+      players[type] = try engine.makePlayer(with: pattern)
+    }
+  }
+
+  func play(_ type: EngineHaptic) throws {
+    // Prebuilt players bound work and allocation when a dense chord resolves.
+    try players[type]?.start(atTime: CHHapticTimeImmediate)
+  }
+
+  func stop() {
+    interrupted = nil
+    players.removeAll()
+    engine.resetHandler = {}
+    engine.stoppedHandler = { _ in }
+    engine.stop(completionHandler: nil)
+  }
+}
+
+@MainActor
+final class EngineHapticPlayback {
+  private let makeBackend: @MainActor () -> (any EngineHapticBackend)?
+  private let now: () -> Double
+  private var backend: (any EngineHapticBackend)?
+  private var needsRecovery = false
+  private var lastRecovery = -Double.infinity
+  var isPrepared: Bool { backend != nil && !needsRecovery }
+
+  init(makeBackend: @escaping @MainActor () -> (any EngineHapticBackend)? = {
+    guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return nil }
+    return try? NativeHapticBackend()
+  }, now: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
+    self.makeBackend = makeBackend
+    self.now = now
+  }
+
+  convenience init(hardwareAvailable: Bool) {
+    self.init(makeBackend: { hardwareAvailable ? try? NativeHapticBackend() : nil })
+  }
+
+  func start() {
+    stop()
+    guard let backend = makeBackend() else { return }
+    self.backend = backend
+    backend.interrupted = { [weak self, weak backend] in
+      guard let self, let backend, self.backend === backend else { return }
+      self.needsRecovery = true
+    }
+    do { try backend.start() } catch {
+      needsRecovery = true
+      lastRecovery = now()
+    }
+  }
+
+  func play(_ type: EngineHaptic) {
+    guard type != .none, let backend else { return }
+    if needsRecovery {
+      let time = now()
+      guard time.isFinite, time - lastRecovery >= 1 else { return }
+      lastRecovery = time
+      do {
+        try backend.start()
+        needsRecovery = false
+      } catch { return }
+    }
+    do { try backend.play(type) } catch { needsRecovery = true }
+  }
+
+  func stop() {
+    let previous = backend
+    backend = nil
+    needsRecovery = false
+    lastRecovery = -.infinity
+    previous?.interrupted = nil
+    previous?.stop()
+  }
+}
 
 /// Reads only named files into memory. Archive paths are never written to disk.
 struct EffectAudioArchive {

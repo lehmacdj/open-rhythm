@@ -39,6 +39,20 @@ struct EngineJudgment: Sendable {
   let entityIndex: Int
   let grade: Int
   let accuracy: Double
+  var haptic: EngineHaptic = .none
+}
+
+enum EngineHaptic: Int, CaseIterable, Sendable {
+  case none, light, medium, heavy, long
+
+  init(runtimeValue: Double) {
+    self = Int(exactly: runtimeValue).flatMap(Self.init(rawValue:)) ?? .none
+  }
+
+  /// A chord is one physical feedback event, not many overlapping vibrations.
+  static func combined(_ values: [Self]) -> Self {
+    values.max { $0.rawValue < $1.rawValue } ?? .none
+  }
 }
 
 struct EngineScoreSnapshot: Equatable {
@@ -451,7 +465,8 @@ final class EnginePlayRuntime {
             + memory.value(block: 4007, index: gradeIndex))
         judgments.append(EngineJudgment(
           entityIndex: index, grade: Int(exactly: grade) ?? 0,
-          accuracy: accuracy
+          accuracy: accuracy,
+          haptic: EngineHaptic(runtimeValue: memory.value(block: 4005, index: 4))
         ))
         resolvedInputCount += 1
       }

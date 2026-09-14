@@ -162,6 +162,7 @@ final class GameplayModel {
   private(set) var presentationAssets: EnginePresentationAssets?
   private var runtimeBundle: RuntimeBundle?
   private var engineAudio: EngineAudioPlayback?
+  private let engineHaptics = EngineHapticPlayback()
   private var engineAspectRatio: Double?
   private var preferenceKey = ""
   var settings = GameplayPreferences() {
@@ -472,6 +473,7 @@ final class GameplayModel {
       presentationAssets == nil || engineRuntime != nil else { return }
     do {
       try engineAudio?.start()
+      if engineRuntime != nil { engineHaptics.start() }
       if let timebase = player?.currentItem?.timebase {
         eventClock = PlaybackEventClock(timebase: timebase)
       }
@@ -548,6 +550,7 @@ final class GameplayModel {
     player?.pause()
     eventClock = nil
     engineAudio?.stop()
+    engineHaptics.stop()
     if let timeObserver {
       player?.removeTimeObserver(timeObserver)
       self.timeObserver = nil
@@ -697,6 +700,9 @@ final class GameplayModel {
 
   private func ingestJudgments(from runtime: EnginePlayRuntime) {
     engineAccuracy = runtime.accuracyScore.snapshot(noteCount: runtime.inputCount)
+    if !isStartingPlayback {
+      engineHaptics.play(EngineHaptic.combined(runtime.judgments.map(\.haptic)))
+    }
     for judgment in runtime.judgments {
       let metadata = inputMetadata.indices.contains(judgment.entityIndex)
         ? inputMetadata[judgment.entityIndex] : (time: nil, type: "Unknown")

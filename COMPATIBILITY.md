@@ -46,6 +46,10 @@ integration probes, including successful inputs and restart/buffering paths.
 - Unused skin, effect, and particle families need no placeholder assets.
   Skin-only and particle-only initialization preserve the other family and
   interpolation settings. Declared families still require valid resources.
+- Final EntityInput haptic requests are sampled after terminate and consumed
+  once. Prebuilt haptics-only players support Light/Medium/Heavy/Long; no-hardware
+  hosts remain playable. Reset/stop recovery is bounded and stale callbacks
+  cannot affect a restarted session. Physical waveform/latency checks remain open.
 
 ## Remaining checks, including engines we have not sampled
 
@@ -85,3 +89,8 @@ The public description does not specify live count-up behavior or rounding:
 OpenRhythm normalizes resolved contributions by the full input count, rounds
 to an integer, and clamps the display to 0–1,000,000. Countdown reserves perfect
 credit for unresolved inputs. These display policies do not adjust touch timing.
+
+Haptic types follow EntityInput. Exact platform waveforms and chord mixing are
+host policy: simultaneous requests use the strongest type, and Long is a 150 ms
+continuous effect. Unknown type values do not synthesize feedback. Haptics never
+replace engine sound effects, and failures do not abort gameplay.
