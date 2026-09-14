@@ -18,6 +18,11 @@ integration probes, including successful inputs and restart/buffering paths.
   all-difficulty lookup.
 - Execute0 and existing arithmetic, easing, memory-addressing, lifecycle,
   score/life, resource, timing, and host-command tests.
+- Integer-switch discriminants and JumpLoop targets match exact branch labels.
+  Fractional values, nonfinite arithmetic results, and oversized values take
+  the no-match/default path instead of truncating to an unrelated branch or
+  throwing during integer conversion. Side-effect tests verify the discriminant
+  runs once and unselected branches never run; genuine loops remain bounded.
 - Despawning is two-phase: all terminating entities retain Active state while
   all terminate callbacks execute, then final inputs are sampled and entities
   despawn. Synthetic linked peers cover same-frame state visibility and later
@@ -93,9 +98,10 @@ integration probes, including successful inputs and restart/buffering paths.
 - Stack layout/control semantics and native rendering parity.
 - Optional/missing resources, callback-specific memory access and defaults,
   and unknown enum values.
-- Runtime metadata lists a play-mode `skip` slot, while the public play block
-  documentation does not explain it. It remains zero pending evidence of the
-  intended semantics; intro fast-forward does not assume an undocumented mode.
+- Runtime metadata lists a play-mode `skip` slot. The public Python framework
+  describes it as a time skip in the current frame, but the play block docs
+  omit its seek/resimulation behavior. It remains zero: intro fast-forward
+  currently simulates successive frames, rather than jumping the runtime clock.
 - Tutorial/watch/preview modes are separate capability sets, not implied by
   play-mode support.
 - Expired cursors, changing remote ordering, and sparse filtered results
@@ -119,6 +125,27 @@ terminate callbacks before despawning any entity. The old serial implementation
 interleaved those operations, making later callbacks observe earlier peers as
 already despawned. The regression is synthetic, not dependent on a sampled
 engine happening to exercise this legal cross-entity read.
+
+Branch dispatch follows [SwitchInteger](
+https://wiki.sonolus.com/engine-specs/functions/switch-integer), its
+[default variant](https://wiki.sonolus.com/engine-specs/functions/switch-integer-with-default),
+and [JumpLoop](https://wiki.sonolus.com/engine-specs/functions/jump-loop).
+The previous implementation reused a truncating memory-address conversion for
+branch labels, so -0.25 could select/repeat branch zero. The public
+[Sonolus.py reference interpreter](https://github.com/qwewqa/sonolus.py/blob/master/sonolus/backend/interpret.py)
+also uses exact matching. The regression failed before the correction and
+passes afterward. Future numeric-argument checks must distinguish exact labels,
+addresses, ordinary arithmetic and enums instead of sharing one conversion.
+After this dispatch change, cached 600-frame no-touch openings for Eleventh,
+光, SIF Custom Charts and 22/7 ran without errors or duplicate inputs, resolving
+51, 57, 34 and 48 inputs respectively. These bounded openings supplement the
+synthetic branch tests; they are not full-chart or physical-device sign-off.
+
+Stack ABI research also checked that public Python interpreter; like the
+JavaScript wrappers, it does not implement stack functions. This is not evidence
+that an engine using those functions will work. The public
+[runtime API](https://github.com/qwewqa/sonolus.py/blob/master/sonolus/script/runtime.py)
+supplies the current description of the skip flag.
 
 After the two-phase fix, cached no-touch lifecycle runs resolved each input
 exactly once: Eleventh Hard 16 419/419 at 92.017 s; 光 Hard 18 563/563 at

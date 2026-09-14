@@ -392,7 +392,9 @@ final class EngineInterpreter {
       while arguments.indices.contains(branch) {
         let result = try evaluate(arguments[branch])
         if branch == arguments.count - 1 { return result }
-        branch = try integer(result, function: function)
+        guard let next = Int(exactly: result), arguments.indices.contains(next)
+        else { return 0 }
+        branch = next
       }
       return 0
     case .`lerp`, .`lerpClamped`:
@@ -621,10 +623,12 @@ final class EngineInterpreter {
       throw EngineInterpreterError.invalidArguments(function)
     }
 
-    let discriminant = try integer(evaluate(arguments[0]), function: function)
+    let discriminant = try evaluate(arguments[0])
     let branchCount = arguments.count - (hasDefault ? 2 : 1)
-    if discriminant >= 0, discriminant < branchCount {
-      return try evaluate(arguments[discriminant + 1])
+    // Branch labels are exact integers, not truncated addresses. Fractional
+    // and nonfinite results match no label and must not execute its effects.
+    if let branch = Int(exactly: discriminant), branch >= 0, branch < branchCount {
+      return try evaluate(arguments[branch + 1])
     }
     return hasDefault ? try evaluate(arguments.last!) : 0
   }

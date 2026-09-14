@@ -655,6 +655,67 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(try interpreter.execute(nodeAt: 5), 22)
   }
 
+  func testIntegerSwitchMatchesExactlyAndEvaluatesOnlySelectedBranches() throws {
+    let discriminants: [Double] = [-0.0, 1, -0.25, 0.25, 1.25, -1, 2,
+      Double(Int.max), 1e100, .infinity, -.infinity, .nan]
+    for discriminant in discriminants {
+      for hasDefault in [false, true] {
+        let memory = EngineMemory()
+        let nodes = [
+          EngineDataNode(value: 2000), // 0: block
+          EngineDataNode(value: 0),    // 1: discriminator counter slot
+          EngineDataNode(value: 1),    // 2: branch-zero slot / increment
+          EngineDataNode(value: 2),    // 3: branch-one slot
+          EngineDataNode(value: 11),   // 4: branch-zero result
+          EngineDataNode(value: 22),   // 5: branch-one result
+          EngineDataNode(value: 33),   // 6: default slot and result
+          EngineDataNode(value: discriminant),
+          EngineDataNode(function: "SetAdd", arguments: [0, 1, 2]),
+          EngineDataNode(function: "Execute", arguments: [8, 7]),
+          EngineDataNode(function: "Set", arguments: [0, 2, 4]),
+          EngineDataNode(function: "Set", arguments: [0, 3, 5]),
+          EngineDataNode(function: "Set", arguments: [0, 6, 6]),
+          EngineDataNode(function: hasDefault
+            ? "SwitchIntegerWithDefault" : "SwitchInteger",
+            arguments: [9, 10, 11] + (hasDefault ? [12] : []))
+        ]
+        let interpreter = EngineInterpreter(nodes: nodes, memory: memory)
+        let zero = discriminant == 0
+        let one = discriminant == 1
+        let useDefault = !zero && !one && hasDefault
+        XCTAssertEqual(try interpreter.execute(nodeAt: 13),
+          zero ? 11 : one ? 22 : useDefault ? 33 : 0,
+          "Discriminant \(discriminant), default \(hasDefault)")
+        XCTAssertEqual(memory.value(block: 2000, index: 0), 1)
+        XCTAssertEqual(memory.value(block: 2000, index: 1), zero ? 11 : 0)
+        XCTAssertEqual(memory.value(block: 2000, index: 2), one ? 22 : 0)
+        XCTAssertEqual(memory.value(block: 2000, index: 33), useDefault ? 33 : 0)
+      }
+    }
+  }
+
+  func testJumpLoopUnmatchedTargetsDoNotExecuteOrRepeatBranches() throws {
+    for target: Double in [-0.25, 0.25, 1.25, -1, 2, Double(Int.max),
+      1e100, .infinity, -.infinity, .nan] {
+      let memory = EngineMemory()
+      let nodes = [
+        EngineDataNode(value: 2000),
+        EngineDataNode(value: 0),
+        EngineDataNode(value: 1),
+        EngineDataNode(value: target),
+        EngineDataNode(function: "SetAdd", arguments: [0, 1, 2]),
+        EngineDataNode(function: "Execute", arguments: [4, 3]),
+        EngineDataNode(function: "UnselectedBranch", arguments: []),
+        EngineDataNode(function: "JumpLoop", arguments: [5, 6])
+      ]
+      let interpreter = EngineInterpreter(nodes: nodes, memory: memory,
+        operationLimit: 100)
+      XCTAssertEqual(try interpreter.execute(nodeAt: 7), 0, "Target \(target)")
+      XCTAssertEqual(memory.value(block: 2000, index: 0), 1,
+        "An invalid target must exit, not re-enter branch zero")
+    }
+  }
+
   func testJumpLoopDispatchIsLazyAndReturnsFinalBranch() throws {
     let nodes = [
       EngineDataNode(value: 2),
@@ -692,7 +753,7 @@ final class RuntimeDecodingTests: XCTestCase {
         return XCTFail("Expected an operation limit, got \(error)")
       }
     }
-    XCTAssertThrowsError(try interpreter.execute(nodeAt: 8))
+    XCTAssertEqual(try interpreter.execute(nodeAt: 8), 0)
     XCTAssertEqual(try interpreter.execute(nodeAt: 5), 42,
       "A failed callback must not poison the next execution")
   }
