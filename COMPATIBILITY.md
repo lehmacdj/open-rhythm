@@ -44,6 +44,11 @@ integration probes, including successful inputs and restart/buffering paths.
   and unsupported interpreted engines do not start a music fetch. Basic lane
   fallback charts retain their existing no-interpreter behavior.
 - Engine combo animations and judgment animation final-state retention.
+- All 13 judgment error styles: None, word pairs, signs, arrows and triangles,
+  with positive/negative direction from the public localization descriptions.
+  Indicators appear only above the configured minimum error, including on
+  PERFECTs; style and display settings do not alter timing or grades. A native
+  preview covers every style in both directions.
 - Accuracy scoring consumes final EntityInput values, including misses and
   automatic ticks, independently of arcade weights or timing-plot filters.
   Scores persist in history; old miss-free samples do not invent legacy scores.
@@ -62,8 +67,8 @@ integration probes, including successful inputs and restart/buffering paths.
 - Stack layout/control semantics and all skin render modes.
 - Optional/missing resources, callback-specific memory access and defaults,
   and unknown enum values.
-- Error-heatmap HUD metrics and alternate timing
-  indicator styles; tutorial/watch/preview modes are separate capability sets.
+- Error-heatmap HUD metrics; tutorial/watch/preview modes are separate
+  capability sets.
 - Expired cursors, changing remote ordering, and sparse filtered results
   without unbounded crawls.
 - Engine-generated count-ins and visible non-input intro effects. First-input
@@ -106,3 +111,9 @@ stalls during the song and a separate silence-analysis transfer. It uses the
 existing ten-minute response-cache freshness policy. Prepared music is limited
 to 128 MiB after downloading; this is not a streaming download-size limit.
 Cancelling one consumer does not abort a shared cache request used by others.
+
+Timing style pairs and their sign convention follow the official
+[English UI descriptions](https://github.com/Sonolus/i18n/blob/develop/src/localizations/en/Localization.json).
+For example, the `early` style intentionally displays Early for positive error,
+and Late for negative error. Omitted or unknown style values retain the default
+Late/Early pair; `none` hides only the timing indicator, not the judgment grade.

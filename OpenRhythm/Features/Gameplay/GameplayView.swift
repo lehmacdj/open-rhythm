@@ -176,6 +176,7 @@ struct GameplayView: View {
           mode: model.settings.judgementDisplay,
           animation: model.presentationAssets?.ui?.judgmentAnimation,
           timingPlacement: model.presentationAssets?.ui?.judgmentErrorPlacement,
+          timingStyle: model.presentationAssets?.ui?.judgmentErrorStyle,
           fontSize: model.engineUI[1].values[5] * size.height / 2)
       }
       if model.combo > 0 {
@@ -449,6 +450,7 @@ private struct JudgementOverlay: View {
   let mode: JudgementDisplayMode
   var animation: EngineConfiguration.UI.Animation? = nil
   var timingPlacement: String? = nil
+  var timingStyle: String? = nil
   var fontSize: CGFloat? = nil
   @State private var visible = false
   @State private var isAnimating = false
@@ -459,7 +461,7 @@ private struct JudgementOverlay: View {
       let elapsed = isAnimating ? max(0, context.date.timeIntervalSince(started))
         : animation?.duration ?? 0.65
       JudgementLabel(feedback: feedback, mode: mode, fontSize: fontSize,
-        timingPlacement: timingPlacement)
+        timingPlacement: timingPlacement, timingStyle: timingStyle)
         .scaleEffect(animation?.scale.value(at: elapsed) ?? 1)
         .opacity(visible && mode != .off
           ? min(1, max(0, animation?.alpha.value(at: elapsed) ?? 1)) : 0)
@@ -511,13 +513,14 @@ private struct JudgementLabel: View {
   let mode: JudgementDisplayMode
   var fontSize: CGFloat? = nil
   var timingPlacement: String? = nil
+  var timingStyle: String? = nil
 
   var body: some View {
     JudgmentTimingLayout(placement: feedback?.timingPlacement(timingPlacement) ?? "top") {
       Text(feedback?.judgement.rawValue.uppercased() ?? "")
         .font(fontSize.map { .system(size: $0, weight: .bold, design: .monospaced) }
           ?? .title2.bold().monospaced())
-      Text(feedback?.timingText(for: mode) ?? "")
+      Text(feedback?.timingText(for: mode, style: timingStyle) ?? "")
         .font(fontSize.map { .system(size: $0 * 0.5, weight: .bold) } ?? .caption.bold())
     }
       .foregroundStyle(.white)
@@ -633,6 +636,30 @@ private struct EngineAnchorLayout: Layout {
         JudgementLabel(feedback: JudgementFeedback(sequence: 2,
           judgement: .great, accuracy: 0.04, minimumError: 0.02),
           mode: .timing, timingPlacement: "bottom")
+      }
+    }.foregroundStyle(.white)
+  }
+}
+
+#Preview("Engine Timing Styles", traits: .fixedLayout(width: 800, height: 750)) {
+  ZStack {
+    Color.black
+    Grid(horizontalSpacing: 55, verticalSpacing: 24) {
+      GridRow {
+        Text("Style")
+        Text("Positive error")
+        Text("Negative error")
+      }
+      ForEach(EngineJudgmentErrorStyle.allCases, id: \.self) { style in
+        GridRow {
+          Text(style.rawValue).font(.caption.monospaced())
+          ForEach([1.0, -1.0], id: \.self) { sign in
+            JudgementLabel(feedback: JudgementFeedback(sequence: 1,
+              judgement: .perfect, accuracy: sign * 0.03, minimumError: 0.02),
+              mode: .timing, fontSize: 20, timingPlacement: "top",
+              timingStyle: style.rawValue)
+          }
+        }
       }
     }.foregroundStyle(.white)
   }

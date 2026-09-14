@@ -35,18 +35,47 @@ struct JudgementFeedback: Hashable {
     }
   }
 
-  func timingText(for mode: JudgementDisplayMode) -> String? {
+  func timingText(for mode: JudgementDisplayMode, style: String? = nil) -> String? {
     guard mode == .timing, judgement != .miss,
       judgement != .perfect || minimumError != nil,
       let accuracy, accuracy.isFinite, accuracy != 0,
-      abs(accuracy) >= (minimumError ?? 0) else { return nil }
-    return accuracy < 0 ? "Early" : "Late"
+      abs(accuracy) > (minimumError ?? 0) else { return nil }
+    let indicator = EngineJudgmentErrorStyle(rawValue: style ?? "late") ?? .late
+    return indicator.text(positive: accuracy > 0)
   }
 
   func text(for mode: JudgementDisplayMode) -> String? {
     guard mode != .off else { return nil }
     let grade = judgement.rawValue.uppercased()
     return timingText(for: mode).map { "\($0) \(grade)" } ?? grade
+  }
+}
+
+/// Official UI style pairs list the positive-error symbol first. Styles may
+/// deliberately reverse the usual wording; they never change the signed error.
+enum EngineJudgmentErrorStyle: String, CaseIterable {
+  case none, late, early, plus, minus
+  case arrowUp, arrowDown, arrowLeft, arrowRight
+  case triangleUp, triangleDown, triangleLeft, triangleRight
+
+  func text(positive: Bool) -> String? {
+    let pair: (String, String)
+    switch self {
+    case .none: return nil
+    case .late: pair = ("Late", "Early")
+    case .early: pair = ("Early", "Late")
+    case .plus: pair = ("+", "-")
+    case .minus: pair = ("-", "+")
+    case .arrowUp: pair = ("↑", "↓")
+    case .arrowDown: pair = ("↓", "↑")
+    case .arrowLeft: pair = ("←", "→")
+    case .arrowRight: pair = ("→", "←")
+    case .triangleUp: pair = ("▲", "▼")
+    case .triangleDown: pair = ("▼", "▲")
+    case .triangleLeft: pair = ("◄", "►")
+    case .triangleRight: pair = ("►", "◄")
+    }
+    return positive ? pair.0 : pair.1
   }
 }
 

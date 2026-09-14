@@ -141,6 +141,7 @@ struct EngineConfiguration: Decodable {
     let secondaryMetric: String?
     let judgmentAnimation: Animation?
     let comboAnimation: Animation?
+    let judgmentErrorStyle: String?
     let judgmentErrorPlacement: String?
     let judgmentErrorMin: Double?
 

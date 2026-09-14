@@ -442,12 +442,50 @@ final class RuntimeDecodingTests: XCTestCase {
       from: Data(#"{"options":[],"ui":{"judgmentErrorMin":20}}"#.utf8))
     let minimum = try XCTUnwrap(config.ui?.judgmentErrorMin) / 1000
     for (error, expected) in [(-0.03, "Early"), (0.025, "Late"),
-      (-0.019, ""), (0, "")] {
+      (-0.02, ""), (0.02, ""), (-0.019, ""), (0, "")] {
       let feedback = JudgementFeedback(sequence: 1, judgement: .perfect,
         accuracy: error, minimumError: minimum)
       XCTAssertEqual(feedback.timingText(for: .timing) ?? "", expected)
       XCTAssertNil(feedback.timingText(for: .judgement))
     }
+  }
+
+  func testAllEngineTimingStylesUseSignedErrorWithoutChangingJudgment() throws {
+    let pairs = [
+      "late": ["Late", "Early"], "early": ["Early", "Late"],
+      "plus": ["+", "-"], "minus": ["-", "+"],
+      "arrowUp": ["↑", "↓"], "arrowDown": ["↓", "↑"],
+      "arrowLeft": ["←", "→"], "arrowRight": ["→", "←"],
+      "triangleUp": ["▲", "▼"], "triangleDown": ["▼", "▲"],
+      "triangleLeft": ["◄", "►"], "triangleRight": ["►", "◄"]
+    ]
+    XCTAssertEqual(pairs.count + 1, EngineJudgmentErrorStyle.allCases.count)
+    for (style, pair) in pairs {
+      let config = try JSONDecoder().decode(EngineConfiguration.self,
+        from: Data("{\"options\":[],\"ui\":{\"judgmentErrorStyle\":\"\(style)\"}}".utf8))
+      XCTAssertEqual(config.ui?.judgmentErrorStyle, style)
+      for (index, error) in [0.03, -0.03].enumerated() {
+        for grade in [NoteJudgement.perfect, .great, .good] {
+          let feedback = JudgementFeedback(sequence: 1, judgement: grade,
+            accuracy: error, minimumError: 0.02)
+          XCTAssertEqual(feedback.timingText(for: .timing,
+            style: config.ui?.judgmentErrorStyle), pair[index])
+          XCTAssertEqual(feedback.accuracy, error)
+          XCTAssertEqual(feedback.judgement, grade)
+          XCTAssertNil(feedback.timingText(for: .off, style: style))
+          XCTAssertNil(feedback.timingText(for: .judgement, style: style))
+          XCTAssertNil(feedback.timingText(for: .timing, style: "none"))
+        }
+      }
+    }
+    for error in [0.0, Double.nan, .infinity, -.infinity] {
+      XCTAssertNil(JudgementFeedback(sequence: 1, judgement: .great,
+        accuracy: error).timingText(for: .timing, style: "plus"))
+    }
+    let miss = JudgementFeedback(sequence: 1, judgement: .miss, accuracy: 0.1)
+    XCTAssertNil(miss.timingText(for: .timing, style: "arrowUp"))
+    let feedback = JudgementFeedback(sequence: 1, judgement: .great, accuracy: -0.03)
+    XCTAssertEqual(feedback.timingText(for: .timing, style: "future"), "Early")
   }
 
   @MainActor
