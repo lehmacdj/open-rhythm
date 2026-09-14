@@ -2,6 +2,118 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  func testOnlinePlaybackPinsCachedMusicWithoutCreatingADownload() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = RequestRecorder()
+    let music = Data("cached music fixture".utf8)
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      switch request.url?.lastPathComponent {
+      case "music.mp3": return music
+      case "engine": return Data(#"""
+        {"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},
+        "nodes":[{"func":"FutureUnsupportedFunction","args":[]}],"buckets":[],
+        "archetypes":[{"name":"note","hasInput":true,"imports":[],"exports":[],
+        "touch":{"index":0}}]}
+        """#.utf8)
+      case "chart": return Data(#"{"bgmOffset":0,"entities":[]}"#.utf8)
+      default: return Data(#"""
+        {"item":{"bgm":{"url":"/music.mp3"},"data":{"url":"/chart"},
+        "engine":{"version":13,"playData":{"url":"/engine"}}}}
+        """#.utf8)
+      }
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let cacheRoot = root.appendingPathComponent("cache")
+    let client = SonolusClient(session: session,
+      cache: SonolusResponseCache(rootURL: cacheRoot))
+    let offline = OfflineStore(rootURL: root.appendingPathComponent("offline"), client: client)
+    let loader = RuntimeBundleLoader(client: client, offlineStore: offline)
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://fixture.example")!)
+    let empty = ResourceLocator(hash: nil, url: nil)
+    func item(_ name: String) -> SonolusLevelItem {
+      SonolusLevelItem(name: name, source: nil, version: 1, rating: 1,
+        title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+        author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+    }
+    let first = try await loader.load(level: item("easy"), from: server)
+    let second = try await loader.load(level: item("hard"), from: server)
+    // The basic lane fallback never executes the unsupported callbacks.
+    XCTAssertNil(first.presentation)
+    XCTAssertFalse(first.isOffline)
+    XCTAssertTrue(first.bgmURL.isFileURL)
+    XCTAssertEqual(first.preparedAudio?.url, first.bgmURL)
+    XCTAssertNotEqual(first.bgmURL, second.bgmURL, "Each play owns its lease")
+    XCTAssertEqual(recorder.urls.filter { $0.lastPathComponent == "music.mp3" }.count, 1)
+    let downloads = try await offline.manifests()
+    XCTAssertTrue(downloads.isEmpty)
+    // Cache eviction must not remove a song that's already prepared to play.
+    try FileManager.default.removeItem(at: cacheRoot)
+    XCTAssertEqual(try Data(contentsOf: first.bgmURL), music)
+    XCTAssertEqual(try Data(contentsOf: second.bgmURL), music)
+    let requestCount = recorder.urls.count
+    let cancelled = Task {
+      while !Task.isCancelled { await Task.yield() }
+      return try await loader.load(level: item("cancelled"), from: server)
+    }
+    cancelled.cancel()
+    do {
+      _ = try await cancelled.value
+      XCTFail("Cancelled preparation must fail")
+    } catch is CancellationError { }
+    XCTAssertEqual(recorder.urls.count, requestCount)
+  }
+
+  func testUnsupportedEngineDoesNotFetchMusic() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    StubURLProtocol.handler = { request in
+      switch request.url?.lastPathComponent {
+      case "music":
+        XCTFail("Unsupported engines should fail before downloading BGM")
+        return Data("unused".utf8)
+      case "configuration": return Data(#"{"options":[]}"#.utf8)
+      case "chart": return Data(#"{"bgmOffset":0,"entities":[]}"#.utf8)
+      case "engine": return Data(#"""
+        {"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},
+        "nodes":[{"func":"FutureUnsupportedFunction","args":[]}],"buckets":[],
+        "archetypes":[{"name":"note","hasInput":true,"imports":[],"exports":[],
+        "touch":{"index":0}}]}
+        """#.utf8)
+      default: return Data(#"""
+        {"item":{"bgm":{"url":"/music"},"data":{"url":"/chart"},
+        "engine":{"version":13,"playData":{"url":"/engine"},
+        "configuration":{"url":"/configuration"}}}}
+        """#.utf8)
+      }
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let client = SonolusClient(session: session)
+    let loader = RuntimeBundleLoader(client: client,
+      offlineStore: OfflineStore(rootURL: root, client: client))
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let item = SonolusLevelItem(name: "level", source: nil, version: 1, rating: 1,
+      title: LocalizedText("Song"), artists: LocalizedText("Artist"), author: "Fixture",
+      tags: [], cover: empty, bgm: empty, data: empty)
+    do {
+      _ = try await loader.load(level: item, from: ServerDescriptor(id: "fixture",
+        name: "Fixture", baseURL: URL(string: "https://fixture.example")!))
+      XCTFail("Unsupported engine must fail")
+    } catch EngineInterpreterError.unsupportedFunction(let name) {
+      XCTAssertEqual(name, "FutureUnsupportedFunction")
+    }
+  }
+
   @MainActor
   func testFirstPageFailureOffersRetryWithoutAnEmptySuccessRow() async {
     let configuration = URLSessionConfiguration.ephemeral

@@ -161,6 +161,7 @@ final class GameplayModel {
   private(set) var engineRuntime: EnginePlayRuntime?
   private(set) var presentationAssets: EnginePresentationAssets?
   private var runtimeBundle: RuntimeBundle?
+  private var preparedAudio: PreparedRuntimeAudio?
   private var engineAudio: EngineAudioPlayback?
   private let engineHaptics = EngineHapticPlayback()
   private var engineAspectRatio: Double?
@@ -319,6 +320,7 @@ final class GameplayModel {
     resultServer = server
     resultLevelID = level.resultKey(server: server)
     resultTitle = title
+    preparedAudio = bundle.preparedAudio
     player = AVPlayer(url: bundle.bgmURL)
     phase = .ready
   }

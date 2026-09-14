@@ -4,6 +4,33 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class PlaybackClockTests: XCTestCase {
+  func testPreparedMusicLeaseCleansUpAndSilenceUsesItsExactBytes() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("source.caf")
+    let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1))
+    let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8000))
+    buffer.frameLength = 8000
+    for frame in 0..<8000 { buffer.floatChannelData![0][frame] = frame < 4000 ? 0 : 0.1 }
+    do {
+      let file = try AVAudioFile(forWriting: source, settings: format.settings)
+      try file.write(from: buffer)
+    }
+    var lease: PreparedRuntimeAudio? = try PreparedRuntimeAudio(
+      data: Data(contentsOf: source), sourceURL: URL(string: "https://fixture.example/audio.caf")!,
+      temporaryDirectory: directory)
+    let url = try XCTUnwrap(lease?.url)
+    XCTAssertEqual(LeadingAudioSilence.duration(at: url), 0.45, accuracy: 0.001)
+    XCTAssertEqual(try Data(contentsOf: url), try Data(contentsOf: source))
+    lease = nil
+    XCTAssertFalse(FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    XCTAssertThrowsError(try PreparedRuntimeAudio(data: Data(), sourceURL: source,
+      temporaryDirectory: directory))
+  }
+
   func testPlaybackSpeedScalesTempoAndClocksWithoutScalingJudgmentErrors() throws {
     let level = try JSONDecoder().decode(LevelData.self, from: Data(#"""
       {"bgmOffset":9,"entities":[

@@ -127,6 +127,37 @@ struct RuntimeBundle: Sendable {
   let isOffline: Bool
   var presentation: RuntimePresentation? = nil
   var engineROM: Data? = nil
+  var preparedAudio: PreparedRuntimeAudio? = nil
+}
+
+/// A playback lease over a private file, separate from the evictable HTTP
+/// cache and the user's Downloads library. Keep it alive through restarts.
+final class PreparedRuntimeAudio: Sendable {
+  let url: URL
+
+  init(data: Data, sourceURL: URL, temporaryDirectory: URL =
+    FileManager.default.temporaryDirectory) throws {
+    guard !data.isEmpty, data.count <= 128 * 1024 * 1024 else {
+      throw RuntimeBundleError.missingResource("music smaller than 128 MiB")
+    }
+    let directory = temporaryDirectory.appendingPathComponent(
+      "OpenRhythmPlayback-\(UUID().uuidString)", isDirectory: true)
+    let suffix = sourceURL.pathExtension.lowercased()
+    let safeSuffix = !suffix.isEmpty && suffix.count <= 10
+      && suffix.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+      ? suffix : "audio"
+    url = directory.appendingPathComponent("music.\(safeSuffix)")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    do { try data.write(to: url, options: .atomic) } catch {
+      try? FileManager.default.removeItem(at: directory)
+      throw error
+    }
+  }
+
+  deinit {
+    try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+  }
 }
 
 struct RuntimePresentation: Sendable {
@@ -156,6 +187,7 @@ actor RuntimeBundleLoader {
     level: SonolusLevelItem,
     from server: ServerDescriptor
   ) async throws -> RuntimeBundle {
+    try Task.checkCancellation()
     if let manifest = try await offlineStore.manifest(
       level: level,
       from: server
@@ -183,16 +215,31 @@ actor RuntimeBundleLoader {
       for try await (name, data) in group { resources[name] = data }
       return resources.isEmpty ? nil : RuntimePresentation(resources: resources)
     }
+    let engine = try await CompressedJSONDecoder.decode(
+      EnginePlayData.self, from: engineData)
+    let parsedLevel = try await CompressedJSONDecoder.decode(LevelData.self, from: levelData)
+    // Match GameplayModel: resource-free charts use the basic lane fallback,
+    // which does not execute engine callbacks (online or offline).
+    if presentation != nil {
+      let missing = try engine.unsupportedFunctions()
+      guard missing.isEmpty else {
+        throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
+      }
+    }
+    try Task.checkCancellation()
+    // Fetch music only after validating the chart and supported callbacks.
+    // The shared response cache reuses it across difficulties; playback and
+    // silence inspection then use the same pinned local copy.
+    let audio = try await PreparedRuntimeAudio(data: client.resource(at: references.bgmURL),
+      sourceURL: references.bgmURL)
+    try Task.checkCancellation()
     return try await RuntimeBundle(
-      engine: CompressedJSONDecoder.decode(
-        EnginePlayData.self,
-        from: engineData
-      ),
-      level: CompressedJSONDecoder.decode(LevelData.self, from: levelData),
-      bgmURL: references.bgmURL,
+      engine: engine,
+      level: parsedLevel,
+      bgmURL: audio.url,
       isOffline: false,
       presentation: presentation,
-      engineROM: romData
+      engineROM: romData, preparedAudio: audio
     )
   }
 

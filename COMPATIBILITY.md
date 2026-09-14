@@ -37,6 +37,12 @@ integration probes, including successful inputs and restart/buffering paths.
   Standard gameplay overrides are retained with results.
 - Engine playback speed changes BGM rate and BPM values together; chart and
   event clocks remain in real seconds, including lead-in and audio EOF tails.
+- Online preparation caches selected BGM before Ready and pins a separate
+  local file for playback, restart, and PCM intro inspection. Shared URLs reuse
+  fresh cached bytes across difficulties; cache eviction cannot delete active
+  playback files, and this does not create a Downloads entry. Cancelled loads
+  and unsupported interpreted engines do not start a music fetch. Basic lane
+  fallback charts retain their existing no-interpreter behavior.
 - Engine combo animations and judgment animation final-state retention.
 - Accuracy scoring consumes final EntityInput values, including misses and
   automatic ticks, independently of arcade weights or timing-plot filters.
@@ -62,7 +68,7 @@ integration probes, including successful inputs and restart/buffering paths.
   without unbounded crawls.
 - Engine-generated count-ins and visible non-input intro effects. First-input
   activation is a conservative stopping boundary, not proof that every intro
-  animation is preserved. Streaming silence is not inferred from bgmOffset.
+  animation is preserved. Unknown silence is not inferred from bgmOffset.
 - Physical device multitouch, rendering/audio latency, performance tails,
   successful flick/hold variants, interruptions, and repeated play. Simulator
   clocks and no-touch lifecycle completion cannot establish those properties.
@@ -94,3 +100,9 @@ Haptic types follow EntityInput. Exact platform waveforms and chord mixing are
 host policy: simultaneous requests use the strongest type, and Long is a 150 ms
 continuous effect. Unknown type values do not synthesize feedback. Haptics never
 replace engine sound effects, and failures do not abort gameplay.
+
+Online BGM preparation can take longer on a slow connection but avoids network
+stalls during the song and a separate silence-analysis transfer. It uses the
+existing ten-minute response-cache freshness policy. Prepared music is limited
+to 128 MiB after downloading; this is not a streaming download-size limit.
+Cancelling one consumer does not abort a shared cache request used by others.

@@ -28,7 +28,7 @@ phone audio alignment, touch handling, or frame pacing is correct.
 | Expose other engine-provided options | Generic sliders/toggles/choices, validation, named per-engine persistence; type-aware dedicated controls; standard overrides on results |
 | Engine playback speed option | BGM rate, BPM imports/lookups, input metadata and event mapping change together; real-second judgment windows preserved |
 | Keep playing until music ends | Results wait for audio EOF and resolved inputs; post-audio runtime tail handles trailing notes |
-| Preserve lead-in; optionally skip safe silence | No seeking straight to first note/beat zero. Local PCM silence scan advances retained runtime conservatively until input activation, engine sound, or audio onset |
+| Preserve lead-in; optionally skip safe silence | No seeking straight to first note/beat zero. Selected online BGM is cached and pinned before Ready, so online/offline playback use the same local PCM analysis. Runtime advances conservatively until input activation, engine sound, or audio onset |
 | Complete historical results and chronological plays | `ResultStore`, `ResultDetailView`, global play list, deduplicated played songs retaining replay server/level metadata |
 | Timing scatter, miss lines, distribution, note-type filters and statistics | Shared result statistics sections for new/past plays; both plots filtered together |
 | Remove automatic hold ticks from histogram and fix zero alignment | Continuous density curves (no histogram bins), known intermediate ticks excluded only from distribution; exact-zero, outlier and bounded-work tests |
@@ -100,9 +100,9 @@ per-note timing charts.
    styles, and resource/callback conformance still need work. Unsupported
    functions are surfaced before music rather than assumed harmless. See the
    separate contract checklist; sampled engines do not prove arbitrary support.
-3. Safe intro skipping currently analyzes local audio only. Streamed intros
-   remain intact when silence is unknown; `bgmOffset` alone is not evidence
-   of silence. First-input activation can be earlier than first visible pixels.
+3. Safe intro skipping stops at first-input activation, which can be earlier
+   than first visible pixels. Visible non-input intro animations and count-ins
+   still need broader checks. Unknown silence is never inferred from bgmOffset.
 4. Real-device engine integration runs beyond the cached simulator fixtures.
 
 ## Deliberately not added / superseded requests
