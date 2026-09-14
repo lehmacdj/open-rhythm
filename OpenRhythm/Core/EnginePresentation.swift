@@ -458,6 +458,7 @@ final class EnginePresentationAssets {
   let particleImages: [UIImage]
   let interpolation: Bool
   let particleInterpolation: Bool
+  let background: EngineBackgroundAssets?
   private var tintedParticles = [String: UIImage]()
 
   init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
@@ -465,6 +466,8 @@ final class EnginePresentationAssets {
       EngineConfiguration.self, from: presentation.data("configuration")
     )
     self.configuration = configuration
+    background = presentation.resources.keys.contains(where: { $0.hasPrefix("background") })
+      ? try EngineBackgroundAssets(presentation: presentation) : nil
     try configuration.validateOptions()
     options = configuration.options.map(\.def)
     ui = configuration.ui

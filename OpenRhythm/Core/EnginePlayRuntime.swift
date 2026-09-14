@@ -252,12 +252,15 @@ final class EnginePlayRuntime {
     particleEffectIDs: Set<Int>, rom: Data? = nil,
     uiConfiguration: [Double] = Array(repeating: 1, count: 10),
     safeArea: [Double]? = nil,
-    playbackSpeed: Double = 1
+    playbackSpeed: Double = 1,
+    backgroundQuad: [Double]? = nil
   ) throws {
     guard aspectRatio.isFinite, aspectRatio > 0,
       playbackSpeed.isFinite, (0.05...4).contains(playbackSpeed),
       level.entities.count <= 100_000,
       uiConfiguration.count == 10, uiConfiguration.allSatisfy(\.isFinite),
+      backgroundQuad == nil || (backgroundQuad?.count == 8
+        && backgroundQuad?.allSatisfy(\.isFinite) == true),
       safeArea == nil || (safeArea?.count == 4
         && safeArea?.allSatisfy(\.isFinite) == true) else {
       throw EngineInterpreterError.invalidArguments("runtime environment")
@@ -295,6 +298,10 @@ final class EnginePlayRuntime {
       archetypes[$0.archetype].map { engine.archetypes[$0].hasInput } ?? false
     }.count
     memory.set(block: 1000, index: 1, value: aspectRatio)
+    for (index, value) in (backgroundQuad ??
+      [-aspectRatio, -1, -aspectRatio, 1, aspectRatio, 1, aspectRatio, -1]).enumerated() {
+      memory.set(block: 1005, index: index, value: value)
+    }
     for (index, value) in (safeArea ?? [-aspectRatio, aspectRatio, -1, 1]).enumerated() {
       memory.set(block: 1000, index: 5 + index, value: value)
     }

@@ -57,6 +57,15 @@ integration probes, including successful inputs and restart/buffering paths.
 - Unused skin, effect, and particle families need no placeholder assets.
   Skin-only and particle-only initialization preserve the other family and
   interpolation settings. Declared families still require valid resources.
+- Background resources follow engine defaults and per-level overrides, with
+  each resource's own source URL. Online and existing offline manifests supply
+  the same data/image/configuration. Fit, aspect override, axis scaling, color,
+  blur and mask are applied; RuntimeBackground is initialized before preprocess
+  and its later coordinates drive a perspective layer beneath the notes.
+  Metal foreground pixels preserve alpha, and the software surface is separate
+  from the background. Native checkerboard projection and repeated cached SIF
+  playback with the selected background are covered; a full moving gameplay
+  composite on a physical device remains part of device sign-off.
 - Final EntityInput haptic requests are sampled after terminate and consumed
   once. Prebuilt haptics-only players support Light/Medium/Heavy/Long; no-hardware
   hosts remain playable. Reset/stop recovery is bounded and stale callbacks
@@ -117,3 +126,15 @@ Timing style pairs and their sign convention follow the official
 For example, the `early` style intentionally displays Early for positive error,
 and Late for negative error. Omitted or unknown style values retain the default
 Late/Early pair; `none` hides only the timing indicator, not the judgment grade.
+
+Backgrounds follow the public [data](
+https://wiki.sonolus.com/background-specs/resources/background-data),
+[configuration](https://wiki.sonolus.com/background-specs/resources/background-configuration),
+and [runtime coordinates](https://wiki.sonolus.com/engine-specs/play-blocks/runtime-background).
+The protocol defines blur amount, not its pixel radius: this host uses a Gaussian
+radius of 5% of the smaller prepared-image dimension at blur=1. Images decode
+to at most 2048 pixels per side before blur, preserving original aspect ratio.
+Encoded backgrounds over 32 MiB or source images over 128 million pixels / 32768
+per side fail explicitly. Degenerate or folded projective quads hide the image
+while retaining background color and mask. These policies do not alter skin
+sprite interpolation or engine input geometry.

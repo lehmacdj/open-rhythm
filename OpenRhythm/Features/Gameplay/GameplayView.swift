@@ -725,13 +725,21 @@ private final class EnginePlayfieldView: UIView {
   private var displayLink: CADisplayLink?
   private var touchPool = EngineTouchPool<ObjectIdentifier>()
   private var metal: EngineMetalRenderer?
+  private let backgroundLayer = EngineBackgroundLayer()
+  private let softwareSurface = EngineSoftwareSurfaceView()
 
   override init(frame: CGRect) {
     super.init(frame: frame)
+    layer.addSublayer(backgroundLayer.layer)
+    softwareSurface.isUserInteractionEnabled = false
+    softwareSurface.backgroundColor = .clear
+    softwareSurface.isOpaque = false
+    addSubview(softwareSurface)
     if let device = MTLCreateSystemDefaultDevice(),
       let renderer = try? EngineMetalRenderer(device: device) {
       metal = renderer
       layer.addSublayer(renderer.layer)
+      softwareSurface.isHidden = true
     }
   }
 
@@ -739,16 +747,20 @@ private final class EnginePlayfieldView: UIView {
 
   func prepareAssets() {
     guard let assets = model?.presentationAssets else { return }
+    backgroundLayer.prepare(assets.background)
+    softwareSurface.model = model
     do {
       try metal?.prepare(assets)
     } catch {
       metal?.layer.removeFromSuperlayer()
       metal = nil
+      softwareSurface.isHidden = false
     }
   }
 
   override func layoutSubviews() {
     super.layoutSubviews()
+    softwareSurface.frame = bounds
     metal?.resize(to: bounds.size, scale: window?.screen.scale ?? contentScaleFactor)
   }
 
@@ -773,6 +785,10 @@ private final class EnginePlayfieldView: UIView {
       touches: touchPool.touches, safeAreaInsets: safeAreaInsets)
     touchPool.nextFrame(at: sampleTime)
     guard present, model?.isStartingPlayback == false else { return }
+    if let memory = model?.engineRuntime?.memory {
+      backgroundLayer.update(quad: (0..<8).map { memory.value(block: 1005, index: $0) },
+        size: bounds.size)
+    }
     if let metal, let runtime = model?.engineRuntime,
       let assets = model?.presentationAssets {
       do {
@@ -781,24 +797,11 @@ private final class EnginePlayfieldView: UIView {
         // Keep a functioning software path if this device cannot render Metal.
         metal.layer.removeFromSuperlayer()
         self.metal = nil
-        setNeedsDisplay()
+        softwareSurface.isHidden = false
+        softwareSurface.setNeedsDisplay()
       }
     } else if metal == nil {
-      setNeedsDisplay()
-    }
-  }
-
-  override func draw(_ rect: CGRect) {
-    guard metal == nil, let runtime = model?.engineRuntime,
-      let assets = model?.presentationAssets,
-      let context = UIGraphicsGetCurrentContext() else { return }
-    UIColor.black.setFill()
-    context.fill(bounds)
-    do {
-      try EngineRenderer.draw(host: runtime.host, assets: assets,
-        context: context, size: bounds.size)
-    } catch {
-      model?.renderingFailed(error)
+      softwareSurface.setNeedsDisplay()
     }
   }
 
@@ -833,6 +836,22 @@ private final class EnginePlayfieldView: UIView {
 
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
     receive(touches, started: false, ended: true)
+  }
+}
+
+private final class EngineSoftwareSurfaceView: UIView {
+  weak var model: GameplayModel?
+
+  override func draw(_ rect: CGRect) {
+    guard let runtime = model?.engineRuntime,
+      let assets = model?.presentationAssets,
+      let context = UIGraphicsGetCurrentContext() else { return }
+    do {
+      try EngineRenderer.draw(host: runtime.host, assets: assets,
+        context: context, size: bounds.size)
+    } catch {
+      model?.renderingFailed(error)
+    }
   }
 }
 

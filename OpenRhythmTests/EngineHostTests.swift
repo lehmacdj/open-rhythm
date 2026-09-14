@@ -5,6 +5,138 @@ import Metal
 
 final class EngineHostTests: XCTestCase {
   @MainActor
+  func testBackgroundAssetsPrepareBlurAndRejectPartialResources() throws {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 80, height: 40), format: format).image {
+      UIColor.red.setFill()
+      $0.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+      UIColor.blue.setFill()
+      $0.fill(CGRect(x: 40, y: 0, width: 40, height: 40))
+    }
+    var resources = [
+      "backgroundData": Data(##"{"fit":"contain","color":"#123"}"##.utf8),
+      "backgroundConfiguration": Data(##"{"blur":0,"mask":"#0008"}"##.utf8),
+      "backgroundImage": try XCTUnwrap(image.pngData())
+    ]
+    let plain = try EngineBackgroundAssets(presentation: RuntimePresentation(resources: resources))
+    XCTAssertEqual(plain.image.width, 80)
+    XCTAssertEqual(plain.image.height, 40)
+    XCTAssertEqual(try plain.initialQuad(screenAspect: 1),
+      [-1, -0.5, -1, 0.5, 1, 0.5, 1, -0.5])
+    resources["backgroundConfiguration"] = Data(##"{"blur":0.8,"mask":"#0000"}"##.utf8)
+    let blurred = try EngineBackgroundAssets(presentation: RuntimePresentation(resources: resources))
+    XCTAssertEqual(blurred.image.width, 80)
+    XCTAssertEqual(blurred.image.height, 40)
+    XCTAssertNotEqual(blurred.image.dataProvider?.data as Data?, plain.image.dataProvider?.data as Data?)
+    let large = UIGraphicsImageRenderer(size: CGSize(width: 4097, height: 40),
+      format: format).image { _ in }
+    resources["backgroundImage"] = try XCTUnwrap(large.pngData())
+    let bounded = try EngineBackgroundAssets(presentation: RuntimePresentation(resources: resources))
+    XCTAssertLessThanOrEqual(bounded.image.width, 2048)
+    XCTAssertLessThanOrEqual(bounded.image.height, 2048)
+    XCTAssertEqual(bounded.imageAspect, 4097.0 / 40)
+    resources["backgroundConfiguration"] = Data(##"{"blur":2,"mask":"#0000"}"##.utf8)
+    XCTAssertThrowsError(try EngineBackgroundAssets(presentation: RuntimePresentation(resources: resources)))
+    resources.removeValue(forKey: "backgroundConfiguration")
+    XCTAssertThrowsError(try EngineBackgroundAssets(presentation: RuntimePresentation(resources: resources)))
+  }
+
+  @MainActor
+  func testBackgroundLayersCanBeCopiedAndInvalidQuadsHideOnlyTheImage() {
+    let background = EngineBackgroundLayer()
+    background.prepare(nil)
+    background.update(quad: [-1, -1, -1, 1, 1, 1, 1, -1],
+      size: CGSize(width: 200, height: 200))
+    XCTAssertEqual(background.layer.sublayers?.count, 2)
+    XCTAssertEqual(background.layer.sublayers?.first?.isHidden, false)
+    // Core Animation presentation copies use init(layer:), not init().
+    let copy = CALayer(layer: background.layer)
+    XCTAssertFalse(copy === background.layer)
+    for child in background.layer.sublayers ?? [] {
+      XCTAssertFalse(CALayer(layer: child) === child)
+    }
+    background.update(quad: Array(repeating: 0, count: 8),
+      size: CGSize(width: 200, height: 200))
+    XCTAssertEqual(background.layer.sublayers?.first?.isHidden, true)
+    XCTAssertEqual(background.layer.sublayers?.last?.isHidden, false)
+  }
+  func testBackgroundFitScaleAndColorContracts() throws {
+    for (fit, expected) in [
+      ("width", [-2.0, -0.5, -2, 0.5, 2, 0.5, 2, -0.5]),
+      ("contain", [-2.0, -0.5, -2, 0.5, 2, 0.5, 2, -0.5]),
+      ("height", [-4.0, -1, -4, 1, 4, 1, 4, -1]),
+      ("cover", [-4.0, -1, -4, 1, 4, 1, 4, -1])
+    ] {
+      let data = EngineBackgroundData(aspectRatio: nil, fit: fit, color: "#000",
+        scaleX: nil, scaleY: nil)
+      XCTAssertEqual(try data.quad(imageAspect: 4, screenAspect: 2), expected)
+    }
+    let scaled = EngineBackgroundData(aspectRatio: 2, fit: "height", color: "#abc",
+      scaleX: -0.5, scaleY: 2)
+    XCTAssertEqual(try scaled.quad(imageAspect: 4, screenAspect: 1),
+      [1, -2, 1, 2, -1, 2, -1, -2])
+    XCTAssertThrowsError(try EngineBackgroundData(aspectRatio: 0, fit: "cover",
+      color: "#000", scaleX: nil, scaleY: nil).quad(imageAspect: 1, screenAspect: 1))
+    XCTAssertThrowsError(try EngineBackgroundData(aspectRatio: nil, fit: "future",
+      color: "#000", scaleX: nil, scaleY: nil).quad(imageAspect: 1, screenAspect: 1))
+    XCTAssertEqual(try EngineHTMLColor("#aBc", allowsAlpha: false),
+      try EngineHTMLColor("#aabbcc", allowsAlpha: false))
+    XCTAssertEqual(try EngineHTMLColor("#aBc8", allowsAlpha: true),
+      try EngineHTMLColor("#aabbcc88", allowsAlpha: true))
+    XCTAssertEqual(try EngineHTMLColor("#00000080", allowsAlpha: true).alpha,
+      128.0 / 255, accuracy: 0.00001)
+    for invalid in ["red", "abc", "#xxf", "#12345", "#123456789", "#１２３"] {
+      XCTAssertThrowsError(try EngineHTMLColor(invalid, allowsAlpha: true))
+    }
+    XCTAssertThrowsError(try EngineHTMLColor("#1234", allowsAlpha: false))
+  }
+
+  func testBackgroundPerspectiveMatchesCornersAndNotBilinearInterior() throws {
+    let size = CGSize(width: 400, height: 200)
+    let quad = [-2.0, -1, -1, 1, 1, 1, 2, -1]
+    let transform = try XCTUnwrap(EngineBackgroundProjection.transform(quad: quad, size: size))
+    func project(_ u: Double, _ v: Double) -> CGPoint {
+      let w = transform.m14 * u + transform.m24 * v + transform.m44
+      return CGPoint(x: (transform.m11 * u + transform.m21 * v + transform.m41) / w,
+        y: (transform.m12 * u + transform.m22 * v + transform.m42) / w)
+    }
+    XCTAssertEqual(project(0, 0), CGPoint(x: 100, y: 0))
+    XCTAssertEqual(project(1, 0), CGPoint(x: 300, y: 0))
+    XCTAssertEqual(project(0, 1), CGPoint(x: 0, y: 200))
+    XCTAssertEqual(project(1, 1), CGPoint(x: 400, y: 200))
+    XCTAssertEqual(project(0.5, 0.5).x, 200, accuracy: 0.0001)
+    XCTAssertEqual(project(0.5, 0.5).y, 200.0 / 3, accuracy: 0.0001)
+    XCTAssertNotNil(EngineBackgroundProjection.transform(
+      quad: [2, -1, 1, 1, -1, 1, -2, -1], size: size))
+    XCTAssertNil(EngineBackgroundProjection.transform(quad: Array(repeating: 0, count: 8), size: size))
+    XCTAssertNil(EngineBackgroundProjection.transform(quad: [.nan], size: size))
+    XCTAssertNil(EngineBackgroundProjection.transform(quad: quad, size: .zero))
+    XCTAssertNil(EngineBackgroundProjection.transform(
+      quad: [-1, -1, 1, 1, -1, 1, 1, -1], size: size))
+  }
+
+  func testBackgroundInitializedBeforePreprocessAndWritableDuringUpdate() throws {
+    let b = RuntimeNodeBuilder()
+    let read = b.call("Get", [b.value(1005), b.value(0)])
+    let preprocess = b.call("Set", [b.value(2000), b.value(0), read])
+    let update = b.call("Set", [b.value(1005), b.value(0), b.value(-0.5)])
+    let engine = try b.engine(archetypes: [["name": "stage", "hasInput": false,
+      "imports": [], "exports": [], "preprocess": ["index": preprocess],
+      "updateSequential": ["index": update]]])
+    let level = try JSONDecoder().decode(LevelData.self,
+      from: Data(#"{"bgmOffset":0,"entities":[{"archetype":"stage","data":[]}]}"#.utf8))
+    for quad in [nil, [-3.0, -2, -3, 2, 3, 2, 3, -2]] {
+      let runtime = try EnginePlayRuntime(engine: engine, level: level,
+        options: [], aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [],
+        particleEffectIDs: [], backgroundQuad: quad)
+      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), quad?[0] ?? -2)
+      try runtime.update(at: 0)
+      XCTAssertEqual(runtime.memory.value(block: 1005, index: 0), -0.5)
+    }
+  }
+
+  @MainActor
   func testHapticPlayFailureRecoversWithoutAnOSCallback() {
     let backend = MockHapticBackend()
     var time = 10.0
@@ -1262,6 +1394,10 @@ final class EngineHostTests: XCTestCase {
          "source":"https://skin.example/custom",
          "data":{"url":"data"},"texture":{"url":"texture"}}},
        "useParticle":{"useDefault":true},
+       "useBackground":{"useDefault":false,"item":{
+         "source":"https://background.example/custom",
+         "data":{"url":"data"},"image":{"url":"image"},
+         "configuration":{"url":"config"}}},
        "engine":{"version":13,"source":"https://engine.example/game",
          "playData":{"url":"play"},"configuration":{"url":"config"},
          "skin":{"data":{"url":"ignored"},"texture":{"url":"ignored"}},
@@ -1280,6 +1416,12 @@ final class EngineHostTests: XCTestCase {
       "https://particle.example/data")
     XCTAssertEqual(references.presentationURLs["configuration"]?.absoluteString,
       "https://engine.example/game/config")
+    XCTAssertEqual(references.presentationURLs["backgroundData"]?.absoluteString,
+      "https://background.example/custom/data")
+    XCTAssertEqual(references.presentationURLs["backgroundImage"]?.absoluteString,
+      "https://background.example/custom/image")
+    XCTAssertEqual(references.presentationURLs["backgroundConfiguration"]?.absoluteString,
+      "https://background.example/custom/config")
   }
 
   func testGeometryUsesRowMajorTransformsAndBilinearCoordinates() {
@@ -1351,7 +1493,8 @@ final class EngineHostTests: XCTestCase {
       UIColor.blue.setFill()
       $0.fill(CGRect(x: 0, y: 1, width: 2, height: 1))
     }
-    func render(_ image: UIImage, points: [EnginePoint], layers: [UIImage]? = nil)
+    func render(_ image: UIImage, points: [EnginePoint], layers: [UIImage]? = nil,
+      transparent: Bool = false)
       throws -> [UInt8] {
       let command = try XCTUnwrap(renderer.queue.makeCommandBuffer())
       let sprites = (layers ?? [image]).map {
@@ -1360,7 +1503,8 @@ final class EngineHostTests: XCTestCase {
           alpha: 0.5, interpolation: false)
       }
       try renderer.encode(sprites,
-        size: CGSize(width: 20, height: 20), target: target, commandBuffer: command)
+        size: CGSize(width: 20, height: 20), target: target, commandBuffer: command,
+        transparent: transparent)
       command.commit()
       command.waitUntilCompleted()
       XCTAssertNil(command.error)
@@ -1372,6 +1516,13 @@ final class EngineHostTests: XCTestCase {
     let quad = [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
       EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)]
     let pixels = try render(image, points: quad)
+    let foreground = try render(image, points: [
+      EnginePoint(x: -0.5, y: -0.5), EnginePoint(x: -0.5, y: 0.5),
+      EnginePoint(x: 0.5, y: 0.5), EnginePoint(x: 0.5, y: -0.5)
+    ], transparent: true)
+    XCTAssertEqual(foreground[3], 0, "Empty pixels must reveal the background")
+    XCTAssertEqual(Double(foreground[(10 * 20 + 10) * 4 + 3]), 128, accuracy: 1)
+    XCTAssertFalse(renderer.layer.isOpaque)
     XCTAssertEqual(Double(pixels[(2 * 20 + 10) * 4 + 2]), 128, accuracy: 1)
     XCTAssertEqual(Double(pixels[(17 * 20 + 10) * 4]), 128, accuracy: 1)
     let white = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2),

@@ -27,6 +27,7 @@ private struct RuntimeLevelItem: Decodable {
   let data: ResourceLocator
   let engine: RuntimeEngineItem
   let useSkin: RuntimeResourceSelection?
+  let useBackground: RuntimeResourceSelection?
   let useEffect: RuntimeResourceSelection?
   let useParticle: RuntimeResourceSelection?
 }
@@ -41,6 +42,8 @@ private struct RuntimePresentationItem: Decodable {
   let data: ResourceLocator
   let texture: ResourceLocator?
   let audio: ResourceLocator?
+  let image: ResourceLocator?
+  let configuration: ResourceLocator?
 }
 
 private struct RuntimeEngineItem: Decodable {
@@ -50,6 +53,7 @@ private struct RuntimeEngineItem: Decodable {
   let configuration: ResourceLocator?
   let rom: ResourceLocator?
   let skin: RuntimePresentationItem?
+  let background: RuntimePresentationItem?
   let effect: RuntimePresentationItem?
   let particle: RuntimePresentationItem?
 }
@@ -103,6 +107,7 @@ struct RuntimeResourceReferences: Sendable {
     )
     for (name, selection, fallback) in [
       ("skin", item.useSkin, item.engine.skin),
+      ("background", item.useBackground, item.engine.background),
       ("effect", item.useEffect, item.engine.effect),
       ("particle", item.useParticle, item.engine.particle)
     ] {
@@ -114,6 +119,8 @@ struct RuntimeResourceReferences: Sendable {
         urls[name + "Data"] = selected.data.resolved(against: base)
         urls[name + "Texture"] = selected.texture?.resolved(against: base)
         urls[name + "Audio"] = selected.audio?.resolved(against: base)
+        urls[name + "Image"] = selected.image?.resolved(against: base)
+        urls[name + "Configuration"] = selected.configuration?.resolved(against: base)
       }
     }
     presentationURLs = urls

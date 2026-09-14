@@ -698,7 +698,8 @@ final class GameplayModel {
             aspect - Double(safeAreaInsets.right * 2 / size.height),
             -1 + Double(safeAreaInsets.bottom * 2 / size.height),
             1 - Double(safeAreaInsets.top * 2 / size.height)
-          ], playbackSpeed: playbackSpeed
+          ], playbackSpeed: playbackSpeed,
+          backgroundQuad: try assets.background?.initialQuad(screenAspect: aspect)
         )
         if let runtime = engineRuntime {
           engineUI = (0..<8).map { EngineUIElement(memory: runtime.memory, index: $0) }

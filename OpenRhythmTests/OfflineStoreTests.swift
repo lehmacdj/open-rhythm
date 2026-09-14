@@ -377,7 +377,7 @@ final class OfflineStoreTests: XCTestCase {
       ["Alpha", "Zulu"])
   }
 
-  func testEngineROMIsLoadedOnlineAndFromOfflineManifest() async throws {
+  func testEngineROMAndBackgroundLoadIdenticallyOnlineAndOffline() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -386,7 +386,10 @@ final class OfflineStoreTests: XCTestCase {
     let details = Data(#"""
       {"item":{"bgm":{"url":"/bgm"},"data":{"url":"/level"},
       "engine":{"version":13,"source":"https://engine.example",
-      "playData":{"url":"/play"},"rom":{"url":"/rom"}}}}
+      "playData":{"url":"/play"},"rom":{"url":"/rom"},
+      "background":{"source":"https://background.example",
+        "data":{"url":"/backgroundData"},"image":{"url":"/backgroundImage"},
+        "configuration":{"url":"/backgroundConfiguration"}}}}}
       """#.utf8)
     let rom = Data([0, 0, 128, 63, 0, 0, 32, 192])
     StubURLProtocol.handler = { request in
@@ -401,6 +404,9 @@ final class OfflineStoreTests: XCTestCase {
           """#.utf8)
       case "level": return Data(#"{"bgmOffset":0,"entities":[]}"#.utf8)
       case "bgm": return Data("audio fixture".utf8)
+      case "backgroundData", "backgroundImage", "backgroundConfiguration":
+        XCTAssertEqual(request.url?.host, "background.example")
+        return Data(request.url!.lastPathComponent.utf8)
       default: return details
       }
     }
@@ -427,6 +433,10 @@ final class OfflineStoreTests: XCTestCase {
     let offline = try await loader.load(level: level, from: server)
     XCTAssertTrue(offline.isOffline)
     XCTAssertEqual(offline.engineROM, rom)
+    for name in ["backgroundData", "backgroundImage", "backgroundConfiguration"] {
+      XCTAssertEqual(online.presentation?.resources[name], Data(name.utf8))
+      XCTAssertEqual(offline.presentation?.resources[name], Data(name.utf8))
+    }
     let runtime = try EnginePlayRuntime(engine: offline.engine, level: offline.level,
       options: [], aspectRatio: 1.8, skinSpriteIDs: [], effectClipIDs: [],
       particleEffectIDs: [], rom: offline.engineROM)

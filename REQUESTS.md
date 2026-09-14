@@ -35,6 +35,7 @@ phone audio alignment, touch handling, or frame pacing is correct.
 | Fill named host-function gaps, including PlayLooped | Draw/Judge/audio scheduling and loops/particles/BPM/Spawn/exports/resource checks implemented; preflight includes lazy and spawnable branches |
 | Anticipate compatibility beyond known engines | Fractional protocol fields, optional tags/buckets, cursor modes, curved drawing, lifecycle/memory/easing contract tests and `COMPATIBILITY.md` |
 | Unused presentation resources | Skin-only, particle-only, and no-effect engines do not require unused placeholder textures or audio; required resources still fail explicitly |
+| Engine-selected background and runtime placement | Online/offline resource selection, fit/aspect/scale, color/mask/blur, and perspective RuntimeBackground coordinates supported; bounded image preparation and transparent note layers |
 | Engine-requested haptic feedback | Final EntityInput values dispatch None/Light/Medium/Heavy/Long through prebuilt haptics-only players; unsupported hardware is safe; interrupted sessions recover with bounded retries |
 | Independent review after fixes | Independent read-only reviews found the update-selection, alias crash/stale-read, first-page Retry and option-control-routing issues; fixes have regressions |
 

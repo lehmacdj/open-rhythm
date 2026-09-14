@@ -55,8 +55,8 @@ final class EngineMetalRenderer {
     self.nearest = nearest
     layer.device = device
     layer.pixelFormat = .bgra8Unorm
-    layer.isOpaque = true
-    layer.backgroundColor = UIColor.black.cgColor
+    layer.isOpaque = false
+    layer.backgroundColor = UIColor.clear.cgColor
   }
 
   func resize(to size: CGSize, scale: CGFloat) {
@@ -87,7 +87,8 @@ final class EngineMetalRenderer {
     }
     do {
       try encode(EngineRenderer.sprites(host: host, assets: assets),
-        size: size, target: drawable.texture, commandBuffer: buffer)
+        size: size, target: drawable.texture, commandBuffer: buffer,
+        transparent: true)
     } catch {
       inFlight.signal()
       throw error
@@ -99,7 +100,8 @@ final class EngineMetalRenderer {
   }
 
   func encode(_ sprites: [EngineRenderSprite], size: CGSize,
-    target: MTLTexture, commandBuffer: MTLCommandBuffer
+    target: MTLTexture, commandBuffer: MTLCommandBuffer,
+    transparent: Bool = false
   ) throws {
     struct Batch {
       let start: Int
@@ -140,7 +142,7 @@ final class EngineMetalRenderer {
     pass.colorAttachments[0].texture = target
     pass.colorAttachments[0].loadAction = .clear
     pass.colorAttachments[0].storeAction = .store
-    pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+    pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, transparent ? 0 : 1)
     guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass)
     else { throw EngineInterpreterError.invalidArguments("Metal render pass") }
     defer { encoder.endEncoding() }
