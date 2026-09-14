@@ -18,6 +18,88 @@ struct NoteTiming: Codable, Identifiable, Equatable, Sendable {
   }
 }
 
+/// Streaming, unbinned timing density for the engine-selected HUD metric.
+/// Every accepted input contributes to every scale. Changing the displayed
+/// range never requires replaying the song's history on a gameplay frame.
+struct EngineErrorHeatmap {
+  struct Cell: Equatable {
+    var perfect = 0.0
+    var great = 0.0
+    var good = 0.0
+    var total: Double { perfect + great + good }
+  }
+
+  struct Snapshot: Equatable {
+    let cells: [Cell]
+    let limitMS: Double
+    let count: Int
+    let meanMS: Double?
+    let peak: Double
+
+    var text: String {
+      guard let meanMS else { return "— ms" }
+      return String(format: "%+.1f ms", abs(meanMS) < 0.05 ? 0 : meanMS)
+    }
+
+    var accessibilityDescription: String {
+      guard count > 0 else { return "Timing error heatmap, no inputs yet" }
+      return "Timing error heatmap, \(count) inputs, average \(text), "
+        + "early on left, late on right, range plus or minus \(limitMS.formatted()) milliseconds"
+    }
+  }
+
+  static let resolution = 129 // Odd so exact zero is an evaluation point.
+  private static let scaleCount = 19 // ±25 ms through ±6,553,600 ms.
+  private var grids = Array(repeating: Array(repeating: Cell(), count: resolution),
+    count: scaleCount)
+  private var count = 0
+  private var meanMS = 0.0
+  private var maximumMS = 0.0
+
+  @discardableResult
+  mutating func record(_ sample: NoteTiming) -> Bool {
+    guard sample.judgement != .miss, !sample.isIntermediateHold,
+      let accuracy = sample.accuracy, accuracy.isFinite, abs(accuracy) <= 3600
+    else { return false }
+    let value = accuracy * 1000
+    count += 1
+    meanMS += (value - meanMS) / Double(count)
+    maximumMS = max(maximumMS, abs(value))
+    for scale in 0..<Self.scaleCount {
+      let limit = 25 * pow(2, Double(scale))
+      let spacing = 2 * limit / Double(Self.resolution - 1)
+      let bandwidth = max(1, 2 * spacing)
+      let lower = max(0, Int(ceil((value - bandwidth + limit) / spacing)))
+      let upper = min(Self.resolution - 1,
+        Int(floor((value + bandwidth + limit) / spacing)))
+      guard lower <= upper else { continue }
+      for index in lower...upper {
+        let x = Double(index) * spacing - limit
+        let t = (x - value) / bandwidth
+        // Evaluate a compact continuous kernel, never round inputs into bins.
+        let density = max(0, 0.75 * (1 - t * t) / bandwidth)
+        switch sample.judgement {
+        case .perfect: grids[scale][index].perfect += density
+        case .great: grids[scale][index].great += density
+        case .good: grids[scale][index].good += density
+        case .miss: break
+        }
+      }
+    }
+    return true
+  }
+
+  var snapshot: Snapshot {
+    // Leave enough room for the whole kernel, including samples at an edge.
+    let scale = min(Self.scaleCount - 1,
+      max(0, Int(ceil(log2(max(1, maximumMS * 1.05 / 25))))))
+    let cells = grids[scale]
+    return Snapshot(cells: cells, limitMS: 25 * pow(2, Double(scale)),
+      count: count, meanMS: count == 0 ? nil : meanMS,
+      peak: cells.map(\.total).max() ?? 0)
+  }
+}
+
 struct PlayStatistics {
   struct DensityPoint: Identifiable {
     let index: Int

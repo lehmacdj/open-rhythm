@@ -23,6 +23,7 @@ phone audio alignment, touch handling, or frame pacing is correct.
 | Count-up/count-down display and note speed settings | Per-engine Gameplay Settings; engine arcade score is the source when available; both directions use a 1,000,000 maximum |
 | Engine-standard score modes/weights and judgment windows | Runtime reads engine score configuration, note weights and combo multipliers; `Judge` uses supplied signed windows; SEKAI score-mode picker |
 | Accuracy HUD and historical accuracy score | Final engine input errors, including misses, feed absolute-error scoring; count-up/down converge to the same result; legacy values are not invented |
+| Engine-selected error-heatmap HUD | Continuous signed-error density and mean in the engine's metric slots; centered zero, judgment colors, no automatic hold ticks, bounded streaming work |
 | Hit grades and configurable Early/Late | Off/grade/timing setting; engine error threshold includes qualifying PERFECTs; all 13 engine timing styles supported; engine position wins over earlier top-only preference |
 | Engine-defined HUD and animations | Runtime positions, dimensions, pivot, alpha, rotation, life and supported metrics; judgment and combo animation tweens |
 | Expose other engine-provided options | Generic sliders/toggles/choices, validation, named per-engine persistence; type-aware dedicated controls; standard overrides on results |
@@ -97,7 +98,7 @@ per-note timing charts.
    gameplay frame pacing. These require the relevant device/build or field
    diagnostics; they cannot be certified by invented simulator measurements.
 2. General engine compatibility is not complete: stack-function ABI, all skin
-   render modes, error-heatmap HUD metrics, and resource/callback conformance
+   render modes and resource/callback conformance
    still need work. Unsupported
    functions are surfaced before music rather than assumed harmless. See the
    separate contract checklist; sampled engines do not prove arbitrary support.

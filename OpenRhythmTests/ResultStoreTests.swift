@@ -2,6 +2,78 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testHeatmapKeepsZeroCenteredAndMirrorsSignedInputs() {
+    var early = EngineErrorHeatmap()
+    var late = EngineErrorHeatmap()
+    for index in 0..<100 {
+      let offset = Double(index % 7) / 1000
+      early.record(NoteTiming(id: index, songTime: Double(index), noteType: "Tap",
+        judgement: .perfect, accuracy: -offset))
+      late.record(NoteTiming(id: index, songTime: Double(index), noteType: "Tap",
+        judgement: .perfect, accuracy: offset))
+    }
+    XCTAssertEqual(early.snapshot.count, 100)
+    XCTAssertEqual(early.snapshot.meanMS!, -late.snapshot.meanMS!, accuracy: 1e-10)
+    for (left, right) in zip(early.snapshot.cells, late.snapshot.cells.reversed()) {
+      XCTAssertEqual(left.total, right.total, accuracy: 1e-10)
+    }
+    var exact = EngineErrorHeatmap()
+    exact.record(NoteTiming(id: 1, songTime: 0, noteType: "Tap",
+      judgement: .perfect, accuracy: 0))
+    let snapshot = exact.snapshot
+    XCTAssertEqual(snapshot.cells.count, 129)
+    XCTAssertEqual(snapshot.cells[64].total, snapshot.peak)
+    XCTAssertEqual(snapshot.meanMS, 0)
+    XCTAssertEqual(snapshot.text, "+0.0 ms")
+    XCTAssertNil(EngineErrorHeatmap().snapshot.meanMS)
+  }
+
+  func testHeatmapExcludesAutomaticTicksAndMissesWithoutBinningInputs() {
+    var map = EngineErrorHeatmap()
+    let excluded: [(String, NoteJudgement, Double?)] = [
+      ("NormalTickNote", .perfect, 0), ("SlideTickNote", .perfect, 0),
+      ("Tap", .miss, 0), ("Tap", .perfect, nil),
+      ("Tap", .good, .infinity), ("Tap", .great, .nan), ("Tap", .good, 3601)
+    ]
+    for (type, grade, error) in excluded {
+      XCTAssertFalse(map.record(NoteTiming(id: 0, songTime: 0,
+        noteType: type, judgement: grade, accuracy: error)))
+    }
+    XCTAssertEqual(map.snapshot.count, 0)
+    XCTAssertEqual(map.snapshot.peak, 0)
+    var neighbor = EngineErrorHeatmap()
+    map.record(NoteTiming(id: 1, songTime: 0, noteType: "Hold End",
+      judgement: .great, accuracy: 0.0001))
+    neighbor.record(NoteTiming(id: 1, songTime: 0, noteType: "Hold End",
+      judgement: .great, accuracy: 0.0002))
+    XCTAssertNotEqual(map.snapshot.cells, neighbor.snapshot.cells,
+      "Nearby inputs must not be rounded into a shared bin")
+    XCTAssertEqual(map.snapshot.cells.map(\.perfect).max(), 0)
+    XCTAssertGreaterThan(map.snapshot.cells[64].great, 0)
+  }
+
+  func testHeatmapRangeGrowthRetainsEveryEarlierInputWithBoundedStorage() {
+    var map = EngineErrorHeatmap()
+    for index in 0..<10_000 {
+      map.record(NoteTiming(id: index, songTime: Double(index), noteType: "Tap",
+        judgement: .perfect, accuracy: 0))
+    }
+    map.record(NoteTiming(id: 10_000, songTime: 10_000, noteType: "Flick",
+      judgement: .good, accuracy: 0.2))
+    let snapshot = map.snapshot
+    XCTAssertEqual(snapshot.count, 10_001)
+    XCTAssertEqual(snapshot.limitMS, 400)
+    XCTAssertEqual(snapshot.cells.count, 129)
+    XCTAssertEqual(snapshot.cells[64].perfect,
+      10_000 * 0.75 / (snapshot.limitMS / 32), accuracy: 1e-6)
+    XCTAssertGreaterThan(snapshot.cells.map(\.good).max() ?? 0, 0)
+    map.record(NoteTiming(id: 10_001, songTime: 10_001, noteType: "Tap",
+      judgement: .great, accuracy: -3600))
+    XCTAssertGreaterThan(map.snapshot.limitMS, 3_600_000)
+    XCTAssertEqual(map.snapshot.cells.count, 129)
+    XCTAssertTrue(map.snapshot.cells.allSatisfy { $0.total.isFinite })
+  }
+
   func testAccuracyScoreSurvivesHistoryWithoutInventingLegacyValues() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)

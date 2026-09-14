@@ -417,6 +417,34 @@ final class RuntimeDecodingTests: XCTestCase {
       accuracy: 0.2).text(for: .timing), "MISS")
   }
 
+  @MainActor
+  func testHeatmapHUDSelectionUsesTheSharedInputPipelineAndResetsOnRestart() throws {
+    for metrics in [("errorHeatmap", "life"), ("arcade", "errorHeatmap"),
+      ("arcade", "life")] {
+      let configuration = try JSONSerialization.data(withJSONObject: [
+        "options": [], "ui": ["primaryMetric": metrics.0, "secondaryMetric": metrics.1]
+      ] as [String: Any])
+      let model = try gameplayModel(presentation: RuntimePresentation(resources: [
+        "configuration": configuration
+      ]))
+      model.start()
+      defer { model.stop() }
+      model.press(lane: 0, at: 1.02)
+      model.release(lane: 0)
+      XCTAssertEqual(model.noteTimings.count, 1)
+      let expected = metrics.0 == "errorHeatmap" || metrics.1 == "errorHeatmap" ? 1 : 0
+      XCTAssertEqual(model.errorHeatmap.count, expected)
+      if expected == 1 {
+        XCTAssertEqual(model.errorHeatmap.meanMS!, 20, accuracy: 1e-8)
+        XCTAssertEqual(model.engineMetric("errorHeatmap")?.text, "+20.0 ms")
+      }
+      model.restart()
+      XCTAssertEqual(model.errorHeatmap.count, 0)
+      XCTAssertNil(model.errorHeatmap.meanMS)
+      XCTAssertEqual(model.errorHeatmap.peak, 0)
+    }
+  }
+
   func testTimingPlacementUsesEngineSettingWithoutChangingTheGrade() throws {
     let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
       {"options":[],"ui":{"judgmentErrorPlacement":"bottom"}}

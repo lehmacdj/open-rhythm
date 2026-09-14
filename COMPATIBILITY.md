@@ -52,6 +52,12 @@ integration probes, including successful inputs and restart/buffering paths.
 - Accuracy scoring consumes final EntityInput values, including misses and
   automatic ticks, independently of arcade weights or timing-plot filters.
   Scores persist in history; old miss-free samples do not invent legacy scores.
+- Engine-selected error-heatmap HUD metrics render signed, unbinned density
+  instead of a placeholder, in either primary or secondary metric slots.
+  Zero stays centered; known automatic hold ticks and misses are excluded.
+  Every accepted input contributes to bounded multiscale accumulators, avoiding
+  history rescans when the range grows. Native preview, sign symmetry, extreme
+  range, selection gating and restart regressions cover this host display.
 - Spawned entities have no input, even if their archetype declares hasInput;
   they must not introduce a false first-note boundary while skipping silence.
 - Unused skin, effect, and particle families need no placeholder assets.
@@ -76,8 +82,8 @@ integration probes, including successful inputs and restart/buffering paths.
 - Stack layout/control semantics and all skin render modes.
 - Optional/missing resources, callback-specific memory access and defaults,
   and unknown enum values.
-- Error-heatmap HUD metrics; tutorial/watch/preview modes are separate
-  capability sets.
+- Tutorial/watch/preview modes are separate capability sets, not implied by
+  play-mode support.
 - Expired cursors, changing remote ordering, and sparse filtered results
   without unbounded crawls.
 - Engine-generated count-ins and visible non-input intro effects. First-input
@@ -138,3 +144,14 @@ Encoded backgrounds over 32 MiB or source images over 128 million pixels / 32768
 per side fail explicitly. Degenerate or folded projective quads hide the image
 while retaining background color and mask. These policies do not alter skin
 sprite interpolation or engine input geometry.
+
+The public UI contract names `errorHeatmap` without prescribing its drawing
+algorithm. OpenRhythm uses continuous compact-kernel densities sampled at 129
+positions across a symmetric ±25 ms power-of-two range that expands to include
+all accepted errors. Nineteen scales retain all inputs with bounded work and
+storage; samples are not assigned to histogram bins. Kernel bandwidth is two
+grid spacings, at least 1 ms. The label is signed mean error in milliseconds;
+accessibility also exposes the range and input count. This is host visualization
+policy, not claimed pixel parity with Sonolus. The 10,000-input simulator probe
+measured record plus snapshot at mean 0.0223 ms / p95 0.0254 ms / max 0.526 ms;
+these numbers do not establish phone frame-time tails.

@@ -201,11 +201,17 @@ struct GameplayView: View {
     -> some View {
     let metric = model.engineMetric(name)
     EngineUIPlacement(element: model.engineUI[index], size: size) {
-      GeometryReader { geometry in
-        ZStack(alignment: .leading) {
-          Rectangle().fill(.white.opacity(0.2))
-          Rectangle().fill(name == "life" ? Color.green : Color.cyan)
-            .frame(width: geometry.size.width * (metric?.fraction ?? 0))
+      Group {
+        if name == "errorHeatmap" {
+          EngineErrorHeatmapView(snapshot: model.errorHeatmap)
+        } else {
+          GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+              Rectangle().fill(.white.opacity(0.2))
+              Rectangle().fill(name == "life" ? Color.green : Color.cyan)
+                .frame(width: geometry.size.width * (metric?.fraction ?? 0))
+            }
+          }
         }
       }
       .frame(width: max(0, model.engineUI[index].values[4] * size.height / 2),
@@ -213,7 +219,9 @@ struct GameplayView: View {
     }
     EngineUIPlacement(element: model.engineUI[index + 1], size: size) {
       Text(metric?.text ?? "—")
-        .accessibilityLabel(metric == nil ? "Unsupported metric: \(name)" : name)
+        .accessibilityLabel(name == "errorHeatmap"
+          ? model.errorHeatmap.accessibilityDescription
+          : metric == nil ? "Unsupported metric: \(name)" : name)
     }
   }
 
@@ -445,6 +453,36 @@ struct ModifiedEngineOptionsSection: View {
   }
 }
 
+private struct EngineErrorHeatmapView: View {
+  let snapshot: EngineErrorHeatmap.Snapshot
+
+  var body: some View {
+    Canvas { context, size in
+      let bounds = CGRect(origin: .zero, size: size)
+      context.fill(Path(bounds), with: .color(.white.opacity(0.12)))
+      if snapshot.peak > 0 {
+        let stops = snapshot.cells.enumerated().map { index, cell in
+          // Judgment colors mix where continuous densities overlap.
+          let total = max(cell.total, .leastNonzeroMagnitude)
+          let color = Color(red: (cell.perfect * 0.3 + cell.great + cell.good) / total,
+            green: (cell.perfect + cell.great * 0.85 + cell.good * 0.4) / total,
+            blue: (cell.perfect + cell.great * 0.15) / total)
+            .opacity(min(1, cell.total / snapshot.peak))
+          return Gradient.Stop(color: color,
+            location: Double(index) / Double(snapshot.cells.count - 1))
+        }
+        context.fill(Path(bounds), with: .linearGradient(Gradient(stops: stops),
+          startPoint: .zero, endPoint: CGPoint(x: size.width, y: 0)))
+      }
+      var center = Path()
+      center.move(to: CGPoint(x: size.width / 2, y: 0))
+      center.addLine(to: CGPoint(x: size.width / 2, y: size.height))
+      context.stroke(center, with: .color(.white.opacity(0.8)), lineWidth: 1)
+    }
+    .accessibilityLabel(snapshot.accessibilityDescription)
+  }
+}
+
 private struct JudgementOverlay: View {
   let feedback: JudgementFeedback?
   let mode: JudgementDisplayMode
@@ -596,6 +634,44 @@ private struct EngineAnchorLayout: Layout {
         anchor: UnitPoint(x: element.pivot.x, y: element.pivot.y),
         proposal: .unspecified)
     }
+  }
+}
+
+#Preview("Engine Error Heatmap", traits: .fixedLayout(width: 620, height: 320)) {
+  let exact: EngineErrorHeatmap.Snapshot = {
+    var map = EngineErrorHeatmap()
+    for index in 0..<30 {
+      map.record(NoteTiming(id: index, songTime: Double(index), noteType: "Tap",
+        judgement: .perfect, accuracy: 0))
+    }
+    return map.snapshot
+  }()
+  let mixed: EngineErrorHeatmap.Snapshot = {
+    var map = EngineErrorHeatmap()
+    for index in 0..<80 {
+      let error = Double(index % 11 - 8) / 1000
+      map.record(NoteTiming(id: index, songTime: Double(index), noteType: "Tap",
+        judgement: .perfect, accuracy: error))
+    }
+    for index in 0..<25 {
+      map.record(NoteTiming(id: index + 80, songTime: 80, noteType: "Flick",
+        judgement: .great, accuracy: Double(22 + index % 9) / 1000))
+    }
+    return map.snapshot
+  }()
+  ZStack {
+    Color.black
+    VStack(spacing: 28) {
+      ForEach([exact, mixed].indices, id: \.self) { index in
+        let snapshot = [exact, mixed][index]
+        VStack(spacing: 8) {
+          Text(index == 0 ? "Exact zero" : "Mixed timing and judgments")
+          EngineErrorHeatmapView(snapshot: snapshot).frame(width: 292, height: 32)
+          Text("\(snapshot.text) average · ±\(snapshot.limitMS.formatted()) ms")
+            .font(.caption)
+        }
+      }
+    }.foregroundStyle(.white)
   }
 }
 

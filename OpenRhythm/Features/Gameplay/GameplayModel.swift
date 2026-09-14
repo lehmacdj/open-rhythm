@@ -141,6 +141,8 @@ final class GameplayModel {
   private(set) var engineLife: EngineLife?
   private(set) var engineUI = [EngineUIElement]()
   private var musicHasEnded = false
+  @ObservationIgnored private var timingHeatmap = EngineErrorHeatmap()
+  private(set) var errorHeatmap = EngineErrorHeatmap().snapshot
 
   func engineMetric(_ name: String) -> (text: String, fraction: Double)? {
     func metric(_ value: Double, _ maximum: Double, percentage: Bool = false)
@@ -150,6 +152,9 @@ final class GameplayModel {
         : value.formatted(.number.precision(.fractionLength(0))), fraction)
     }
     switch name {
+    case "errorHeatmap":
+      return (errorHeatmap.text,
+        0.5 + (errorHeatmap.meanMS ?? 0) / (2 * errorHeatmap.limitMS))
     case "arcade", "arcadePercentage":
       return metric(Double(displayedScore), 1_000_000,
         percentage: name == "arcadePercentage")
@@ -381,6 +386,8 @@ final class GameplayModel {
     musicHasEnded = false
     latestJudgement = nil
     noteTimings.removeAll(keepingCapacity: true)
+    timingHeatmap = EngineErrorHeatmap()
+    errorHeatmap = timingHeatmap.snapshot
     combo = 0
     maxCombo = 0
     currentTime = clockMapping.initialChartTime
@@ -772,9 +779,15 @@ final class GameplayModel {
       $0.isFinite && abs($0) <= 3_600
     } == true ? accuracy : nil
     let songTime = time ?? currentTime
-    noteTimings.append(NoteTiming(id: noteTimings.count,
+    let timing = NoteTiming(id: noteTimings.count,
       songTime: songTime.isFinite ? songTime : currentTime,
-      noteType: noteType, judgement: judgement, accuracy: validAccuracy))
+      noteType: noteType, judgement: judgement, accuracy: validAccuracy)
+    noteTimings.append(timing)
+    let ui = presentationAssets?.ui
+    if ui?.primaryMetric == "errorHeatmap" || ui?.secondaryMetric == "errorHeatmap",
+      timingHeatmap.record(timing) {
+      errorHeatmap = timingHeatmap.snapshot
+    }
     judgementSequence += 1
     latestJudgement = JudgementFeedback(sequence: judgementSequence,
       judgement: judgement, accuracy: accuracy,
