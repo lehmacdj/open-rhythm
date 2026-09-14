@@ -18,6 +18,11 @@ integration probes, including successful inputs and restart/buffering paths.
   all-difficulty lookup.
 - Execute0 and existing arithmetic, easing, memory-addressing, lifecycle,
   score/life, resource, timing, and host-command tests.
+- Despawning is two-phase: all terminating entities retain Active state while
+  all terminate callbacks execute, then final inputs are sampled and entities
+  despawn. Synthetic linked peers cover same-frame state visibility and later
+  Despawned state; other regressions cover absent terminate callbacks and
+  exactly-once result handling.
 - Reachable unsupported calls in lazy successful-hit branches and dynamically
   spawnable archetypes, not just functions encountered by a no-touch run.
 - Separate event and frame timestamps, paused/running/rate-changing clocks,
@@ -88,6 +93,9 @@ integration probes, including successful inputs and restart/buffering paths.
 - Stack layout/control semantics and native rendering parity.
 - Optional/missing resources, callback-specific memory access and defaults,
   and unknown enum values.
+- Runtime metadata lists a play-mode `skip` slot, while the public play block
+  documentation does not explain it. It remains zero pending evidence of the
+  intended semantics; intro fast-forward does not assume an undocumented mode.
 - Tutorial/watch/preview modes are separate capability sets, not implied by
   play-mode support.
 - Expired cursors, changing remote ordering, and sparse filtered results
@@ -104,6 +112,23 @@ and [engine specifications](https://wiki.sonolus.com/engine-specs/).
 Download probes remain in ignored scratch storage; no third-party charts or
 assets belong in the regression fixtures. Avoid catalog crawls: use bounded
 pages and cached shared resources, and state exactly which paths were exercised.
+
+The [despawning contract](
+https://wiki.sonolus.com/engine-specs/play-lifecycle/despawning-system) runs all
+terminate callbacks before despawning any entity. The old serial implementation
+interleaved those operations, making later callbacks observe earlier peers as
+already despawned. The regression is synthetic, not dependent on a sampled
+engine happening to exercise this legal cross-entity read.
+
+After the two-phase fix, cached no-touch lifecycle runs resolved each input
+exactly once: Eleventh Hard 16 419/419 at 92.017 s; 光 Hard 18 563/563 at
+100.433 s; SIF UNSTOPPABLE 658/658 at 97.55 s; 22/7 Pro 4.9 949/949 at
+135.117 s. The largest simultaneous batches were respectively 4, 4, 2 and 2.
+Initial 60-second snippet runs timed out; extending the execution allowance
+returned complete results. These runs omit live audio/rendering and successful
+touches. The SEKAI lifecycle probe remains CPU-heavy in Xcode's instrumented
+simulator (Hikari 83.3 s for 100.4 s of 60 Hz chart updates), so this is not a
+claim that dense-chart phone performance is solved.
 
 OpenRhythm intentionally keeps gameplay preferences per engine, following the
 requested settings policy, rather than sharing generic options across engines

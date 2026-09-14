@@ -4,6 +4,58 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testAllTerminateCallbacksObserveActivePeersBeforeDespawn() throws {
+    let b = RuntimeNodeBuilder()
+    let now = b.call("Get", [b.value(1001), b.value(0)])
+    let deadline = b.call("Get", [b.value(4001), b.value(0)])
+    let update = b.call("Set", [b.value(4004), b.value(0),
+      b.call("GreaterOr", [now, deadline])])
+    // A legal read of each peer's Info Array state. Preserve it in this
+    // entity's final input payload, which is sampled after terminate.
+    let peer = b.call("Get", [b.value(4001), b.value(1)])
+    let stateOffset = b.call("Add", [
+      b.call("Multiply", [peer, b.value(3)]), b.value(2)])
+    let peerState = b.call("Get", [b.value(4103), stateOffset])
+    let terminate = b.call("Execute", [
+      b.call("Set", [b.value(4005), b.value(0), b.value(1)]),
+      b.call("Set", [b.value(4005), b.value(1), peerState])])
+    let engine = try b.engine(archetypes: [[
+      "name": "linked", "hasInput": true,
+      "imports": [["name": "end", "index": 0],
+        ["name": "peer", "index": 1]], "exports": [],
+      "updateSequential": ["index": update],
+      "terminate": ["index": terminate]
+    ]])
+    let level = try JSONDecoder().decode(LevelData.self, from: Data(#"""
+      {"bgmOffset":0,"entities":[
+        {"archetype":"linked","data":[
+          {"name":"end","value":1},{"name":"peer","value":1}]},
+        {"archetype":"linked","data":[
+          {"name":"end","value":1},{"name":"peer","value":0}]},
+        {"archetype":"linked","data":[
+          {"name":"end","value":2},{"name":"peer","value":0}]}]}
+      """#.utf8))
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    try runtime.update(at: 0)
+    XCTAssertEqual(runtime.resolvedInputCount, 0)
+    try runtime.update(at: 1)
+    XCTAssertEqual(runtime.judgments.map(\.accuracy), [1, 1],
+      "Both peers must see Active, regardless of callback execution order")
+    XCTAssertEqual(runtime.resolvedInputCount, 2)
+    XCTAssertEqual((0..<3).map {
+      runtime.memory.value(block: 4103, index: $0 * 3 + 2)
+    }, [2, 2, 1])
+    try runtime.update(at: 2)
+    XCTAssertEqual(runtime.judgments.map(\.accuracy), [2],
+      "A later frame must see the earlier peers as despawned")
+    XCTAssertEqual(runtime.resolvedInputCount, 3)
+    try runtime.update(at: 3)
+    XCTAssertTrue(runtime.judgments.isEmpty)
+    XCTAssertEqual(runtime.resolvedInputCount, 3)
+  }
+
   @MainActor
   func testEngineRenderModePrecedenceAndLegacyPreferenceDefault() throws {
     let presentation = RuntimePresentation(resources: [

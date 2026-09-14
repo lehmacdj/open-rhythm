@@ -34,7 +34,7 @@ phone audio alignment, touch handling, or frame pacing is correct.
 | Timing scatter, miss lines, distribution, note-type filters and statistics | Shared result statistics sections for new/past plays; both plots filtered together |
 | Remove automatic hold ticks from histogram and fix zero alignment | Continuous density curves (no histogram bins), known intermediate ticks excluded only from distribution; exact-zero, outlier and bounded-work tests |
 | Fill named host-function gaps, including PlayLooped | Draw/Judge/audio scheduling and loops/particles/BPM/Spawn/exports/resource checks implemented; preflight includes lazy and spawnable branches |
-| Anticipate compatibility beyond known engines | Fractional protocol fields, optional tags/buckets, cursor modes, curved drawing, lifecycle/memory/easing contract tests and `COMPATIBILITY.md` |
+| Anticipate compatibility beyond known engines | Fractional protocol fields, optional tags/buckets, cursor modes, curved drawing, same-frame termination state visibility, lifecycle/memory/easing contract tests and `COMPATIBILITY.md` |
 | Unused presentation resources | Skin-only, particle-only, and no-effect engines do not require unused placeholder textures or audio; required resources still fail explicitly |
 | Engine-selected skin rendering | Explicit Standard/Lightweight modes win; default defers to the per-engine Graphics preference. Curved and ordinary sprites share mode-aware GPU/software meshes |
 | Engine-selected background and runtime placement | Online/offline resource selection, fit/aspect/scale, color/mask/blur, and perspective RuntimeBackground coordinates supported; bounded image preparation and transparent note layers |
@@ -86,6 +86,11 @@ per-note timing charts.
   transition history instead of frame/delivery time. No guessed calibration
   offset was added. Simulator event-clock agreement is not output-latency or
   display-latency measurement.
+- **Lifecycle follow-up:** after fixing same-frame termination state visibility,
+  full cached Eleventh, 光, SIF Custom Charts and 22/7 no-touch runs resolved
+  419, 563, 658 and 949 inputs respectively, with no duplicate resolutions.
+  Generic linked-peer regressions verify the contract even without a real chart
+  triggering the original bug. Successful physical inputs remain a separate check.
 - **Performance:** interpreter, sprite generation, pooled/predecoded audio,
   GPU rendering and bounded software work have been profiled/improved. Phone
   frame-time tails under dense successful hits remain unverified. Apple has

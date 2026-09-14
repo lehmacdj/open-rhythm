@@ -452,11 +452,20 @@ final class EnginePlayRuntime {
     for entity in active {
       _ = try execute(entity, callback: \.updateParallel)
     }
-    var despawned = Set<Int>()
+    // Terminate is a parallel lifecycle phase: every callback must observe
+    // the pre-despawn entity states, even though we execute them serially.
+    var terminating = [Entity]()
     for entity in active {
       select(entity)
       guard memory.value(block: 4004, index: 0) != 0 else { continue }
+      terminating.append(entity)
+    }
+    for entity in terminating {
       _ = try execute(entity, callback: \.terminate)
+    }
+    var despawned = Set<Int>()
+    for entity in terminating {
+      select(entity)
       if let index = entity.index, engine.archetypes[entity.archetype].hasInput {
         let grade = memory.value(block: 4005, index: 0)
         let accuracy = memory.value(block: 4005, index: 1)
