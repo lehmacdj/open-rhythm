@@ -36,6 +36,7 @@ phone audio alignment, touch handling, or frame pacing is correct.
 | Fill named host-function gaps, including PlayLooped | Draw/Judge/audio scheduling and loops/particles/BPM/Spawn/exports/resource checks implemented; preflight includes lazy and spawnable branches |
 | Anticipate compatibility beyond known engines | Fractional protocol fields, optional tags/buckets, cursor modes, curved drawing, lifecycle/memory/easing contract tests and `COMPATIBILITY.md` |
 | Unused presentation resources | Skin-only, particle-only, and no-effect engines do not require unused placeholder textures or audio; required resources still fail explicitly |
+| Engine-selected skin rendering | Explicit Standard/Lightweight modes win; default defers to the per-engine Graphics preference. Curved and ordinary sprites share mode-aware GPU/software meshes |
 | Engine-selected background and runtime placement | Online/offline resource selection, fit/aspect/scale, color/mask/blur, and perspective RuntimeBackground coordinates supported; bounded image preparation and transparent note layers |
 | Engine-requested haptic feedback | Final EntityInput values dispatch None/Light/Medium/Heavy/Long through prebuilt haptics-only players; unsupported hardware is safe; interrupted sessions recover with bounded retries |
 | Independent review after fixes | Independent read-only reviews found the update-selection, alias crash/stale-read, first-page Retry and option-control-routing issues; fixes have regressions |
@@ -97,9 +98,9 @@ per-note timing charts.
    and holds, hit effects, audible sync, repeated starts, interruptions and
    gameplay frame pacing. These require the relevant device/build or field
    diagnostics; they cannot be certified by invented simulator measurements.
-2. General engine compatibility is not complete: stack-function ABI, all skin
-   render modes and resource/callback conformance
-   still need work. Unsupported
+2. General engine compatibility is not complete: stack-function ABI and
+   resource/callback conformance still need work. Skin mode selection is now
+   honored, but exact native rendering parity is not claimed. Unsupported
    functions are surfaced before music rather than assumed harmless. See the
    separate contract checklist; sampled engines do not prove arbitrary support.
 3. Safe intro skipping stops at first-input activation, which can be earlier

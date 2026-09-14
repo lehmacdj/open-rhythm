@@ -361,6 +361,7 @@ final class GameplayModel {
 
   func start() {
     guard phase == .ready, let player else { return }
+    presentationAssets?.configureRenderMode(preferred: settings.skinRenderMode)
     let speed = presentationAssets?.configuration.playbackSpeed(preferences: settings) ?? 1
     guard speed.isFinite, (0.05...4).contains(speed) else {
       phase = .failed("This playback speed is outside the supported range (0.05–4×).")

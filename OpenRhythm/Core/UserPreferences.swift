@@ -36,19 +36,23 @@ struct GameplayPreferences: Codable, Equatable {
   var judgementDisplay = JudgementDisplayMode.timing
   var scoreMode: Int? = nil
   var engineOptions: [String: Double] = [:]
+  var skinRenderMode = EngineSkinRenderMode.standard
 
   init(scoreDisplay: ScoreDisplayMode = .countUp, noteSpeed: Double? = nil,
     judgementDisplay: JudgementDisplayMode = .timing, scoreMode: Int? = nil,
-    engineOptions: [String: Double] = [:]) {
+    engineOptions: [String: Double] = [:],
+    skinRenderMode: EngineSkinRenderMode = .standard) {
     self.scoreDisplay = scoreDisplay
     self.noteSpeed = noteSpeed
     self.judgementDisplay = judgementDisplay
     self.scoreMode = scoreMode
     self.engineOptions = engineOptions
+    self.skinRenderMode = skinRenderMode
   }
 
   private enum CodingKeys: String, CodingKey {
     case scoreDisplay, noteSpeed, judgementDisplay, scoreMode, engineOptions
+    case skinRenderMode
   }
 
   init(from decoder: Decoder) throws {
@@ -61,6 +65,8 @@ struct GameplayPreferences: Codable, Equatable {
       forKey: .engineOptions) ?? [:]
     judgementDisplay = try values.decodeIfPresent(JudgementDisplayMode.self,
       forKey: .judgementDisplay) ?? .timing
+    skinRenderMode = try values.decodeIfPresent(EngineSkinRenderMode.self,
+      forKey: .skinRenderMode) ?? .standard
   }
 }
 

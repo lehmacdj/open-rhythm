@@ -201,7 +201,10 @@ final class EngineMetalRenderer {
     guard quad.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return [] }
     let warp = hypot(quad[0].x + quad[2].x - quad[1].x - quad[3].x,
       quad[0].y + quad[2].y - quad[1].y - quad[3].y)
-    let divisions = EngineRenderer.tessellationDivisions(warp: warp)
+    // Lightweight is this host's two-triangle approximation. Both renderer
+    // paths use this mesh; texture filtering remains a separate skin option.
+    let divisions = sprite.renderMode == .lightweight ? 1
+      : EngineRenderer.tessellationDivisions(warp: warp)
     // Adjacent cells share vertices. Interpolate each grid point once instead
     // of allocating weights and recomputing four corners for every cell.
     let stride = divisions + 1

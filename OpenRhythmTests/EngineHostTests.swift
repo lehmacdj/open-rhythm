@@ -5,6 +5,59 @@ import Metal
 
 final class EngineHostTests: XCTestCase {
   @MainActor
+  func testEngineRenderModePrecedenceAndLegacyPreferenceDefault() throws {
+    let presentation = RuntimePresentation(resources: [
+      "configuration": Data(#"{"options":[]}"#.utf8)
+    ])
+    for configured in [nil, "default", "standard", "lightweight"] {
+      let skin = EngineSkinDefinition(renderMode: configured, sprites: [])
+      for preference in EngineSkinRenderMode.allCases {
+        let expected = configured == "standard" ? EngineSkinRenderMode.standard
+          : configured == "lightweight" ? .lightweight : preference
+        var object: [String: Any] = [
+          "skin": ["sprites": []], "effect": ["clips": []],
+          "particle": ["effects": []], "nodes": [], "archetypes": [], "buckets": []
+        ]
+        if let configured { object["skin"] = ["sprites": [], "renderMode": configured] }
+        let engine = try JSONDecoder().decode(EnginePlayData.self,
+          from: JSONSerialization.data(withJSONObject: object))
+        let assets = try EnginePresentationAssets(engine: engine, presentation: presentation)
+        assets.configureRenderMode(preferred: preference)
+        XCTAssertEqual(assets.skinRenderMode, expected)
+        XCTAssertEqual(assets.forcedSkinRenderMode, try skin.forcedRenderMode)
+      }
+    }
+    XCTAssertThrowsError(try EngineSkinDefinition(renderMode: "future",
+      sprites: []).forcedRenderMode)
+    let legacy = try JSONDecoder().decode(GameplayPreferences.self,
+      from: Data(#"{"scoreDisplay":"countDown","noteSpeed":8}"#.utf8))
+    XCTAssertEqual(legacy.skinRenderMode, .standard)
+    XCTAssertEqual(legacy.noteSpeed, 8)
+  }
+
+  @MainActor
+  func testLightweightSkinMeshUsesTwoTrianglesWithoutChangingCornersOrFiltering() {
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).image { _ in }
+    let points = [EnginePoint(x: -1, y: -1), EnginePoint(x: -0.2, y: 1),
+      EnginePoint(x: 0.2, y: 1), EnginePoint(x: 1, y: -1)]
+    var sprite = EngineRenderSprite(image: image, points: points,
+      matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+      alpha: 0.5, interpolation: true)
+    let size = CGSize(width: 400, height: 200)
+    let standard = EngineMetalRenderer.vertices(for: sprite, size: size)
+    sprite.renderMode = .lightweight
+    let lightweight = EngineMetalRenderer.vertices(for: sprite, size: size)
+    XCTAssertGreaterThan(standard.count, 6)
+    XCTAssertEqual(lightweight.count, 6)
+    XCTAssertEqual(Set(lightweight.map(\.position)).count, 4)
+    XCTAssertEqual(sprite.points, points)
+    XCTAssertTrue(sprite.interpolation)
+    XCTAssertTrue(lightweight.allSatisfy { $0.alpha == 0.5 })
+    for corner in lightweight {
+      XCTAssertTrue(standard.contains { $0.position == corner.position && $0.uv == corner.uv })
+    }
+  }
+  @MainActor
   func testBackgroundAssetsPrepareBlurAndRejectPartialResources() throws {
     let format = UIGraphicsImageRendererFormat()
     format.scale = 1
@@ -345,6 +398,17 @@ final class EngineHostTests: XCTestCase {
     let vertices = EngineMetalRenderer.vertices(for: sprites[0],
       size: CGSize(width: 200, height: 100))
     XCTAssertEqual(try XCTUnwrap(vertices.first).position.x, 0.05, accuracy: 1e-6)
+    _ = try host.call(function: "Draw", arguments: [7] + quad + [1, 1])
+    assets.configureRenderMode(preferred: .lightweight)
+    let lightweight = EngineRenderer.sprites(host: host, assets: assets)
+    XCTAssertEqual(lightweight.count, 3)
+    XCTAssertTrue(lightweight.allSatisfy { $0.renderMode == .lightweight })
+    for sprite in lightweight {
+      XCTAssertEqual(EngineMetalRenderer.vertices(for: sprite,
+        size: CGSize(width: 200, height: 100)).count, 6)
+    }
+    XCTAssertEqual(lightweight[0].points, sprites[0].points)
+    XCTAssertEqual(lightweight[1].textureRegion, sprites[1].textureRegion)
   }
   @MainActor
   func testOrdinaryWarpedDrawsShareOneSoftwareFrameBudget() throws {
@@ -396,7 +460,12 @@ final class EngineHostTests: XCTestCase {
       EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)]
     let folded = [EnginePoint(x: -0.8, y: -0.8), EnginePoint(x: -0.8, y: 0.2),
       EnginePoint(x: 0.8, y: 0.2), EnginePoint(x: 0.8, y: -0.8)]
-    for (folding, linear) in [(false, false), (false, true), (true, false), (true, true)] {
+    let cases = EngineSkinRenderMode.allCases.flatMap { mode in
+      [(false, false), (false, true), (true, false), (true, true)].map {
+        (mode, $0.0, $0.1)
+      }
+    }
+    for (mode, folding, linear) in cases {
       let patches = EngineGeometry.curvedPatches(folding ? folded : full,
         curve: EngineCurve(edge: .leftRight, segments: 8,
           controls: [EnginePoint(x: -1, y: folding ? 3 : 0),
@@ -405,7 +474,8 @@ final class EngineHostTests: XCTestCase {
         matrix: identity, alpha: 1, interpolation: false)
       let sprites = [background] + patches.map {
         EngineRenderSprite(image: image, points: $0.points, matrix: reflected,
-          alpha: 0.5, interpolation: linear, textureRegion: $0.region)
+          alpha: 0.5, interpolation: linear, textureRegion: $0.region,
+          renderMode: mode)
       }
       let cpu = try EngineSoftwareRenderer.render(sprites, size: CGSize(width: 40, height: 40))
       let bytes = try XCTUnwrap(cpu.dataProvider?.data) as Data

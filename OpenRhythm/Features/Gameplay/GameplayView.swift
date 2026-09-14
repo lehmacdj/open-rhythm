@@ -38,7 +38,8 @@ struct GameplayView: View {
       GameplaySettingsPanel(settings: $model.settings,
         noteSpeed: model.presentationAssets?.noteSpeedOption,
         scoreMode: model.presentationAssets?.scoreModeOption,
-        options: model.presentationAssets?.configuration.options ?? [])
+        options: model.presentationAssets?.configuration.options ?? [],
+        forcedSkinRenderMode: model.presentationAssets?.forcedSkinRenderMode)
     }
     .task {
       await model.prepare(
@@ -338,6 +339,7 @@ private struct GameplaySettingsPanel: View {
   let noteSpeed: EngineConfiguration.Option?
   let scoreMode: EngineConfiguration.Option?
   let options: [EngineConfiguration.Option]
+  var forcedSkinRenderMode: EngineSkinRenderMode? = nil
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
@@ -366,6 +368,18 @@ private struct GameplaySettingsPanel: View {
           }
           Text("Early/Late uses the engine’s timing-display threshold, including qualifying PERFECT judgements.")
             .font(.footnote).foregroundStyle(.secondary)
+        }
+        Section("Graphics") {
+          if let forcedSkinRenderMode {
+            LabeledContent("Render Mode", value: forcedSkinRenderMode.title)
+            Text("Set by this engine.").font(.caption).foregroundStyle(.secondary)
+          } else {
+            Picker("Render Mode", selection: $settings.skinRenderMode) {
+              ForEach(EngineSkinRenderMode.allCases, id: \.self) { mode in
+                Text(mode.title).tag(mode)
+              }
+            }
+          }
         }
         Section("Note Speed") {
           if let noteSpeed, let range = noteSpeed.sliderRange {
@@ -695,6 +709,12 @@ private struct EngineAnchorLayout: Layout {
     """#.utf8))
   GameplaySettingsPanel(settings: .constant(GameplayPreferences()),
     noteSpeed: nil, scoreMode: nil, options: configuration.options)
+}
+
+#Preview("Engine Forced Render Mode") {
+  GameplaySettingsPanel(settings: .constant(GameplayPreferences()),
+    noteSpeed: nil, scoreMode: nil, options: [],
+    forcedSkinRenderMode: .lightweight)
 }
 
 #Preview("Engine Timing Positions", traits: .fixedLayout(width: 420, height: 280)) {

@@ -35,6 +35,12 @@ integration probes, including successful inputs and restart/buffering paths.
 - Generic slider/toggle/select options, malformed defaults/ranges, unknown
   types, dedicated-control routing by type rather than name, and persistence.
   Standard gameplay overrides are retained with results.
+- Skin render-mode precedence, legacy preference defaults and per-engine
+  persistence. Explicit standard/lightweight overrides user settings; omitted
+  and default defer to them. Both ordinary and curved skin patches use the
+  selected mesh in GPU/software paths without changing texture filtering,
+  transforms or particle policy. Native settings previews and pixel parity
+  regressions cover both modes.
 - Engine playback speed changes BGM rate and BPM values together; chart and
   event clocks remain in real seconds, including lead-in and audio EOF tails.
 - Online preparation caches selected BGM before Ready and pins a separate
@@ -79,7 +85,7 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Remaining checks, including engines we have not sampled
 
-- Stack layout/control semantics and all skin render modes.
+- Stack layout/control semantics and native rendering parity.
 - Optional/missing resources, callback-specific memory access and defaults,
   and unknown enum values.
 - Tutorial/watch/preview modes are separate capability sets, not implied by
@@ -155,3 +161,18 @@ accessibility also exposes the range and input count. This is host visualization
 policy, not claimed pixel parity with Sonolus. The 10,000-input simulator probe
 measured record plus snapshot at mean 0.0223 ms / p95 0.0254 ms / max 0.526 ms;
 these numbers do not establish phone frame-time tails.
+
+Skin mode selection follows [EnginePlayData](
+https://wiki.sonolus.com/engine-specs/resources/engine-play-data). The public UI
+describes lightweight as faster and less accurate without specifying its
+algorithm. This host uses two triangles per quad/curved patch for lightweight,
+and an adaptive 1–8 subdivision bilinear mesh for standard. These are explicit
+host approximations, not a claim of identical native Sonolus pixels. Particles
+and background rendering remain independent of the skin mode.
+
+On 1,800 cached Eleventh frames (1800×1000 viewport, up to 75 sprites), paired
+mesh-generation probes used 7,808,178 standard versus 370,068 lightweight
+vertices. Mean/p95 mesh generation was 0.408/0.716 ms versus 0.170/0.286 ms.
+The fixture declared lightweight and retained that mode despite a Standard
+user preference. These simulator measurements isolate geometry work; they do
+not measure phone frame pacing, GPU completion or successful-hit load.

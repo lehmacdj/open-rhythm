@@ -8,6 +8,22 @@ struct EngineNamedID: Decodable, Sendable {
 struct EngineSkinDefinition: Decodable, Sendable {
   let renderMode: String?
   let sprites: [EngineNamedID]
+
+  var forcedRenderMode: EngineSkinRenderMode? {
+    get throws {
+      switch renderMode {
+      case nil, "default": return nil
+      case "standard": return .standard
+      case "lightweight": return .lightweight
+      default: throw EngineInterpreterError.invalidArguments("skin render mode: \(renderMode!)")
+      }
+    }
+  }
+}
+
+enum EngineSkinRenderMode: String, Codable, CaseIterable, Sendable {
+  case standard, lightweight
+  var title: String { self == .standard ? "Standard" : "Lightweight" }
 }
 
 struct EngineEffectDefinition: Decodable, Sendable {

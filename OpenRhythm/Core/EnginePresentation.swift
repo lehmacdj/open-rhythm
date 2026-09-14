@@ -459,9 +459,13 @@ final class EnginePresentationAssets {
   let interpolation: Bool
   let particleInterpolation: Bool
   let background: EngineBackgroundAssets?
+  let forcedSkinRenderMode: EngineSkinRenderMode?
+  private(set) var skinRenderMode: EngineSkinRenderMode
   private var tintedParticles = [String: UIImage]()
 
   init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
+    forcedSkinRenderMode = try engine.skin.forcedRenderMode
+    skinRenderMode = forcedSkinRenderMode ?? .standard
     let configuration = try CompressedJSONDecoder.decode(
       EngineConfiguration.self, from: presentation.data("configuration")
     )
@@ -586,6 +590,10 @@ final class EnginePresentationAssets {
       orientation: original.imageOrientation)
   }
 
+  func configureRenderMode(preferred: EngineSkinRenderMode) {
+    skinRenderMode = forcedSkinRenderMode ?? preferred
+  }
+
   private static func crop(
     _ texture: CGImage, x: Double, y: Double, w: Double, h: Double
   ) throws -> UIImage {
@@ -606,6 +614,7 @@ struct EngineRenderSprite {
   let alpha: Double
   let interpolation: Bool
   var textureRegion: EngineTextureRegion = .full
+  var renderMode: EngineSkinRenderMode = .standard
 }
 
 @MainActor
@@ -658,12 +667,13 @@ enum EngineRenderer {
         for patch in EngineGeometry.curvedPatches(points, curve: curve) {
           result.append(EngineRenderSprite(image: sprite.image, points: patch.points,
             matrix: command.transform, alpha: command.alpha,
-            interpolation: assets.interpolation, textureRegion: patch.region))
+            interpolation: assets.interpolation, textureRegion: patch.region,
+            renderMode: assets.skinRenderMode))
         }
       } else {
         result.append(EngineRenderSprite(image: sprite.image, points: points,
           matrix: command.transform, alpha: command.alpha,
-          interpolation: assets.interpolation))
+          interpolation: assets.interpolation, renderMode: assets.skinRenderMode))
       }
     }
     for instance in host.particles.values.sorted(by: { $0.id < $1.id }) {
