@@ -142,8 +142,11 @@ closure frames. Evaluation order, side effects and the 256-node limit remain
 unchanged. Independent review found no semantic changes and prompted broader
 stress cases. All 193 simulator tests pass, including deep valid trees and
 cycles across 20 execution paths in both optimization modes, tested on the main
-actor and a dedicated 1 MiB thread. The device test build also succeeds.
-Physical rerun of this fix is still pending: thyme5 locked again before launch.
+actor and a dedicated 1 MiB thread. After thyme5 was unlocked, the full suite
+passed on the physical iPhone: 193 passed, zero failed or skipped. The result
+bundle identifies thyme5's UDID, iPhone 16 Pro and iOS 27.0; both previously
+crashing tests and the expanded depth tests passed. The September 20 23:48:03
+Xcode test result is retained in local ActionArtifacts, not committed.
 
 Xcode's interaction session tool listed only simulators. Physical test execution
 and framebuffer checks are verified, but real-finger interaction, audible sync
