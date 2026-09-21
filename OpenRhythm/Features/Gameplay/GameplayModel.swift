@@ -131,7 +131,8 @@ final class GameplayModel {
   private var audioSeekCompleted = false
   private var startupLimitMediaTime: Double?
   private var startupNextTime = 0.0
-  private var startupSteps = 0
+  private(set) var startupSteps = 0
+  private var startupVisualGuard = EngineIntroVisualGuard()
   private var startupPreparationComplete = false
   private var startupAnalysis: Task<Double, Never>?
   private(set) var skippedIntroDuration = 0.0
@@ -404,6 +405,7 @@ final class GameplayModel {
     currentTime = clockMapping.initialChartTime
     startupNextTime = currentTime
     startupSteps = 0
+    startupVisualGuard = EngineIntroVisualGuard()
     engineRuntime = nil
     engineScore = nil
     engineAccuracy = nil
@@ -500,6 +502,31 @@ final class GameplayModel {
       currentTime = startupNextTime
       try runtime.update(at: currentTime)
       startupSteps += 1
+      if let assets = presentationAssets {
+        let frame = EngineIntroVisualFrame(sprites: EngineRenderer.sprites(
+          host: runtime.host, assets: assets, cacheParticleRandomVariables: false),
+          aspect: engineAspectRatio ?? 1,
+          background: (0..<8).map { runtime.memory.value(block: 1005, index: $0) },
+          ui: (0..<8).map {
+            let element = EngineUIElement(memory: runtime.memory, index: $0)
+            return element.isVisible ? element.values : []
+          })
+        let decision = startupVisualGuard.observe(frame,
+          hasParticles: !runtime.host.particles.isEmpty)
+        if decision != .advance {
+          if decision == .rewind {
+            // No earlier frame activated an input, or we would have stopped.
+            // Restore before recording this frame's judgments or audio so a
+            // retained count-in does not leak future playback side effects.
+            runtime.restart()
+            currentTime = clockMapping.initialChartTime
+            try runtime.update(at: currentTime)
+          }
+          ingestJudgments(from: runtime)
+          prepareStartupAudio()
+          return
+        }
+      }
       ingestJudgments(from: runtime)
       if runtime.hasActivatedInput || currentTime >= finalTime
         || runtime.host.nextAudioStartTime.map({ $0 <= currentTime }) == true {

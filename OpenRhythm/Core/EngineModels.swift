@@ -124,6 +124,51 @@ struct EnginePlayData: Decodable, Sendable {
   let nodes: [EngineDataNode]
   let buckets: [EngineBucket]
 
+  /// Only persistent non-input entities with unconditional literal stage draws
+  /// are exempt from the initial visual boundary. A sprite's name alone cannot
+  /// establish that it is static: engines can animate ordinary stage sprites.
+  var staticIntroArchetypes: Set<Int> {
+    let stageNames: Set<String> = ["#STAGE_MIDDLE", "#STAGE_COVER", "#LANE",
+      "#LANE_SEAMLESS", "#LANE_ALTERNATIVE", "#LANE_ALTERNATIVE_SEAMLESS",
+      "#JUDGMENT_LINE", "#NOTE_SLOT", "#STAGE_LEFT_BORDER",
+      "#STAGE_RIGHT_BORDER", "#STAGE_TOP_BORDER", "#STAGE_BOTTOM_BORDER",
+      "#STAGE_LEFT_BORDER_SEAMLESS", "#STAGE_RIGHT_BORDER_SEAMLESS",
+      "#STAGE_TOP_BORDER_SEAMLESS", "#STAGE_BOTTOM_BORDER_SEAMLESS",
+      "#STAGE_TOP_LEFT_CORNER", "#STAGE_TOP_RIGHT_CORNER",
+      "#STAGE_BOTTOM_LEFT_CORNER", "#STAGE_BOTTOM_RIGHT_CORNER"]
+    let grouped = Dictionary(grouping: skin.sprites, by: \.id)
+    let stageIDs = Set(grouped.compactMap { id, sprites in
+      sprites.allSatisfy { stageNames.contains($0.name) } ? id : nil
+    })
+    func isStaticDrawing(_ index: Int) -> Bool {
+      var pending = [index], visited = Set<Int>()
+      while let index = pending.popLast() {
+        guard nodes.indices.contains(index), visited.insert(index).inserted
+        else { return false }
+        let node = nodes[index]
+        if node.value != nil { continue }
+        if node.function == "Execute" || node.function == "Execute0" {
+          pending.append(contentsOf: node.arguments)
+          continue
+        }
+        guard node.function == "Draw", let first = node.arguments.first,
+          nodes.indices.contains(first), let value = nodes[first].value,
+          let id = Int(exactly: value), stageIDs.contains(id),
+          node.arguments.allSatisfy({
+            nodes.indices.contains($0) && nodes[$0].value != nil
+          }) else { return false }
+      }
+      return true
+    }
+    return Set(archetypes.indices.filter { index in
+      let a = archetypes[index]
+      guard !a.hasInput, a.shouldSpawn == nil, a.initialize == nil,
+        a.updateSequential == nil, a.touch == nil, a.terminate == nil,
+        let update = a.updateParallel else { return false }
+      return isStaticDrawing(update.index)
+    })
+  }
+
   /// Include callbacks of spawnable archetypes, but not orphaned compiler
   /// nodes. Inspect both sides of lazy branches: a missed tap must not be the
   /// first time we discover that its successful-hit path is unsupported.

@@ -1,9 +1,250 @@
 import XCTest
 import UIKit
 import Metal
+import AVFoundation
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  @MainActor
+  func testGameplayIntroStopsForVisualEffectBeforeMusic() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "OpeningEffect")
+  }
+
+  @MainActor
+  func testGameplayIntroPreservesHeldInitialStageNamedEffect() async throws {
+    try await checkGameplayIntro(appearanceTime: 0, spriteName: "#LANE")
+  }
+
+  @MainActor
+  func testGameplayIntroRewindDiscardsFutureJudgmentAndSpawn() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+      rewind: true)
+  }
+
+  @MainActor
+  private func checkGameplayIntro(appearanceTime: Double, spriteName: String,
+    rewind: Bool = false) async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000,
+      channels: 1))
+    let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+      frameCapacity: 24000))
+    buffer.frameLength = 24000
+    for frame in 0..<24000 {
+      buffer.floatChannelData![0][frame] = frame < 16000 ? 0 : 0.1
+    }
+    do {
+      let file = try AVAudioFile(forWriting: url, settings: format.settings)
+      try file.write(from: buffer)
+    }
+    let b = RuntimeNodeBuilder()
+    let now = b.call("Get", [b.value(1001), b.value(0)])
+    let visible = b.call("GreaterOr", [now, b.value(appearanceTime)])
+    let draw = b.call("Draw", [b.value(1)] + quad.map(b.value)
+      + [b.value(0), b.value(1)])
+    let effect = b.call("If", [visible, draw, b.value(0)])
+    var archetypes: [[String: Any]] = [[
+      "name": "OpeningEffect", "hasInput": false, "imports": [], "exports": [],
+      "updateParallel": ["index": rewind ? draw : effect]]]
+    var entities = [LevelEntity(archetype: "OpeningEffect", name: nil, data: [])]
+    if rewind {
+      let actions = b.call("Execute", [
+        b.call("Set", [b.value(1005), b.value(0), b.value(0)]),
+        b.call("Set", [b.value(4005), b.value(0), b.value(1)]),
+        b.call("Set", [b.value(4004), b.value(0), b.value(1)]),
+        b.call("Spawn", [b.value(0)])])
+      archetypes.append(["name": "FutureNote", "hasInput": true,
+        "imports": [], "exports": [], "shouldSpawn": ["index": visible],
+        "updateSequential": ["index": actions]])
+      entities.append(LevelEntity(archetype: "FutureNote", name: nil, data: []))
+    }
+    let engine = try b.engine(archetypes: archetypes,
+      sprites: [["name": spriteName, "id": 1]])
+    if rewind { XCTAssertEqual(engine.staticIntroArchetypes, [0]) }
+    let pngFormat = UIGraphicsImageRendererFormat()
+    pngFormat.scale = 1
+    let png = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2),
+      format: pngFormat).pngData {
+        UIColor.white.setFill(); $0.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      }
+    let resources = RuntimePresentation(resources: [
+      "configuration": Data(#"{"options":[]}"#.utf8),
+      "skinTexture": png,
+      "skinData": Data(#"""
+        {"width":2,"height":2,"interpolation":false,"sprites":[
+          {"name":"\#(spriteName)","x":0,"y":0,"w":2,"h":2,"transform":{
+            "x1":{"x1":1},"y1":{"y1":1},"x2":{"x2":1},"y2":{"y2":1},
+            "x3":{"x3":1},"y3":{"y3":1},"x4":{"x4":1},"y4":{"y4":1}}}]}
+        """#.utf8)])
+    let locator = ResourceLocator(hash: nil, url: nil)
+    let item = SonolusLevelItem(name: "visual-intro", source: nil,
+      version: 1, rating: 1, title: LocalizedText("Visual Intro"),
+      artists: LocalizedText("Fixture"), author: "Fixture", tags: [],
+      cover: locator, bgm: locator, data: locator)
+    let model = GameplayModel()
+    model.prepare(bundle: RuntimeBundle(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: entities),
+      bgmURL: url, isOffline: true, presentation: resources), level: item,
+      server: ServerDescriptor(id: "visual-intro", name: "Fixture",
+        baseURL: URL(string: "https://fixture.example")!), title: "Visual Intro")
+    defer { model.stop() }
+    model.start()
+    for _ in 0..<1000 {
+      model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+      if !model.isStartingPlayback { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertEqual(model.skippedIntroDuration, rewind ? 0 : appearanceTime,
+      accuracy: 1.0 / 60 + 1e-9,
+      "A non-input visual effect must stop skipping before the 2s audio onset")
+    XCTAssertEqual(model.engineRuntime?.host.draws.count, 1)
+    if rewind {
+      XCTAssertGreaterThanOrEqual(model.startupSteps, 31,
+        "Must actually simulate the future frame, not merely stop at time zero")
+      let runtime = try XCTUnwrap(model.engineRuntime)
+      XCTAssertEqual(runtime.resolvedInputCount, 0)
+      XCTAssertTrue(runtime.judgments.isEmpty)
+      XCTAssertTrue(runtime.host.takeSpawnCommands().isEmpty)
+      XCTAssertEqual(runtime.memory.value(block: 1005, index: 0), -2)
+      XCTAssertEqual(model.judgements.values.reduce(0, +), 0)
+      // Confirm the future event is still pending, not suppressed forever.
+      try runtime.update(at: appearanceTime)
+      XCTAssertEqual(runtime.resolvedInputCount, 1)
+      XCTAssertEqual(runtime.host.takeSpawnCommands().count, 1)
+    }
+  }
+
+  func testStaticIntroProofRejectsConditionalAndMutableStageDraws() throws {
+    let b = RuntimeNodeBuilder()
+    let draw = b.call("Draw", [b.value(1)] + quad.map(b.value)
+      + [b.value(0), b.value(1)])
+    let now = b.call("Get", [b.value(1001), b.value(0)])
+    let conditional = b.call("If", [now, draw, b.value(0)])
+    let base: [String: Any] = ["name": "Stage", "hasInput": false,
+      "imports": [], "exports": [], "updateParallel": ["index": draw]]
+    var archetypes = [base]
+    for callback in ["shouldSpawn", "initialize", "updateSequential", "touch",
+      "terminate"] {
+      var candidate = base
+      candidate[callback] = ["index": b.value(0)]
+      archetypes.append(candidate)
+    }
+    var input = base
+    input["hasInput"] = true
+    archetypes.append(input)
+    var changing = base
+    changing["updateParallel"] = ["index": conditional]
+    archetypes.append(changing)
+    let engine = try b.engine(archetypes: archetypes,
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, [0])
+    XCTAssertTrue(try b.engine(archetypes: [base],
+      sprites: [["name": "READY", "id": 1]]).staticIntroArchetypes.isEmpty)
+    XCTAssertTrue(try b.engine(archetypes: [base], sprites: [
+      ["name": "#LANE", "id": 1], ["name": "READY", "id": 1]
+    ]).staticIntroArchetypes.isEmpty, "Ambiguous resource IDs are not proof")
+  }
+
+  func testStaticIntroProvenanceExcludesPreparationAndDynamicSpawns() throws {
+    let b = RuntimeNodeBuilder()
+    let draw = b.call("Draw", [b.value(1)] + quad.map(b.value)
+      + [b.value(0), b.value(1)])
+    let spawn = b.call("Spawn", [b.value(0)])
+    let engine = try b.engine(archetypes: [[
+      "name": "Stage", "hasInput": false, "imports": [], "exports": [],
+      "preprocess": ["index": b.call("Execute", [draw, spawn])],
+      "updateParallel": ["index": draw]]],
+      sprites: [["name": "#LANE", "id": 1]])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Stage", name: nil, data: [])]),
+      options: [], aspectRatio: 2, skinSpriteIDs: [1], effectClipIDs: [],
+      particleEffectIDs: [])
+    XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration), [false],
+      "Only the proven parallel callback may mark decoration")
+    try runtime.update(at: 0)
+    XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration), [true, false],
+      "A dynamically spawned copy is not known to be persistent decoration")
+    runtime.restart()
+    try runtime.update(at: 0)
+    XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration), [true, false])
+  }
+
+  @MainActor
+  func testIntroVisualBoundaryKeepsStaticStageAndStopsAtVisibleChanges() {
+    let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2))
+      .image { UIColor.white.setFill(); $0.fill(CGRect(x: 0, y: 0, width: 2, height: 2)) }
+    let identity: [Double] = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+    func sprite(x: Double = 0, alpha: Double = 1,
+      isStatic: Bool = true) -> EngineRenderSprite {
+      EngineRenderSprite(image: image,
+        points: [EnginePoint(x: x - 0.5, y: -0.5),
+          EnginePoint(x: x - 0.5, y: 0.5),
+          EnginePoint(x: x + 0.5, y: 0.5),
+          EnginePoint(x: x + 0.5, y: -0.5)],
+        matrix: identity, alpha: alpha, interpolation: false,
+        isStaticIntroDecoration: isStatic)
+    }
+    func frame(_ sprites: [EngineRenderSprite]) -> EngineIntroVisualFrame {
+      EngineIntroVisualFrame(sprites: sprites, aspect: 2)
+    }
+    var guardState = EngineIntroVisualGuard()
+    let stage = frame([sprite()])
+    XCTAssertEqual(guardState.observe(stage, hasParticles: false), .advance)
+    XCTAssertEqual(guardState.observe(stage, hasParticles: false), .advance)
+    XCTAssertEqual(guardState.observe(frame([sprite(), sprite(x: 10),
+      sprite(alpha: 0)]), hasParticles: false), .advance,
+      "Offscreen and fully transparent commands do not start an intro")
+    XCTAssertEqual(guardState.observe(frame([sprite(), sprite(x: 1.9)]),
+      hasParticles: false), .stop, "Preserve first entry at the screen edge")
+
+    for changed in [frame([sprite(alpha: 0.8)]), frame([sprite(x: 0.1)]),
+      frame([])] {
+      var heldCountIn = EngineIntroVisualGuard()
+      _ = heldCountIn.observe(stage, hasParticles: false)
+      XCTAssertEqual(heldCountIn.observe(changed, hasParticles: false), .rewind,
+        "Do not discard the initial held count-in when it changes or disappears")
+    }
+    var duplicates = EngineIntroVisualGuard()
+    _ = duplicates.observe(frame([sprite(), sprite()]), hasParticles: false)
+    XCTAssertEqual(duplicates.observe(stage, hasParticles: false), .rewind,
+      "Removing one translucent layer changes the initial picture")
+    var particles = EngineIntroVisualGuard()
+    XCTAssertEqual(particles.observe(stage, hasParticles: true), .stop,
+      "An already-running particle effect retains its entire lifetime")
+    var held = EngineIntroVisualGuard()
+    XCTAssertEqual(held.observe(frame([sprite(isStatic: false)]),
+      hasParticles: false), .stop,
+      "An unchanged initial READY screen is not disposable stage decoration")
+    var simultaneous = EngineIntroVisualGuard()
+    _ = simultaneous.observe(stage, hasParticles: false)
+    XCTAssertEqual(simultaneous.observe(frame([sprite(alpha: 0.5)]),
+      hasParticles: true), .rewind,
+      "A particle start must not mask a change to the held opening image")
+  }
+
+  @MainActor
+  func testIntroVisualBoundaryUsesTransformsBackgroundAndHUD() {
+    let image = UIImage()
+    let points = [EnginePoint(x: 9, y: -0.5), EnginePoint(x: 9, y: 0.5),
+      EnginePoint(x: 10, y: 0.5), EnginePoint(x: 10, y: -0.5)]
+    let sprite = EngineRenderSprite(image: image, points: points,
+      matrix: [1,0,0,-9, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+      alpha: 1, interpolation: false)
+    XCTAssertEqual(EngineIntroVisualFrame(sprites: [sprite], aspect: 2)
+      .sprites.count, 1, "Runtime transforms can bring offscreen commands on screen")
+    for (background, ui) in [([1.0], [[0.0]]), ([0.0], [[1.0]])] {
+      var guardState = EngineIntroVisualGuard()
+      _ = guardState.observe(EngineIntroVisualFrame(sprites: [], aspect: 2,
+        background: [0], ui: [[0]]), hasParticles: false)
+      XCTAssertEqual(guardState.observe(EngineIntroVisualFrame(sprites: [],
+        aspect: 2, background: background, ui: ui), hasParticles: false), .rewind)
+    }
+  }
+
   func testParticleRandomCacheIsBoundedAndPreservesEverySeed() {
     for capacity in [0, 1, 3, 512] {
       var cache = EngineParticleRandomCache(capacity: capacity)
@@ -2185,9 +2426,10 @@ private final class RuntimeNodeBuilder {
     return nodes.count - 1
   }
 
-  func engine(archetypes: [[String: Any]]) throws -> EnginePlayData {
+  func engine(archetypes: [[String: Any]], sprites: [[String: Any]] = [])
+    throws -> EnginePlayData {
     let data = try JSONSerialization.data(withJSONObject: [
-      "skin": ["sprites": []], "effect": ["clips": []],
+      "skin": ["sprites": sprites], "effect": ["clips": []],
       "particle": ["effects": []], "buckets": [],
       "nodes": nodes, "archetypes": archetypes
     ])

@@ -37,6 +37,7 @@ struct EngineDrawCommand: Equatable, Sendable {
   let alpha: Double
   let transform: [Double]
   var curve: EngineCurve? = nil
+  var isStaticIntroDecoration = false
 }
 
 struct EngineAudioCommand: Equatable, Sendable {
@@ -119,6 +120,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private let streamEntryLimit: Int
   private var nextParticleID = 1
   private var entityIndex: Int?
+  private var staticIntroDrawing = false
   private var exportCount = 0
   private let commandLimit = 16_384
   private var drawSegmentCount = 0
@@ -128,7 +130,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   func makeRestorePoint() -> () -> Void {
     { [time, draws, particles, exports, audio, loopAudio, loopStops,
       nextLoopID, spawns, scheduledLife, streams, streamEntryCount,
-      nextParticleID, entityIndex, exportCount, drawSegmentCount] in
+      nextParticleID, entityIndex, staticIntroDrawing, exportCount,
+      drawSegmentCount] in
       self.time = time
       self.draws = draws
       self.particles = particles
@@ -143,6 +146,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       self.streamEntryCount = streamEntryCount
       self.nextParticleID = nextParticleID
       self.entityIndex = entityIndex
+      self.staticIntroDrawing = staticIntroDrawing
       self.exportCount = exportCount
       self.drawSegmentCount = drawSegmentCount
     }
@@ -186,8 +190,10 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     }
   }
 
-  func selectEntity(index: Int?, exportCount: Int) {
+  func selectEntity(index: Int?, exportCount: Int,
+    staticIntroDrawing: Bool = false) {
     entityIndex = index
+    self.staticIntroDrawing = staticIntroDrawing
     self.exportCount = exportCount
   }
 
@@ -305,7 +311,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
         zValues: [a[9]] + Array(a.dropFirst(required))
           + Array(repeating: 0, count: required + 3 - a.count),
         alpha: min(1, max(0, a[10])), transform: transform(block: 1003),
-        curve: curve
+        curve: curve, isStaticIntroDecoration: staticIntroDrawing
       ))
       return 0
     case "Play", "PlayScheduled":

@@ -653,6 +653,82 @@ struct EngineRenderSprite {
   let interpolation: Bool
   var textureRegion: EngineTextureRegion = .full
   var renderMode: EngineSkinRenderMode = .standard
+  var isStaticIntroDecoration = false
+}
+
+/// Compare visible presentation, not entity activation or offscreen commands.
+/// Static stage graphics can remain on screen throughout a skippable lead-in.
+@MainActor
+struct EngineIntroVisualFrame: Equatable {
+  struct Sprite: Equatable {
+    let image: ObjectIdentifier
+    let points: [CGPoint]
+    let alpha: Double
+    let region: EngineTextureRegion
+    let interpolation: Bool
+    let isStaticDecoration: Bool
+  }
+  let sprites: [Sprite]
+  let background: [Double]
+  let ui: [[Double]]
+
+  init(sprites: [EngineRenderSprite], aspect: Double,
+    background: [Double] = [], ui: [[Double]] = []) {
+    let size = CGSize(width: aspect * 2, height: 2)
+    let screen = CGRect(origin: .zero, size: size)
+    self.sprites = sprites.compactMap { sprite in
+      guard sprite.alpha > 0, sprite.matrix.count == 16,
+        sprite.points.count == 4 else { return nil }
+      let points = sprite.points.map {
+        EngineGeometry.screenPoint($0, matrix: sprite.matrix, size: size)
+      }
+      guard points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { return nil }
+      let xs = points.map(\.x), ys = points.map(\.y)
+      let bounds = CGRect(x: xs.min()!, y: ys.min()!,
+        width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+      guard !bounds.isEmpty, bounds.intersects(screen) else { return nil }
+      return Sprite(image: ObjectIdentifier(sprite.image), points: points,
+        alpha: sprite.alpha, region: sprite.textureRegion,
+        interpolation: sprite.interpolation,
+        isStaticDecoration: sprite.isStaticIntroDecoration)
+    }
+    self.background = background
+    self.ui = ui
+  }
+}
+
+@MainActor
+struct EngineIntroVisualGuard {
+  enum Decision { case advance, stop, rewind }
+  private var initial: EngineIntroVisualFrame?
+
+  mutating func observe(_ frame: EngineIntroVisualFrame,
+    hasParticles: Bool) -> Decision {
+    // Particle effects already have an explicit lifetime. Preserve that start
+    // even when their first frame is transparent or outside the viewport.
+    guard let initial else {
+      self.initial = frame
+      if hasParticles || frame.sprites.contains(where: { !$0.isStaticDecoration }) {
+        return .stop
+      }
+      return .advance
+    }
+    guard frame != initial else { return hasParticles ? .stop : .advance }
+    // A newly appearing graphic starts here. If an initial graphic changes or
+    // disappears, retain its held first state too (e.g. the "3" of a count-in),
+    // rather than starting at its first transition to "2".
+    guard frame.background == initial.background, frame.ui == initial.ui else {
+      return .rewind
+    }
+    var next = frame.sprites.startIndex
+    for sprite in initial.sprites {
+      guard let index = frame.sprites[next...].firstIndex(of: sprite) else {
+        return .rewind
+      }
+      next = index + 1
+    }
+    return .stop
+  }
 }
 
 @MainActor
@@ -708,12 +784,14 @@ enum EngineRenderer {
           result.append(EngineRenderSprite(image: sprite.image, points: patch.points,
             matrix: command.transform, alpha: command.alpha,
             interpolation: assets.interpolation, textureRegion: patch.region,
-            renderMode: assets.skinRenderMode))
+            renderMode: assets.skinRenderMode,
+            isStaticIntroDecoration: command.isStaticIntroDecoration))
         }
       } else {
         result.append(EngineRenderSprite(image: sprite.image, points: points,
           matrix: command.transform, alpha: command.alpha,
-          interpolation: assets.interpolation, renderMode: assets.skinRenderMode))
+          interpolation: assets.interpolation, renderMode: assets.skinRenderMode,
+          isStaticIntroDecoration: command.isStaticIntroDecoration))
       }
     }
     for instance in host.particles.values.sorted(by: { $0.id < $1.id }) {

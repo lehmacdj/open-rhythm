@@ -89,6 +89,23 @@ integration probes, including successful inputs and restart/buffering paths.
   range, selection gating and restart regressions cover this host display.
 - Spawned entities have no input, even if their archetype declares hasInput;
   they must not introduce a false first-note boundary while skipping silence.
+- Silent intro simulation stops for visible non-input graphics and particle
+  lifetimes as well as the existing input/audio boundaries. Unknown graphics
+  present at media zero preserve the entire opening; unchanged alone is not
+  evidence of disposable stage decoration. A narrow exception requires literal
+  standard-stage Draw calls from persistent non-input level entities without
+  spawn conditions or mutable play callbacks. Custom names, conditional draws,
+  ambiguous resource IDs and dynamic spawns cannot establish that exception.
+  Changes/removal/reordering of initial decoration, background or visible HUD
+  geometry rewind to prepared media zero before retaining runtime side effects.
+  Projected sprite bounds respect skin/runtime transforms and screen aspect;
+  transparent or offscreen Draw commands alone do not stop skipping. Bounds
+  checks are conservative, not pixel-precise texture coverage. Synthetic tests
+  cover a new effect at 0.5 s before 2 s audio onset, an initially held stage-named
+  effect, particle/transition overlap, duplicate layers and producer provenance.
+  A model-level rewind regression verifies that future judgments and queued
+  spawns are discarded, but the same events still occur when playback reaches
+  their original time afterward.
 - Unused skin, effect, and particle families need no placeholder assets.
   Skin-only and particle-only initialization preserve the other family and
   interpolation settings. Declared families still require valid resources.
@@ -213,9 +230,11 @@ execute; the successful rerun and final suite have separate result bundles.
   play-mode support.
 - Expired cursors, changing remote ordering, and sparse filtered results
   without unbounded crawls.
-- Engine-generated count-ins and visible non-input intro effects. First-input
-  activation is a conservative stopping boundary, not proof that every intro
-  animation is preserved. Unknown silence is not inferred from bgmOffset.
+- First-input activation and conservative visual provenance can preserve more
+  intro silence than necessary, especially custom/dynamic stage producers.
+  Optimal first-visible-pixel skipping across arbitrary engines and physical
+  presentation verification remain open. Unknown silence is not inferred from
+  bgmOffset.
 - Physical device multitouch, rendering/audio latency, performance tails,
   successful flick/hold variants, interruptions, and repeated play. Simulator
   clocks and no-touch lifecycle completion cannot establish those properties.

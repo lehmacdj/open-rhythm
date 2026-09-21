@@ -248,6 +248,7 @@ final class EnginePlayRuntime {
   private(set) var accuracyScore = EngineAccuracyScore()
   private(set) var life = EngineLife(configuration: [0, 0, 0, 0, 0, 0, 1000, 1000])
   private let engine: EnginePlayData
+  private let staticIntroArchetypes: Set<Int>
   private let interpreter: EngineInterpreter
   private var entities = [Entity]()
   private var waiting = [Entity]()
@@ -282,6 +283,7 @@ final class EnginePlayRuntime {
       throw EngineInterpreterError.invalidArguments("runtime environment")
     }
     self.engine = engine
+    staticIntroArchetypes = engine.staticIntroArchetypes
     let missing = try engine.unsupportedFunctions()
     guard missing.isEmpty else {
       throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
@@ -534,11 +536,14 @@ final class EnginePlayRuntime {
     active.removeAll { despawned.contains($0.key) }
   }
 
-  private func select(_ entity: Entity) {
+  private func select(_ entity: Entity, parallelDrawing: Bool = false) {
     memory.selectEntity(key: entity.key, index: entity.index)
     host.selectEntity(
       index: entity.index,
-      exportCount: engine.archetypes[entity.archetype].exports.count
+      exportCount: engine.archetypes[entity.archetype].exports.count,
+      staticIntroDrawing: parallelDrawing && entity.index != nil
+        && staticIntroArchetypes.contains(entity.archetype)
+        && memory.value(block: 4004, index: 0) == 0
     )
   }
 
@@ -551,9 +556,10 @@ final class EnginePlayRuntime {
     _ entity: Entity, callback: KeyPath<EngineArchetype, EngineCallback?>,
     default defaultValue: Double = 0
   ) throws -> Double {
+    let parallelDrawing = callback == \EngineArchetype.updateParallel
     guard let callback = engine.archetypes[entity.archetype][keyPath: callback]
     else { return defaultValue }
-    select(entity)
+    select(entity, parallelDrawing: parallelDrawing)
     return try interpreter.execute(nodeAt: callback.index)
   }
 
