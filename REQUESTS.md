@@ -164,8 +164,10 @@ and full-chart device gameplay are not.
    functions are surfaced before music rather than assumed harmless. See the
    separate contract checklist; sampled engines do not prove arbitrary support.
 3. Safe intro skipping stops at first-input activation, which can be earlier
-   than first visible pixels. Visible non-input intro animations and count-ins
-   still need broader checks. Unknown silence is never inferred from bgmOffset.
+   than first visible pixels. The user explicitly confirmed that visible effects
+   and count-ins must also stop skipping, even before notes or audio. Implement
+   and verify that additional boundary; it is no longer an open product choice.
+   Unknown silence is never inferred from bgmOffset.
 4. Real-device engine integration runs beyond the cached simulator fixtures.
 
 ## Deliberately not added / superseded requests
