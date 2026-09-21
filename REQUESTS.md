@@ -4,6 +4,31 @@ This ledger distinguishes implemented behavior from remaining compatibility
 work and device verification. Passing simulator tests does not establish that
 phone audio alignment, touch handling, or frame pacing is correct.
 
+## Live-play follow-up — September 25, 2026
+
+These requests are open, not certified by the existing offline probes:
+
+- Investigate the reported audio/animation timing difference thoroughly across
+  engines. Trace audio presentation, chart/render timestamps, display delivery
+  and touch timestamps, including startup, speed changes and interruptions.
+  Distinguish clock bugs from output/display latency; do not guess a default
+  correction from the reported excess Earlies. Prioritize this alongside live
+  frame-pacing checks, not only particle or curved-hold CPU benchmarks.
+- Add persistent manual timing overrides in Gameplay Settings so the player
+  can compensate for observed bias. Define adjustment direction and units
+  clearly, provide a neutral default/reset, and distinguish visual alignment
+  from input judgment adjustment. Preserve engine judgment windows and test
+  persistence, restart and playback-speed behavior. This is newly requested
+  configuration, not evidence that the underlying synchronization is correct.
+- Redesign the results timing distribution using the supplied ITG evaluation
+  photo as the visual reference: a crisp, high-contrast filled silhouette,
+  saturated judgment colors, a clear centered zero and Early/Late labels,
+  without the current washed-out overlapping areas. Retain shared note-type
+  filtering and exclusion of automatic intermediate hold ticks. Prefer a
+  continuous representation where practical; verify sparse, dense, zero-only
+  and outlier cases plus light/dark appearance. The photo is a design reference,
+  not a source for this app's judgment windows or score rules.
+
 ## Implemented and regression-covered
 
 | Request | Implementation / evidence |
@@ -189,6 +214,31 @@ thermal conditions, and Debug timings are not Release timings: these numbers
 identify further interpreter and particle work, not live FPS or proof of a
 stable physical play. Release profiling, real touches, audio/display latency,
 and the original curved-hold slowdown remain open.
+
+### Optimized-build profiling and particle endpoints — September 21
+
+Five cached chart checks passed on thyme5 with Release `-O`/whole-module
+optimization. Coverage instrumentation and temporary XCTest access were still
+enabled; these are not uninstrumented TestFlight measurements. Shake-it's
+contact workload initially spent 1.118 ms on average generating sprites.
+Caching only the seed-dependent property endpoints reduced that to 0.487 ms,
+with identical successful-input counts and restart snapshots. Animation time,
+easing, transforms and geometry are not frozen by the cache.
+
+The cross-engine tests remain in scope. Four-mode paired renderer comparisons
+also exercise 256 and 2,048 sprites, including overflow beyond the fixed cache
+budget. An initial overflow slowdown was corrected before delivery; the final
+policy was ~15% faster at 256 sprites and ~5% faster at 2,048 sprites versus
+the prior random-variable cache alone. Independent review found no correctness
+issues and its additional distinct-channel coverage was added. See
+`COMPATIBILITY.md` for timings, test scope and limitations. All temporary build
+setting/scheme changes were restored, and the async device harness now awaits
+Metal completion without blocking the main actor.
+
+Normal Debug validation on September 25 passed 208 tests; a simulator shutdown
+terminated Eleventh, which passed on a separate rerun without code changes.
+All 209 tests were exercised with no skips, and the normal app build succeeded.
+This interrupted suite is not recorded as an uninterrupted full-suite pass.
 
 ### Device verification — September 20
 
