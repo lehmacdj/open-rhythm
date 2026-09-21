@@ -207,6 +207,11 @@ final class EngineInterpreter {
 
   private let nodes: [EngineDataNode]
   private let operations: [Operation]
+  private struct LiteralAddress {
+    let block: Int
+    let index: Int
+  }
+  private let literalAddresses: [LiteralAddress?]
   private let host: any EngineRuntimeHost
   private let operationLimit: Int
   private var operationCount = 0
@@ -216,7 +221,8 @@ final class EngineInterpreter {
     nodes: [EngineDataNode],
     memory: EngineMemory = EngineMemory(),
     host: any EngineRuntimeHost = EmptyEngineRuntimeHost(),
-    operationLimit: Int = 1_000_000
+    operationLimit: Int = 1_000_000,
+    optimizeLiteralAddresses: Bool = true
   ) {
     self.nodes = nodes
     operations = nodes.map {
@@ -224,6 +230,25 @@ final class EngineInterpreter {
       return Operation(rawValue: name)
         ?? (Self.memoryFunctions.contains(name) ? .extendedMemory
           : Self.easingFunctions.contains(name) ? .easing : .host)
+    }
+    literalAddresses = nodes.map { node in
+      guard optimizeLiteralAddresses, let function = node.function else { return nil }
+      let count: Int
+      switch function {
+      case "Get", "IncrementPre", "IncrementPost", "DecrementPre", "DecrementPost":
+        count = 2
+      case "Set", "SetAdd", "SetSubtract", "SetMultiply", "SetDivide", "SetPower":
+        count = 3
+      default: return nil
+      }
+      guard node.arguments.count == count,
+        nodes.indices.contains(node.arguments[0]),
+        nodes.indices.contains(node.arguments[1]),
+        let block = nodes[node.arguments[0]].value,
+        let index = nodes[node.arguments[1]].value,
+        let block = Int(exactly: block.rounded(.towardZero)),
+        let index = Int(exactly: index.rounded(.towardZero)) else { return nil }
+      return LiteralAddress(block: block, index: index)
     }
     self.memory = memory
     self.host = host
@@ -258,6 +283,39 @@ final class EngineInterpreter {
     }
     guard let function = node.function else {
       throw EngineInterpreterError.invalidNode(index)
+    }
+    if let address = literalAddresses[index] {
+      // Literal operands have no side effects, but still consume their original
+      // operation/depth budget. Never cache the memory value or entity binding.
+      guard depth < 256, operationLimit - operationCount >= 2 else {
+        throw EngineInterpreterError.operationLimitExceeded
+      }
+      operationCount += 2
+      let operation = operations[index]
+      let before = memory.value(block: address.block, index: address.index)
+      let result: Double
+      switch operation {
+      case .get: return before
+      case .incrementPre, .incrementPost, .decrementPre, .decrementPost:
+        let increment = operation == .incrementPre || operation == .incrementPost
+        result = before + (increment ? 1 : -1)
+        memory.set(block: address.block, index: address.index, value: result)
+        let post = operation == .incrementPost || operation == .decrementPost
+        return post ? result : before
+      default:
+        // Read-modify-write reads before evaluating the operand, which may
+        // itself mutate the same address. Keep the unoptimized evaluation order.
+        let operand = try evaluate(node.arguments[2])
+        switch operation {
+        case .setAdd: result = before + operand
+        case .setSubtract: result = before - operand
+        case .setMultiply: result = before * operand
+        case .setDivide: result = before / operand
+        case .setPower: result = pow(before, operand)
+        default: result = operand
+        }
+      }
+      return memory.set(block: address.block, index: address.index, value: result)
     }
     return try evaluate(function, operation: operations[index],
       arguments: node.arguments)

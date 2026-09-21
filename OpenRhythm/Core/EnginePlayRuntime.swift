@@ -253,7 +253,8 @@ final class EnginePlayRuntime {
     uiConfiguration: [Double] = Array(repeating: 1, count: 10),
     safeArea: [Double]? = nil,
     playbackSpeed: Double = 1,
-    backgroundQuad: [Double]? = nil
+    backgroundQuad: [Double]? = nil,
+    optimizeLiteralAddresses: Bool = true
   ) throws {
     guard aspectRatio.isFinite, aspectRatio > 0,
       playbackSpeed.isFinite, (0.05...4).contains(playbackSpeed),
@@ -278,7 +279,8 @@ final class EnginePlayRuntime {
       archetypeCount: engine.archetypes.count, playbackSpeed: playbackSpeed
     )
     interpreter = EngineInterpreter(
-      nodes: engine.nodes, memory: memory, host: host
+      nodes: engine.nodes, memory: memory, host: host,
+      optimizeLiteralAddresses: optimizeLiteralAddresses
     )
     nextKey = level.entities.count
     var archetypes = [String: Int]()

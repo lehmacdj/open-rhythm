@@ -3,6 +3,134 @@ import UIKit
 @testable import OpenRhythm
 
 final class RuntimeDecodingTests: XCTestCase {
+  func testLiteralAddressesPreserveReadModifyWriteOrderAndLiveValues() throws {
+    let cases: [(String, Double, Double)] = [
+      ("Get", 4, 4), ("Set", 9, 9), ("SetAdd", 13, 13),
+      ("SetSubtract", -5, -5), ("SetMultiply", 36, 36),
+      ("SetDivide", 4.0 / 9, 4.0 / 9), ("SetPower", 262144, 262144),
+      ("IncrementPre", 4, 5), ("IncrementPost", 5, 5),
+      ("DecrementPre", 4, 3), ("DecrementPost", 3, 3)
+    ]
+    for (function, expected, stored) in cases {
+      for optimized in [false, true] {
+        let memory = EngineMemory()
+        memory.set(block: 2000, index: 2, value: 4)
+        let nodes = [
+          EngineDataNode(value: 2000.9), EngineDataNode(value: 2.75),
+          EngineDataNode(value: 9),
+          EngineDataNode(function: "Set", arguments: [0, 1, 2]),
+          EngineDataNode(function: function,
+            arguments: function.hasPrefix("Set") ? [0, 1, 3] : [0, 1])
+        ]
+        let interpreter = EngineInterpreter(nodes: nodes, memory: memory,
+          optimizeLiteralAddresses: optimized)
+        XCTAssertEqual(try interpreter.execute(nodeAt: 4), expected, function)
+        XCTAssertEqual(memory.value(block: 2000, index: 2), stored, function)
+        memory.set(block: 2000, index: 2, value: 123)
+        let reader = EngineInterpreter(nodes: nodes + [
+          EngineDataNode(function: "Get", arguments: [0, 1])], memory: memory,
+          optimizeLiteralAddresses: optimized)
+        XCTAssertEqual(try reader.execute(nodeAt: 5), 123)
+        memory.set(block: 2000, index: 2, value: -7)
+        XCTAssertEqual(try reader.execute(nodeAt: 5), -7,
+          "Only the address can be cached, never its value")
+      }
+    }
+  }
+
+  func testLiteralAddressesRespectEntitySelectionTemporaryMemoryAndROM() throws {
+    for optimized in [false, true] {
+      let memory = EngineMemory()
+      try memory.loadROM(Data([0, 0, 128, 63])) // Float32 1
+      for block in [4000, 4001, 10000, 2000, 3000] {
+        let interpreter = EngineInterpreter(nodes: [
+          EngineDataNode(value: Double(block)), EngineDataNode(value: 0),
+          EngineDataNode(value: 8),
+          EngineDataNode(function: "Get", arguments: [0, 1]),
+          EngineDataNode(function: "Set", arguments: [0, 1, 2])
+        ], memory: memory, optimizeLiteralAddresses: optimized)
+        memory.selectEntity(key: 0, index: 0)
+        _ = try interpreter.execute(nodeAt: 4)
+        XCTAssertEqual(try interpreter.execute(nodeAt: 3), block == 3000 ? 1 : 8)
+        memory.selectEntity(key: 1, index: 1)
+        XCTAssertEqual(try interpreter.execute(nodeAt: 3),
+          block == 3000 ? 1 : block == 2000 ? 8 : 0)
+        memory.selectEntity(key: 0, index: 0)
+        XCTAssertEqual(try interpreter.execute(nodeAt: 3),
+          block == 3000 ? 1 : block == 10000 ? 0 : 8)
+      }
+    }
+  }
+
+  func testLiteralAddressOptimizationPreservesBudgetsAndPartialSideEffects() {
+    let nodes = [
+      EngineDataNode(value: 2000), EngineDataNode(value: 0),
+      EngineDataNode(value: 1), EngineDataNode(value: 9),
+      EngineDataNode(function: "Set", arguments: [0, 1, 3]),
+      EngineDataNode(function: "SetAdd", arguments: [0, 2, 4]),
+      EngineDataNode(function: "Get", arguments: [0, 2]),
+      EngineDataNode(function: "Execute", arguments: [5, 6])
+    ]
+    for limit in 0...20 {
+      assertAddressOptimizationEquivalent(nodes, root: 7, limit: limit)
+    }
+    for nesting in [253, 254, 255, 256] {
+      var deep = Array(nodes.prefix(4))
+      deep.append(EngineDataNode(function: "Get", arguments: [0, 1]))
+      for _ in 0..<nesting {
+        deep.append(EngineDataNode(function: "Negate", arguments: [deep.count - 1]))
+      }
+      assertAddressOptimizationEquivalent(deep, root: deep.count - 1, limit: 1000)
+    }
+  }
+
+  func testDynamicAndInvalidAddressesKeepTheirOriginalEvaluationBehavior() {
+    let nodes = [
+      EngineDataNode(value: 2000), EngineDataNode(value: 0),
+      EngineDataNode(value: 1), EngineDataNode(value: 12),
+      EngineDataNode(function: "Set", arguments: [0, 1, 2]),
+      EngineDataNode(function: "Set", arguments: [0, 4, 3]),
+      EngineDataNode(function: "Get", arguments: [0, 4]),
+      EngineDataNode(function: "Get", arguments: [99, 1]),
+      EngineDataNode(function: "Set", arguments: [0, 1]),
+      EngineDataNode(value: .infinity),
+      EngineDataNode(function: "Get", arguments: [0, 9]),
+      EngineDataNode(function: "Set", arguments: [9, 1, 4]),
+      EngineDataNode(function: "Break", arguments: [2, 3]),
+      EngineDataNode(function: "SetAdd", arguments: [0, 1, 12]),
+      EngineDataNode(function: "Block", arguments: [13])
+    ]
+    for root in [5, 6, 7, 8, 10, 11, 13, 14] {
+      for limit in 0...18 {
+        assertAddressOptimizationEquivalent(nodes, root: root, limit: limit)
+      }
+    }
+  }
+
+  private func assertAddressOptimizationEquivalent(_ nodes: [EngineDataNode],
+    root: Int, limit: Int, file: StaticString = #filePath, line: UInt = #line) {
+    var outputs = [Double?](), errors = [String?](), snapshots = [[Double]]()
+    for optimized in [false, true] {
+      let memory = EngineMemory()
+      let interpreter = EngineInterpreter(nodes: nodes, memory: memory,
+        operationLimit: limit, optimizeLiteralAddresses: optimized)
+      do {
+        outputs.append(try interpreter.execute(nodeAt: root))
+        errors.append(nil)
+      } catch {
+        outputs.append(nil)
+        errors.append(error.localizedDescription)
+      }
+      snapshots.append((0..<16).map { memory.value(block: 2000, index: $0) })
+    }
+    XCTAssertEqual(outputs[0], outputs[1], "root \(root), limit \(limit)",
+      file: file, line: line)
+    XCTAssertEqual(errors[0], errors[1], "root \(root), limit \(limit)",
+      file: file, line: line)
+    XCTAssertEqual(snapshots[0], snapshots[1], "root \(root), limit \(limit)",
+      file: file, line: line)
+  }
+
   @MainActor
   func testSkinOnlyAndParticleOnlyEnginesPrepareWithoutOtherFamily() throws {
     let png = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))

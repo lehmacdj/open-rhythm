@@ -92,7 +92,10 @@ per-note timing charts.
   Generic linked-peer regressions verify the contract even without a real chart
   triggering the original bug. Successful physical inputs remain a separate check.
 - **Performance:** interpreter, sprite generation, pooled/predecoded audio,
-  GPU rendering and bounded software work have been profiled/improved. Phone
+  GPU rendering and bounded software work have been profiled/improved. Literal
+  address caching reduced mean runtime-update time in paired Debug simulator
+  probes by about 29% for Eleventh and 25% for 22/7; all 1,800 frames matched in
+  judgments, draws and audio commands. This is not a Release benchmark. Phone
   frame-time tails under dense successful hits remain unverified. Apple has
   energy reports for 0.1.0 builds 4–8; build selection was requested. TestFlight
   hang reports are not offered by that Apple API.

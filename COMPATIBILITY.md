@@ -93,6 +93,23 @@ integration probes, including successful inputs and restart/buffering paths.
   hosts remain playable. Reset/stop recovery is bounded and stale callbacks
   cannot affect a restarted session. Physical waveform/latency checks remain open.
 
+## Interpreter performance validation
+
+Literal-address interpreter optimization retains live memory/entity binding,
+read-before-operand ordering, truncating address conversion, and the original
+operation/depth budgets. Four synthetic tests compare the optimized and ordinary
+paths, including malformed/dynamic addresses, nested writes, ROM, temporary
+memory and partial side effects when budgets expire.
+
+Paired cached 1,800-frame no-touch runs compared every frame's judgments, draw
+commands and audio/loop commands exactly. In the Debug iPhone 17 Pro simulator,
+Eleventh averaged 16.54 ms unoptimized versus 11.71 ms optimized (p95 24.44 vs
+17.14 ms); 22/7 averaged 1.462 vs 1.094 ms (p95 1.780 vs 1.332 ms). Execution
+order alternated each frame. These measure runtime updates only, not live audio,
+GPU submission, successful touches, Release performance or phone frame pacing.
+The address table adds approximately 1.65 MiB for SEKAI's 72,110 nodes on 64-bit
+hosts. An independent read-only review found no actionable correctness issues.
+
 ## Remaining checks, including engines we have not sampled
 
 - Stack layout/control semantics and native rendering parity.
