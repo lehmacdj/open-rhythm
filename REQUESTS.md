@@ -152,6 +152,16 @@ Xcode's interaction session tool listed only simulators. Physical test execution
 and framebuffer checks are verified, but real-finger interaction, audible sync
 and full-chart device gameplay are not.
 
+The subsequent 23:55 physical suite passed all 197 tests, including opt-in
+cached-chart integration tests for Eleventh Hard 16, 光 Hard 18, SIF Custom
+Charts UNSTOPPABLE and 22/7 Pro 4.9. These resolved 419, 563, 658 and 949 inputs
+exactly once and generated CPU sprites across the complete charts. Restart
+samples also match after the first input resolves, not just during lead-in.
+No server requests were made. Tests and measurements were independently
+reviewed; the cached assets remain outside version control. See
+`COMPATIBILITY.md` for scope and timing measurements. This does not establish
+full interactive gameplay or audible synchronization on the phone.
+
 ## Still unfinished
 
 1. Physical-device verification of close/coincident multitouch, dense flicks
@@ -168,7 +178,9 @@ and full-chart device gameplay are not.
    and count-ins must also stop skipping, even before notes or audio. Implement
    and verify that additional boundary; it is no longer an open product choice.
    Unknown silence is never inferred from bgmOffset.
-4. Real-device engine integration runs beyond the cached simulator fixtures.
+4. Full-chart no-touch runtime integration now passes on the physical device
+   for four cached charts. Interactive playback, audio and display integration
+   beyond those probes still need verification.
 
 ## Deliberately not added / superseded requests
 

@@ -159,6 +159,47 @@ GPU submission, successful touches, Release performance or phone frame pacing.
 The address table adds approximately 1.65 MiB for SEKAI's 72,110 nodes on 64-bit
 hosts. An independent read-only review found no actionable correctness issues.
 
+## Reproducible cached-chart device checks
+
+`CachedEngineIntegrationTests` uses an opt-in
+`Library/Caches/OpenRhythmIntegrationFixtures` directory in the test host's app
+container. It never fetches resources. Missing fixture directories skip these
+four integration tests; incomplete installed fixtures fail rather than skip.
+Only test code belongs in the repository, not downloaded assets.
+
+The fixture layout has `sekai`, `sif`, and `nanaon` engine directories, each
+containing `engine.gz`, `configuration`, `skinData`, `skinTexture`,
+`particleData`, `particleTexture`, `effectData`, and `effectAudio`. Include
+`rom.bin` when supplied by the engine. Charts are `eleventh.gz`, `hikari.gz`,
+`sif/level.gz`, and `nanaon/level.gz`, relative to the fixture root. Copy an
+already-cached fixture directory with `devicectl device copy to`, using the
+`appDataContainer` domain and the installed app's bundle identifier; do not
+replace the whole app container or delete user downloads.
+
+The tests simulate from media time zero at 60 Hz through every input's
+resolution, checking exactly-once judgments and generating CPU sprites. Restart
+replays from the original initial chart time and compares frame zero plus a
+bounded window beginning with the first judgment. They do not play music,
+submit GPU frames, synthesize live touches, or exercise the results-screen UI.
+
+On September 20 at 23:55, the full suite passed on thyme5 (iPhone 16 Pro,
+iOS 27.0): 197 passed, zero failed or skipped. Each cached chart resolved every
+input exactly once. Restarts matched 121 sampled frames: frame zero plus two
+seconds beginning with the first judgment. Independent review found no issues.
+
+| Cached chart | Inputs resolved | Last judgment (chart seconds) | Mean / p95 CPU (ms) |
+| --- | --- | --- | --- |
+| Eleventh Hard 16, MORE MORE JUMP | 419 / 419 | 92.017 | 7.27 / 12.91 |
+| 光 Hard 18, full 25ji | 563 / 563 | 100.433 | 9.39 / 22.39 |
+| SIF Custom Charts UNSTOPPABLE | 658 / 658 | 97.550 | 0.52 / 0.69 |
+| 22/7 Pro 4.9 | 949 / 949 | 135.117 | 2.01 / 3.09 |
+
+These are instrumented Debug runtime-update plus CPU-sprite timings, with no
+real-time pacing. They exclude GPU submission, live touches, music playback and
+display latency. They are profiling leads, not Release frame-rate guarantees.
+The initial Eleventh attempt failed to connect to the test runner and did not
+execute; the successful rerun and final suite have separate result bundles.
+
 ## Remaining checks, including engines we have not sampled
 
 - Stack layout/control semantics and native rendering parity.

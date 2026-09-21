@@ -2,6 +2,128 @@ import XCTest
 import UIKit
 @testable import OpenRhythm
 
+/// Opt-in integration tests: independently obtained assets stay in the app's
+/// cache, never in the repository or test bundle. No network access is used.
+@MainActor
+final class CachedEngineIntegrationTests: XCTestCase {
+  func testEleventhLifecycleAndRestart() throws {
+    try checkChart(engineFolder: "sekai", chart: "eleventh.gz")
+  }
+
+  func testHikariLifecycleAndRestart() throws {
+    try checkChart(engineFolder: "sekai", chart: "hikari.gz")
+  }
+
+  func testSIFCustomLifecycleAndRestart() throws {
+    try checkChart(engineFolder: "sif", chart: "sif/level.gz")
+  }
+
+  func testNanaonLifecycleAndRestart() throws {
+    try checkChart(engineFolder: "nanaon", chart: "nanaon/level.gz")
+  }
+
+  private struct Frame {
+    let draws: [EngineDrawCommand]
+    let particles: [Int: EngineParticleInstance]
+    let audio: [EngineAudioCommand]
+    let loops: [EngineLoopCommand]
+    let resolved: Int
+
+    init(_ runtime: EnginePlayRuntime) {
+      draws = runtime.host.draws
+      particles = runtime.host.particles
+      audio = runtime.host.takeAudioCommands()
+      loops = runtime.host.takeLoopCommands()
+      resolved = runtime.resolvedInputCount
+    }
+  }
+
+  private func checkChart(engineFolder: String, chart: String) throws {
+    let cache = try XCTUnwrap(FileManager.default.urls(
+      for: .cachesDirectory, in: .userDomainMask).first)
+      .appendingPathComponent("OpenRhythmIntegrationFixtures")
+    guard FileManager.default.fileExists(atPath: cache.path) else {
+      throw XCTSkip("Optional cached chart fixtures are not installed.")
+    }
+    let root = cache.appendingPathComponent(engineFolder)
+    let engine = try CompressedJSONDecoder.decode(EnginePlayData.self,
+      from: Data(contentsOf: root.appendingPathComponent("engine.gz")))
+    let level = try CompressedJSONDecoder.decode(LevelData.self,
+      from: Data(contentsOf: cache.appendingPathComponent(chart)))
+    var resources = [String: Data]()
+    for key in ["configuration", "skinData", "skinTexture", "particleData",
+      "particleTexture", "effectData", "effectAudio"] {
+      resources[key] = try Data(contentsOf: root.appendingPathComponent(key))
+    }
+    let presentation = RuntimePresentation(resources: resources)
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: presentation)
+    let audio = try EngineAudioPlayback(engine: engine, presentation: presentation)
+    let romURL = root.appendingPathComponent("rom.bin")
+    let rom = FileManager.default.fileExists(atPath: romURL.path)
+      ? try Data(contentsOf: romURL) : nil
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: assets.options, aspectRatio: 1.8,
+      skinSpriteIDs: Set(assets.skin.keys), effectClipIDs: audio.clipIDs,
+      particleEffectIDs: Set(assets.particles.keys), rom: rom)
+    XCTAssertGreaterThan(runtime.inputCount, 0)
+    let wasIdleDisabled = UIApplication.shared.isIdleTimerDisabled
+    UIApplication.shared.isIdleTimerDisabled = true
+    defer { UIApplication.shared.isIdleTimerDisabled = wasIdleDisabled }
+    let startTime = BGMClockMapping(offset: level.bgmOffset).initialChartTime
+    var seen = Set<Int>()
+    var opening = [(index: Int, snapshot: Frame)]()
+    var firstResolutionFrame: Int?
+    var durations = [Double]()
+    var lastTime = startTime
+    for frame in 0..<18000 {
+      lastTime = startTime + Double(frame) / 60
+      let started = ProcessInfo.processInfo.systemUptime
+      try runtime.update(at: lastTime)
+      _ = EngineRenderer.sprites(host: runtime.host, assets: assets)
+      durations.append(ProcessInfo.processInfo.systemUptime - started)
+      for input in runtime.judgments {
+        XCTAssertTrue(seen.insert(input.entityIndex).inserted,
+          "Duplicate input resolution in \(chart): \(input.entityIndex)")
+      }
+      let snapshot = Frame(runtime)
+      if firstResolutionFrame == nil, !runtime.judgments.isEmpty {
+        firstResolutionFrame = frame
+      }
+      if frame == 0 || firstResolutionFrame.map({ frame < $0 + 120 }) == true {
+        opening.append((frame, snapshot))
+      }
+      if runtime.resolvedInputCount == runtime.inputCount { break }
+    }
+    XCTAssertEqual(seen.count, runtime.inputCount, chart)
+    XCTAssertEqual(runtime.resolvedInputCount, runtime.inputCount, chart)
+    XCTAssertNotNil(firstResolutionFrame)
+    runtime.restart()
+    var sample = 0
+    for frame in 0...opening.last!.index {
+      try runtime.update(at: startTime + Double(frame) / 60)
+      let actual = Frame(runtime)
+      guard frame == opening[sample].index else { continue }
+      let expected = opening[sample].snapshot
+      XCTAssertEqual(actual.draws, expected.draws, chart)
+      XCTAssertEqual(actual.particles, expected.particles, chart)
+      XCTAssertEqual(actual.audio, expected.audio, chart)
+      XCTAssertEqual(actual.loops, expected.loops, chart)
+      XCTAssertEqual(actual.resolved, expected.resolved, chart)
+      sample += 1
+    }
+    let sorted = durations.sorted()
+    let mean = durations.reduce(0, +) / Double(durations.count)
+    let p95 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+    print("CACHED CHART \(chart): \(seen.count) inputs, last \(lastTime)s, "
+      + "\(durations.count) frames, runtime+sprite CPU mean \(mean * 1000)ms, "
+      + "p95 \(p95 * 1000)ms; restart matched \(opening.count) sampled frames "
+      + "through frame \(opening.last!.index). "
+      + "No live touches, music playback, or GPU submission.")
+  }
+}
+
+
 private struct DepthFixtureHost: EngineRuntimeHost {
   func call(function: String, arguments: [Double]) throws -> Double {
     arguments.first ?? 0
