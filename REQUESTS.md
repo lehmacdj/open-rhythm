@@ -112,11 +112,19 @@ per-note timing charts.
 ### Device verification attempt — September 20
 
 The user authorized installing the development build on thyme5 without deleting
-app data. Apple's device query confirms OpenRhythm 0.1.0 build 13 is installed
-as a development app. Xcode built successfully but did not complete launch;
+app data. Apple's device query reports OpenRhythm 0.1.0 build 13, but that is
+not proof that the current development build installed: the local artifact is
+build 1, and the user reports build 13 is their working TestFlight version.
+The earlier conclusion based on `builtByDeveloper` was incorrect. Xcode built
+successfully but did not complete launch;
 the direct device launcher reports that SpringBoard denied launch because the
 device was locked, even though `passcodeRequired` reported false. The user was
-asked to open the installed app from an unlocked Home Screen. Xcode's interaction
+asked to open the app from an unlocked Home Screen. After the user's correction,
+an explicit `devicectl device install app` succeeded, and a fresh device query
+confirmed build 1 at the new installation path. No uninstall/data deletion was
+performed. The subsequent direct launch still failed with SpringBoard's Locked
+error (CoreDevice 10002 / FBSOpenApplicationErrorDomain 7). Installation is now
+verified; launch and gameplay are not. Xcode's interaction
 session tool listed only simulators, so physical UI automation is also not yet
 available. This attempt does not count as physical gameplay verification.
 
