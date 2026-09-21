@@ -108,6 +108,22 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Interpreter performance validation
 
+Particle random expressions now reuse seed-derived values across frames. The
+cache retains at most 512 seeds per frame in two generations, never animation
+time, quad geometry or runtime transforms. An initial FIFO design passed
+correctness checks but independent review prompted an over-capacity probe:
+it was 1.5% slower with 1,088 seed visits per frame. The revised admission policy
+retains a useful subset instead of evicting it on every miss.
+
+Paired Debug simulator probes of the final version alternated execution order
+and matched every sprite's points, matrix, alpha, image and interpolation:
+256 sprites over 240 frames took 0.9535 s uncached versus 0.7891 s cached;
+2,048 sprites over 70 frames took 2.2126 s versus 2.0454 s. Tests include moving
+effects, loop boundaries, restart ID reuse, eviction, aging and caller mutation.
+These are synthetic CPU sprite-generation measurements, not GPU submission,
+audio or physical-device performance. Seed sharing follows the public
+[particle group contract](https://wiki.sonolus.com/particle-specs/resources/particle-data-effect).
+
 The prepared spawn queue now advances a cursor instead of shifting its entire
 remaining array each time entities activate. This removes quadratic queue-copy
 work over a long chart without changing the spawning contract. Synthetic tests

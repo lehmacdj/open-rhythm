@@ -4,6 +4,107 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testParticleRandomCacheIsBoundedAndPreservesEverySeed() {
+    for capacity in [0, 1, 3, 512] {
+      var cache = EngineParticleRandomCache(capacity: capacity)
+      let seeds = [UInt64(0), 1, 65_537, .max, 2, 1, .max, 0]
+        + (0..<600).map(UInt64.init) + [0, 1, .max]
+      for (index, seed) in seeds.enumerated() {
+        if index.isMultiple(of: 37) { cache.beginFrame() }
+        let expected = EngineGeometry.randomVariables(seed: seed)
+        var value = cache.variables(seed: seed)
+        XCTAssertEqual(value, expected)
+        value["r1"] = -123 // A caller's mutation must not corrupt the cache.
+        XCTAssertEqual(cache.variables(seed: seed), expected)
+        XCTAssertLessThanOrEqual(cache.count, capacity * 2)
+      }
+      for _ in 0..<3 {
+        cache.beginFrame()
+        for seed in 0..<600 {
+          XCTAssertEqual(cache.variables(seed: UInt64(seed)),
+            EngineGeometry.randomVariables(seed: UInt64(seed)))
+          XCTAssertLessThanOrEqual(cache.count, capacity * 2)
+        }
+      }
+      cache.beginFrame()
+      cache.beginFrame()
+      XCTAssertEqual(cache.count, 0, "Unused seeds must age out")
+    }
+  }
+
+  @MainActor
+  func testParticleRandomCachingPreservesAnimatedAndMovedSprites() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[{"id":9,"name":"fixture"}]},
+       "archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let texture = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2),
+      format: format).pngData { context in
+        UIColor.white.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      }
+    let particle: [String: Any] = [
+      "sprite": 0, "color": "#fc8", "start": 0, "duration": 1,
+      "x": ["from": ["r1": 1], "to": ["sinr2": 1], "ease": "outCubic"],
+      "y": ["from": ["cosr3": 1], "to": ["r4": 1]],
+      "w": ["from": ["c": 0.1], "to": ["r5": 0.2]],
+      "h": ["from": ["c": 0.2], "to": ["r6": 0.3]],
+      "r": ["from": ["r7": 1], "to": ["sinr8": 1]],
+      "a": ["from": ["c": 1], "to": ["c": 0.1]]]
+    let group: [String: Any] = ["count": 4, "particles": [particle, particle]]
+    let data: [String: Any] = [
+      "width": 2, "height": 2, "interpolation": true,
+      "sprites": [["x": 0, "y": 0, "w": 2, "h": 2]],
+      "effects": [["name": "fixture", "transform": [
+        "x1": ["x1": 1, "r1": 0.1], "y1": ["y1": 1],
+        "x2": ["x2": 1], "y2": ["y2": 1],
+        "x3": ["x3": 1], "y3": ["y3": 1],
+        "x4": ["x4": 1], "y4": ["y4": 1]],
+        "groups": Array(repeating: group, count: 4)]]]
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8),
+        "particleData": try JSONSerialization.data(withJSONObject: data),
+        "particleTexture": texture]))
+    let host = makeHost()
+    let restore = host.makeRestorePoint()
+    for (effectCount, frameCount) in [(8, 120), (64, 35)] {
+      for _ in 0..<2 {
+        restore() // Reused particle IDs must be safe across restart.
+        try host.beginFrame(at: 0)
+        for _ in 0..<effectCount {
+          _ = try host.call(function: "SpawnParticleEffect",
+            arguments: [9] + quad + [0.5, 1])
+        }
+        for frame in 0..<frameCount {
+          try host.beginFrame(at: Double(frame) / 60)
+          if frame == 30 {
+            _ = try host.call(function: "MoveParticleEffect",
+              arguments: [1] + quad.map { $0 * 2 })
+            host.memory.set(block: 1004, index: 0, value: 1.5)
+          }
+          var outputs = [[EngineRenderSprite](), [EngineRenderSprite]()]
+          for mode in frame.isMultiple(of: 2) ? [0, 1] : [1, 0] {
+            outputs[mode] = EngineRenderer.sprites(host: host, assets: assets,
+              cacheParticleRandomVariables: mode == 1)
+          }
+          XCTAssertEqual(outputs[0].count, effectCount * 32)
+          XCTAssertEqual(outputs[0].count, outputs[1].count)
+          for (original, cached) in zip(outputs[0], outputs[1]) {
+            XCTAssertEqual(original.points, cached.points)
+            XCTAssertEqual(original.matrix, cached.matrix)
+            XCTAssertEqual(original.alpha, cached.alpha)
+            XCTAssertTrue(original.image === cached.image)
+            XCTAssertEqual(original.interpolation, cached.interpolation)
+          }
+        }
+      }
+    }
+  }
+
   func testSpawnQueueStopsAtFirstWaitingEntityAndRewindsOnRestart() throws {
     let b = RuntimeNodeBuilder()
     func get(_ block: Int, _ index: Int) -> Int {

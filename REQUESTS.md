@@ -108,6 +108,10 @@ per-note timing charts.
   hang reports are not offered by that Apple API.
   The spawn queue now advances without repeatedly shifting every future entity;
   blocked-head, exhaustion, restart and large-queue regressions cover the change.
+  Particle random expressions are now cached with bounded frame retention;
+  paired synthetic sprite-generation probes improved about 17% at 256 sprites
+  and 8% at 2,048 sprites with identical outputs. Neither establishes phone
+  performance under real successful hits.
 
 ### Device verification attempt — September 20
 

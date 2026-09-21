@@ -285,6 +285,34 @@ struct ParticleData: Decodable {
   let effects: [Effect]
 }
 
+/// Random expressions depend only on the seed, not on animation time or the
+/// current quad. Bound storage so long plays cannot retain every past effect.
+struct EngineParticleRandomCache {
+  private var previous = [UInt64: EngineExpression]()
+  private var current = [UInt64: EngineExpression]()
+  let capacity: Int
+
+  init(capacity: Int = 512) {
+    self.capacity = max(0, capacity)
+  }
+
+  var count: Int { previous.count + current.count }
+
+  mutating func beginFrame() {
+    previous = current
+    current = [:]
+  }
+
+  mutating func variables(seed: UInt64) -> EngineExpression {
+    if let cached = current[seed] { return cached }
+    let result = previous[seed] ?? EngineGeometry.randomVariables(seed: seed)
+    // Retain the first bounded subset of each frame. Evicting on every miss
+    // would give zero hits when a repeated frame exceeds the cache capacity.
+    if current.count < capacity { current[seed] = result }
+    return result
+  }
+}
+
 enum EngineGeometry {
   static func evaluate(_ expression: EngineExpression, _ values: EngineExpression)
     -> Double {
@@ -462,6 +490,16 @@ final class EnginePresentationAssets {
   let forcedSkinRenderMode: EngineSkinRenderMode?
   private(set) var skinRenderMode: EngineSkinRenderMode
   private var tintedParticles = [String: UIImage]()
+  private var particleRandomCache = EngineParticleRandomCache()
+
+  func beginParticleFrame() {
+    particleRandomCache.beginFrame()
+  }
+
+  func particleVariables(seed: UInt64, cached: Bool) -> EngineExpression {
+    cached ? particleRandomCache.variables(seed: seed)
+      : EngineGeometry.randomVariables(seed: seed)
+  }
 
   init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
     forcedSkinRenderMode = try engine.skin.forcedRenderMode
@@ -653,8 +691,10 @@ enum EngineRenderer {
   }
 
   static func sprites(
-    host: CommandEngineRuntimeHost, assets: EnginePresentationAssets
+    host: CommandEngineRuntimeHost, assets: EnginePresentationAssets,
+    cacheParticleRandomVariables: Bool = true
   ) -> [EngineRenderSprite] {
+    if cacheParticleRandomVariables { assets.beginParticleFrame() }
     var result = [EngineRenderSprite]()
     let ordered = host.draws.enumerated().sorted {
       if $0.element.zValues == $1.element.zValues { return $0.offset < $1.offset }
@@ -681,14 +721,16 @@ enum EngineRenderer {
       let elapsed = (host.time - instance.startTime) / instance.duration
       let progress = instance.isLooped ? elapsed - floor(elapsed) : elapsed
       let seed = UInt64(instance.id)
-      let variables = EngineGeometry.randomVariables(seed: seed)
+      let variables = assets.particleVariables(seed: seed,
+        cached: cacheParticleRandomVariables)
       let quad = EngineGeometry.transformed(
         instance.points, by: effect.transform, variables: variables
       )
       for (groupIndex, group) in effect.groups.enumerated() {
         for repetition in 0..<group.count {
-          let variables = EngineGeometry.randomVariables(
-            seed: seed &* 65_537 &+ UInt64(groupIndex * 1024 + repetition)
+          let variables = assets.particleVariables(
+            seed: seed &* 65_537 &+ UInt64(groupIndex * 1024 + repetition),
+            cached: cacheParticleRandomVariables
           )
           for particle in group.particles {
             guard particle.duration > 0, progress >= particle.start,
