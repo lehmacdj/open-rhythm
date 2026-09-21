@@ -106,6 +106,19 @@ per-note timing charts.
   frame-time tails under dense successful hits remain unverified. Apple has
   energy reports for 0.1.0 builds 4–8; build selection was requested. TestFlight
   hang reports are not offered by that Apple API.
+  The spawn queue now advances without repeatedly shifting every future entity;
+  blocked-head, exhaustion, restart and large-queue regressions cover the change.
+
+### Device verification attempt — September 20
+
+The user authorized installing the development build on thyme5 without deleting
+app data. Apple's device query confirms OpenRhythm 0.1.0 build 13 is installed
+as a development app. Xcode built successfully but did not complete launch;
+the direct device launcher reports that SpringBoard denied launch because the
+device was locked, even though `passcodeRequired` reported false. The user was
+asked to open the installed app from an unlocked Home Screen. Xcode's interaction
+session tool listed only simulators, so physical UI automation is also not yet
+available. This attempt does not count as physical gameplay verification.
 
 ## Still unfinished
 
