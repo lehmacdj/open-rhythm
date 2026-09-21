@@ -4,6 +4,163 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  @MainActor
+  func testGameplayRestartReusesPreparationUntilSettingsOrViewportChange() throws {
+    let b = RuntimeNodeBuilder()
+    let sample = b.call("Set", [b.value(2001), b.value(0),
+      b.call("Random", [b.value(0), b.value(1)])])
+    let engine = try b.engine(archetypes: [[
+      "name": "Setup", "hasInput": false, "imports": [], "exports": [],
+      "preprocess": ["index": sample]]])
+    let resource = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "restart-contract", source: nil,
+      version: 1, rating: 1, title: LocalizedText("Restart"),
+      artists: LocalizedText("Fixture"), author: "Fixture", tags: [],
+      cover: resource, bgm: resource, data: resource)
+    let server = ServerDescriptor(id: "restart-contract", name: "Fixture",
+      baseURL: URL(string: "https://example.com")!)
+    let model = GameplayModel()
+    model.prepare(bundle: RuntimeBundle(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Setup", name: nil, data: [])]),
+      bgmURL: URL(fileURLWithPath: "/nonexistent-restart-fixture.wav"),
+      isOffline: true, presentation: RuntimePresentation(resources: [
+        "configuration": Data(#"""
+          {"options":[{"name":"#NOTE_SPEED","type":"slider",
+            "def":1,"min":1,"max":12,"step":1}]}
+          """#.utf8)])),
+      level: level, server: server, title: "Restart")
+    let originalSettings = model.settings
+    defer { model.stop(); model.settings = originalSettings }
+    model.settings = GameplayPreferences()
+    model.start()
+    let size = CGSize(width: 800, height: 400)
+    model.engineFrame(size: size, touches: [])
+    let first = try XCTUnwrap(model.engineRuntime)
+    let prepared = first.memory.value(block: 2001, index: 0)
+    first.memory.set(block: 2001, index: 0, value: -1)
+    model.restart()
+    model.engineFrame(size: size, touches: [])
+    XCTAssertTrue(model.engineRuntime === first)
+    XCTAssertEqual(first.memory.value(block: 2001, index: 0), prepared)
+
+    model.settings.scoreDisplay = .countDown
+    model.settings.judgementDisplay = .off
+    model.settings.skinRenderMode = .lightweight
+    model.settings.engineOptions["unused"] = 99
+    model.settings.noteSpeed = 1 // Explicit default is the same effective value.
+    model.restart()
+    model.engineFrame(size: size, touches: [])
+    XCTAssertTrue(model.engineRuntime === first,
+      "Host-only preferences must not reroll engine preprocessing")
+    XCTAssertEqual(first.memory.value(block: 2001, index: 0), prepared)
+
+    model.settings.noteSpeed = (model.settings.noteSpeed ?? 1) + 1
+    model.restart()
+    model.engineFrame(size: size, touches: [])
+    let changedSettings = try XCTUnwrap(model.engineRuntime)
+    XCTAssertFalse(changedSettings === first)
+    model.restart()
+    model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
+    let resized = try XCTUnwrap(model.engineRuntime)
+    XCTAssertFalse(resized === changedSettings)
+    model.restart()
+    model.engineFrame(size: CGSize(width: 900, height: 400), touches: [],
+      safeAreaInsets: UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 0))
+    XCTAssertFalse(model.engineRuntime === resized)
+  }
+
+  func testRestartRestoresPreparationWithoutRerollingOrLeakingPlayState() throws {
+    let b = RuntimeNodeBuilder()
+    func get(_ block: Int, _ index: Int) -> Int {
+      b.call("Get", [b.value(Double(block)), b.value(Double(index))])
+    }
+    func set(_ block: Int, _ index: Int, _ value: Int) -> Int {
+      b.call("Set", [b.value(Double(block)), b.value(Double(index)), value])
+    }
+    let preprocess = b.call("Execute", [
+      set(4000, 0, b.call("Random", [b.value(0), b.value(1)])),
+      set(4002, 0, b.value(17)), set(2005, 6, b.value(800)),
+      set(2004, 0, b.value(1))])
+    let spawnOrder = set(2001, 0, get(4000, 0))
+    let update = b.call("Execute", [
+      set(4000, 0, b.value(-10)), set(4002, 0, b.value(-20)),
+      set(4005, 0, b.value(1)), set(4005, 1, b.value(0.01)),
+      set(4004, 0, b.value(1)),
+      b.call("Spawn", [b.value(1), b.value(123)])])
+    let dynamic = b.call("Execute", [
+      set(2000, 0, get(4000, 0)), set(4004, 0, b.value(1))])
+    let engine = try b.engine(archetypes: [
+      ["name": "Note", "hasInput": true, "imports": [], "exports": [],
+       "preprocess": ["index": preprocess], "spawnOrder": ["index": spawnOrder],
+       "updateSequential": ["index": update]],
+      ["name": "Effect", "hasInput": false, "imports": [], "exports": [],
+       "updateSequential": ["index": dynamic]]
+    ])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Note", name: nil, data: [])]), options: [],
+      aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [])
+    let preparedRandom = runtime.memory.value(block: 2001, index: 0)
+    for _ in 0..<3 {
+      runtime.restart()
+      XCTAssertEqual(runtime.memory.value(block: 2001, index: 0), preparedRandom)
+      runtime.memory.selectEntity(key: 0, index: 0)
+      XCTAssertEqual(runtime.memory.value(block: 4000, index: 0), preparedRandom)
+      XCTAssertEqual(runtime.memory.value(block: 4002, index: 0), 17)
+      XCTAssertEqual(runtime.memory.value(block: 4103, index: 2), 0)
+      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 0)
+      XCTAssertEqual(runtime.resolvedInputCount, 0)
+      XCTAssertEqual(runtime.accuracyScore.resolvedCount, 0)
+      XCTAssertEqual(runtime.arcadeScore?.snapshot.earned, 0)
+      XCTAssertEqual(runtime.life.value, 800)
+      XCTAssertFalse(runtime.hasActivatedInput)
+      XCTAssertTrue(runtime.judgments.isEmpty)
+      try runtime.update(at: 0)
+      XCTAssertEqual(runtime.resolvedInputCount, 1)
+      XCTAssertEqual(runtime.accuracyScore.resolvedCount, 1)
+      XCTAssertEqual(runtime.memory.value(block: 1001, index: 1), 0)
+      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 0,
+        "No dynamic entity from the previous play may survive restart")
+      try runtime.update(at: 1)
+      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 123)
+    }
+  }
+
+  func testHostRestorePointResetsHandlesQueuesAndRetainsPreparedStreams() throws {
+    let host = makeHost()
+    _ = try host.call(function: "StreamSet", arguments: [0, 0, 42])
+    let restore = host.makeRestorePoint()
+    for _ in 0..<3 {
+      restore()
+      XCTAssertEqual(host.time, 0)
+      XCTAssertTrue(host.draws.isEmpty)
+      XCTAssertTrue(host.particles.isEmpty)
+      XCTAssertTrue(host.exports.isEmpty)
+      XCTAssertTrue(host.takeAudioCommands().isEmpty)
+      XCTAssertTrue(host.takeLoopCommands().isEmpty)
+      XCTAssertTrue(host.takeSpawnCommands().isEmpty)
+      XCTAssertTrue(host.takeScheduledLife(at: 100).isEmpty)
+      XCTAssertEqual(try host.call(function: "StreamGetValue",
+        arguments: [0, 0]), 42)
+      XCTAssertEqual(try host.call(function: "StreamHas", arguments: [0, 1]), 0)
+      try host.beginFrame(at: 1)
+      host.selectEntity(index: 0, exportCount: 1)
+      _ = try host.call(function: "ExportValue", arguments: [0, 9])
+      _ = try host.call(function: "StreamSet", arguments: [0, 0, -1])
+      _ = try host.call(function: "StreamSet", arguments: [0, 1, 99])
+      _ = try host.call(function: "PlayScheduled", arguments: [8, 10, 0])
+      XCTAssertEqual(try host.call(function: "PlayLooped", arguments: [8]), 1)
+      _ = try host.call(function: "StopLoopedScheduled", arguments: [1, 20])
+      _ = try host.call(function: "Spawn", arguments: [1, 3])
+      _ = try host.call(function: "AddLifeScheduled", arguments: [99, 10])
+      _ = try host.call(function: "Draw",
+        arguments: [7, -1, -1, -1, 1, 1, 1, 1, -1, 0, 1])
+      XCTAssertEqual(try host.call(function: "SpawnParticleEffect",
+        arguments: [9, -1, -1, -1, 1, 1, 1, 1, -1, 100, 1]), 1)
+    }
+  }
+
   func testAllTerminateCallbacksObserveActivePeersBeforeDespawn() throws {
     let b = RuntimeNodeBuilder()
     let now = b.call("Get", [b.value(1001), b.value(0)])

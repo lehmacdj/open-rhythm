@@ -199,6 +199,11 @@ final class GameplayModel {
   private var engineAudio: EngineAudioPlayback?
   private let engineHaptics = EngineHapticPlayback()
   private var engineAspectRatio: Double?
+  private var preparedRuntime: EnginePlayRuntime?
+  private var preparedRuntimeOptions: [Double]?
+  private var preparedRuntimeSpeed: Double?
+  private var preparedRuntimeAspect: Double?
+  private var preparedRuntimeSafeArea: [Double]?
   private var preferenceKey = ""
   var settings = GameplayPreferences() {
     didSet {
@@ -316,6 +321,11 @@ final class GameplayModel {
     title: String
   ) {
     guard phase == .loading else { return }
+    preparedRuntime = nil
+    preparedRuntimeOptions = nil
+    preparedRuntimeSpeed = nil
+    preparedRuntimeAspect = nil
+    preparedRuntimeSafeArea = nil
     do {
       if let presentation = bundle.presentation {
         let missing = try bundle.engine.unsupportedFunctions()
@@ -694,21 +704,36 @@ final class GameplayModel {
       }
       if engineRuntime == nil {
         engineAspectRatio = aspect
-        engineRuntime = try EnginePlayRuntime(
-          engine: bundle.engine, level: bundle.level,
-          options: assets.configuration.runtimeOptions(preferences: settings),
-          aspectRatio: aspect, skinSpriteIDs: Set(assets.skin.keys),
-          effectClipIDs: engineAudio?.clipIDs ?? [],
-          particleEffectIDs: Set(assets.particles.keys), rom: bundle.engineROM,
-          uiConfiguration: assets.ui?.runtimeValues ?? Array(repeating: 1, count: 10),
-          safeArea: [
-            -aspect + Double(safeAreaInsets.left * 2 / size.height),
-            aspect - Double(safeAreaInsets.right * 2 / size.height),
-            -1 + Double(safeAreaInsets.bottom * 2 / size.height),
-            1 - Double(safeAreaInsets.top * 2 / size.height)
-          ], playbackSpeed: playbackSpeed,
-          backgroundQuad: try assets.background?.initialQuad(screenAspect: aspect)
-        )
+        let safeArea = [
+          -aspect + Double(safeAreaInsets.left * 2 / size.height),
+          aspect - Double(safeAreaInsets.right * 2 / size.height),
+          -1 + Double(safeAreaInsets.bottom * 2 / size.height),
+          1 - Double(safeAreaInsets.top * 2 / size.height)
+        ]
+        let options = assets.configuration.runtimeOptions(preferences: settings)
+        if let preparedRuntime, preparedRuntimeOptions == options,
+          preparedRuntimeSpeed == playbackSpeed,
+          preparedRuntimeAspect == aspect, preparedRuntimeSafeArea == safeArea {
+          preparedRuntime.restart()
+          engineRuntime = preparedRuntime
+        } else {
+          engineRuntime = try EnginePlayRuntime(
+            engine: bundle.engine, level: bundle.level,
+            options: options,
+            aspectRatio: aspect, skinSpriteIDs: Set(assets.skin.keys),
+            effectClipIDs: engineAudio?.clipIDs ?? [],
+            particleEffectIDs: Set(assets.particles.keys), rom: bundle.engineROM,
+            uiConfiguration: assets.ui?.runtimeValues
+              ?? Array(repeating: 1, count: 10),
+            safeArea: safeArea, playbackSpeed: playbackSpeed,
+            backgroundQuad: try assets.background?.initialQuad(screenAspect: aspect)
+          )
+          preparedRuntime = engineRuntime
+          preparedRuntimeOptions = options
+          preparedRuntimeSpeed = playbackSpeed
+          preparedRuntimeAspect = aspect
+          preparedRuntimeSafeArea = safeArea
+        }
         if let runtime = engineRuntime {
           engineUI = (0..<8).map { EngineUIElement(memory: runtime.memory, index: $0) }
           engineLife = runtime.life

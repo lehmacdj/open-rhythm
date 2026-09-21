@@ -244,6 +244,7 @@ final class EnginePlayRuntime {
   private var nextKey: Int
   private var previousTime = 0.0
   private let entityLimit = 100_000
+  private var restorePreparedState: (() -> Void)?
 
   init(
     engine: EnginePlayData, level: LevelData,
@@ -381,6 +382,29 @@ final class EnginePlayRuntime {
       let rhs = orders[$1.key, default: 0]
       return lhs == rhs ? $0.key < $1.key : lhs < rhs
     }
+    let restoreMemory = memory.makeRestorePoint()
+    let restoreHost = host.makeRestorePoint()
+    restorePreparedState = { [weak self, waiting, arcadeScore, life, nextKey] in
+      guard let self else { return }
+      restoreMemory()
+      restoreHost()
+      self.waiting = waiting
+      self.arcadeScore = arcadeScore
+      self.life = life
+      self.nextKey = nextKey
+      self.active.removeAll(keepingCapacity: true)
+      self.judgments.removeAll(keepingCapacity: true)
+      self.resolvedInputCount = 0
+      self.hasActivatedInput = false
+      self.accuracyScore = EngineAccuracyScore()
+      self.previousTime = 0
+    }
+  }
+
+  /// Sonolus preparation runs once per level, not once per retry. In particular,
+  /// random preprocessing and spawn order must not reroll on restart.
+  func restart() {
+    restorePreparedState?()
   }
 
   func update(at time: TimeInterval, touches: [EngineTouch] = []) throws {

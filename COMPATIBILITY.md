@@ -28,6 +28,12 @@ integration probes, including successful inputs and restart/buffering paths.
   despawn. Synthetic linked peers cover same-frame state visibility and later
   Despawned state; other regressions cover absent terminate callbacks and
   exactly-once result handling.
+- Restarts restore the prepared runtime instead of rerunning preprocess and
+  spawn ordering. Prepared random values and shared/entity data survive retries;
+  play state, spawned entities, judgments, life, score, audio/particle handles,
+  streams and queued commands return to their preparation snapshot. Effective
+  engine-option, playback-speed or viewport/safe-area changes rebuild it;
+  host-only display settings and equivalent option values do not reroll it.
 - Reachable unsupported calls in lazy successful-hit branches and dynamically
   spawnable archetypes, not just functions encountered by a no-touch run.
 - Separate event and frame timestamps, paused/running/rate-changing clocks,
@@ -135,6 +141,14 @@ and [engine specifications](https://wiki.sonolus.com/engine-specs/).
 Download probes remain in ignored scratch storage; no third-party charts or
 assets belong in the regression fixtures. Avoid catalog crawls: use bounded
 pages and cached shared resources, and state exactly which paths were exercised.
+
+Restart preparation follows the [play lifecycle](
+https://wiki.sonolus.com/engine-specs/play-lifecycle/overview). Synthetic runtime,
+host-snapshot and gameplay-model regressions cover state restoration and cache
+invalidation. Cached Eleventh and 22/7 retries matched fresh runs for 600 frames
+in drawing, particles, audio/loop commands, score, life and resolved-input count
+(51 and 48 respectively). No remote requests were needed. These probes do not
+establish audible restart behavior or timing on a phone.
 
 The [despawning contract](
 https://wiki.sonolus.com/engine-specs/play-lifecycle/despawning-system) runs all

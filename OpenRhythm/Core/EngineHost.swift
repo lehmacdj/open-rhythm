@@ -123,6 +123,31 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private let commandLimit = 16_384
   private var drawSegmentCount = 0
 
+  /// Keep preprocessing side effects, but discard commands and handles from
+  /// the previous play. Memory is checkpointed separately by the runtime.
+  func makeRestorePoint() -> () -> Void {
+    { [time, draws, particles, exports, audio, loopAudio, loopStops,
+      nextLoopID, spawns, scheduledLife, streams, streamEntryCount,
+      nextParticleID, entityIndex, exportCount, drawSegmentCount] in
+      self.time = time
+      self.draws = draws
+      self.particles = particles
+      self.exports = exports
+      self.audio = audio
+      self.loopAudio = loopAudio
+      self.loopStops = loopStops
+      self.nextLoopID = nextLoopID
+      self.spawns = spawns
+      self.scheduledLife = scheduledLife
+      self.streams = streams
+      self.streamEntryCount = streamEntryCount
+      self.nextParticleID = nextParticleID
+      self.entityIndex = entityIndex
+      self.exportCount = exportCount
+      self.drawSegmentCount = drawSegmentCount
+    }
+  }
+
   init(
     memory: EngineMemory,
     level: LevelData,

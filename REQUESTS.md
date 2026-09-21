@@ -91,6 +91,10 @@ per-note timing charts.
   419, 563, 658 and 949 inputs respectively, with no duplicate resolutions.
   Generic linked-peer regressions verify the contract even without a real chart
   triggering the original bug. Successful physical inputs remain a separate check.
+  Restart now restores prepared state without rerunning preprocessing or
+  rerolling random layouts. Synthetic state/cache regressions and paired cached
+  SEKAI/22/7 restart probes pass; the original audible loop report remains a
+  separate physical-device check.
 - **Performance:** interpreter, sprite generation, pooled/predecoded audio,
   GPU rendering and bounded software work have been profiled/improved. Literal
   address caching reduced mean runtime-update time in paired Debug simulator

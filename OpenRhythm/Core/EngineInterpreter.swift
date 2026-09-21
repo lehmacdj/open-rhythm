@@ -37,6 +37,18 @@ final class EngineMemory {
   private var entityKey: Int?
   private var entityIndex: Int?
 
+  /// A copy-on-write snapshot of preparation, including engine-owned data.
+  /// The returned closure belongs to the runtime, not to this memory object.
+  func makeRestorePoint() -> () -> Void {
+    { [rom, blocks, entityBlocks, entityKey, entityIndex] in
+      self.rom = rom
+      self.blocks = blocks
+      self.entityBlocks = entityBlocks
+      self.entityKey = entityKey
+      self.entityIndex = entityIndex
+    }
+  }
+
   func loadROM(_ data: Data?) throws {
     guard let data else { rom = []; return }
     let decoded = try data.starts(with: [0x1f, 0x8b])
