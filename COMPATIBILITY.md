@@ -38,6 +38,13 @@ integration probes, including successful inputs and restart/buffering paths.
   spawnable archetypes, not just functions encountered by a no-touch run.
 - Separate event and frame timestamps, paused/running/rate-changing clocks,
   queued pre-resume events, startup seek bounds, and surviving audio commands.
+- Playfield contact state is scoped to playback generation and model identity.
+  Restart discards active contacts and queued releases; stale UIKit move/end
+  events cannot recreate inputs in the new chart clock. New contacts get fresh
+  IDs. The regression reproduced old 60-second contact timestamps surviving
+  into a retry before the reset implementation, and passes after it. Fallback
+  lane routing also clears occupancy and requires a fresh begin. That UIKit
+  routing was independently code-reviewed, not physically exercised.
 - Timing plots with exact-zero taps, automatic hold ticks, interior/outer
   outliers, multiple judgments, and large result payloads.
 - All six DrawCurved edge variants, bilinear control coordinates, paired

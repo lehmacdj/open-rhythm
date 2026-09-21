@@ -95,6 +95,9 @@ per-note timing charts.
   rerolling random layouts. Synthetic state/cache regressions and paired cached
   SEKAI/22/7 restart probes pass; the original audible loop report remains a
   separate physical-device check.
+  A follow-up fix clears held/queued touches across restart in both engine and
+  fallback playfields. A regression first reproduced the stale chart timestamps
+  and now passes; this is not confirmation of the reported phone loop's cause.
 - **Performance:** interpreter, sprite generation, pooled/predecoded audio,
   GPU rendering and bounded software work have been profiled/improved. Literal
   address caching reduced mean runtime-update time in paired Debug simulator

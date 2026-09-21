@@ -192,6 +192,17 @@ struct EngineTouchPool<Key: Hashable> {
   private var contacts = [Key: EngineTouch]()
   private var completed = [EngineTouch]()
   private var nextID = 1
+  private var playbackGeneration: Int?
+
+  /// A retry has a new chart clock and runtime. A finger held across it is
+  /// not a new press; ignore that contact until UIKit reports a fresh begin.
+  mutating func beginPlayback(generation: Int) {
+    guard playbackGeneration != generation else { return }
+    playbackGeneration = generation
+    contacts.removeAll(keepingCapacity: true)
+    completed.removeAll(keepingCapacity: true)
+    nextID = 1
+  }
 
   var touches: [EngineTouch] {
     (completed + Array(contacts.values)).sorted { $0.id < $1.id }

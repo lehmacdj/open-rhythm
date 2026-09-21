@@ -817,7 +817,11 @@ private struct EnginePlayfield: UIViewRepresentable {
 }
 
 private final class EnginePlayfieldView: UIView {
-  weak var model: GameplayModel?
+  weak var model: GameplayModel? {
+    didSet {
+      if oldValue !== model { touchPool = EngineTouchPool() }
+    }
+  }
   private var displayLink: CADisplayLink?
   private var touchPool = EngineTouchPool<ObjectIdentifier>()
   private var metal: EngineMetalRenderer?
@@ -876,17 +880,19 @@ private final class EnginePlayfieldView: UIView {
   }
 
   private func advanceFrame(present: Bool) {
-    let sampleTime = model?.playbackTime ?? 0
-    model?.engineFrame(size: bounds.size,
+    guard let model else { return }
+    touchPool.beginPlayback(generation: model.playbackGeneration)
+    let sampleTime = model.playbackTime
+    model.engineFrame(size: bounds.size,
       touches: touchPool.touches, safeAreaInsets: safeAreaInsets)
     touchPool.nextFrame(at: sampleTime)
-    guard present, model?.isStartingPlayback == false else { return }
-    if let memory = model?.engineRuntime?.memory {
+    guard present, !model.isStartingPlayback else { return }
+    if let memory = model.engineRuntime?.memory {
       backgroundLayer.update(quad: (0..<8).map { memory.value(block: 1005, index: $0) },
         size: bounds.size)
     }
-    if let metal, let runtime = model?.engineRuntime,
-      let assets = model?.presentationAssets {
+    if let metal, let runtime = model.engineRuntime,
+      let assets = model.presentationAssets {
       do {
         try metal.draw(host: runtime.host, assets: assets, size: bounds.size)
       } catch {
@@ -902,7 +908,9 @@ private final class EnginePlayfieldView: UIView {
   }
 
   private func receive(_ touches: Set<UITouch>, started: Bool, ended: Bool) {
-    guard bounds.height > 0, let model, !model.isStartingPlayback else { return }
+    guard bounds.height > 0, let model else { return }
+    touchPool.beginPlayback(generation: model.playbackGeneration)
+    guard model.phase == .playing, !model.isStartingPlayback else { return }
     for touch in touches {
       let key = ObjectIdentifier(touch)
       let point = touch.location(in: self)
@@ -968,8 +976,28 @@ private struct LaneInput: UIViewRepresentable {
 }
 
 private final class LaneInputView: UIView {
-  var model: GameplayModel?
+  var model: GameplayModel? {
+    didSet {
+      if oldValue !== model {
+        playbackGeneration = nil
+        lanes.removeAll(keepingCapacity: true)
+        contacts.removeAll(keepingCapacity: true)
+      }
+    }
+  }
   private var lanes = [ObjectIdentifier: Int]()
+  private var contacts = Set<ObjectIdentifier>()
+  private var playbackGeneration: Int?
+
+  private func prepareInput() -> Bool {
+    guard let model else { return false }
+    if playbackGeneration != model.playbackGeneration {
+      playbackGeneration = model.playbackGeneration
+      lanes.removeAll(keepingCapacity: true)
+      contacts.removeAll(keepingCapacity: true)
+    }
+    return model.phase == .playing && !model.isStartingPlayback
+  }
 
   private func lane(for touch: UITouch) -> Int? {
     let point = touch.location(in: self)
@@ -978,7 +1006,9 @@ private final class LaneInputView: UIView {
   }
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    guard prepareInput() else { return }
     for touch in touches {
+      contacts.insert(ObjectIdentifier(touch))
       guard let lane = lane(for: touch) else { continue }
       let occupied = lanes.values.contains(lane)
       lanes[ObjectIdentifier(touch)] = lane
@@ -989,8 +1019,10 @@ private final class LaneInputView: UIView {
   }
 
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+    guard prepareInput() else { return }
     for touch in touches {
       let id = ObjectIdentifier(touch)
+      guard contacts.contains(id) else { continue }
       let next = lane(for: touch)
       guard lanes[id] != next else { continue }
       release(id, at: touch.timestamp)
@@ -1002,13 +1034,17 @@ private final class LaneInputView: UIView {
   }
 
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-    for touch in touches { release(ObjectIdentifier(touch), at: touch.timestamp) }
+    guard prepareInput() else { return }
+    for touch in touches {
+      contacts.remove(ObjectIdentifier(touch))
+      release(ObjectIdentifier(touch), at: touch.timestamp)
+    }
   }
 
   override func touchesCancelled(
     _ touches: Set<UITouch>, with event: UIEvent?
   ) {
-    for touch in touches { release(ObjectIdentifier(touch), at: touch.timestamp) }
+    touchesEnded(touches, with: event)
   }
 
   private func release(_ id: ObjectIdentifier, at timestamp: TimeInterval) {

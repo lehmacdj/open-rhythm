@@ -4,6 +4,33 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testTouchPoolDoesNotCarryContactsAcrossPlaybackGenerations() {
+    var pool = EngineTouchPool<Int>()
+    let origin = EnginePoint(x: 0, y: 0)
+    pool.beginPlayback(generation: 1)
+    pool.receive(key: 10, position: origin, time: 60, started: true, ended: false)
+    pool.receive(key: 20, position: origin, time: 60, started: true, ended: true)
+    pool.receive(key: 20, position: origin, time: 60.01, started: true, ended: false)
+    pool.beginPlayback(generation: 1)
+    XCTAssertEqual(pool.touches.count, 3,
+      "Ordinary frames must preserve active and not-yet-delivered ended touches")
+    pool.beginPlayback(generation: 2)
+    XCTAssertTrue(pool.touches.isEmpty,
+      "Neither a held finger nor a queued release belongs to the retry")
+    pool.receive(key: 10, position: origin, time: 0, started: false, ended: false)
+    pool.receive(key: 20, position: origin, time: 0, started: false, ended: true)
+    XCTAssertTrue(pool.touches.isEmpty,
+      "Old UIKit contacts must begin anew before the new runtime sees them")
+    pool.receive(key: 30, position: origin, time: 0.1, started: true, ended: false)
+    XCTAssertEqual(pool.touches.count, 1)
+    XCTAssertEqual(pool.touches.first?.id, 1)
+    XCTAssertEqual(pool.touches.first?.startTime, 0.1)
+    pool.nextFrame(at: 0.2)
+    pool.beginPlayback(generation: 2)
+    XCTAssertEqual(pool.touches.count, 1)
+    XCTAssertEqual(pool.touches.first?.started, false)
+  }
+
   @MainActor
   func testGameplayRestartReusesPreparationUntilSettingsOrViewportChange() throws {
     let b = RuntimeNodeBuilder()
