@@ -251,6 +251,9 @@ final class EnginePlayRuntime {
   private let interpreter: EngineInterpreter
   private var entities = [Entity]()
   private var waiting = [Entity]()
+  // Keep the prepared queue intact. Removing its prefix on every spawn
+  // shifts all future entities and makes a full chart quadratic in length.
+  private var waitingIndex = 0
   private var active = [Entity]()
   private var nextKey: Int
   private var previousTime = 0.0
@@ -400,6 +403,7 @@ final class EnginePlayRuntime {
       restoreMemory()
       restoreHost()
       self.waiting = waiting
+      self.waitingIndex = 0
       self.arcadeScore = arcadeScore
       self.life = life
       self.nextKey = nextKey
@@ -448,7 +452,7 @@ final class EnginePlayRuntime {
     }
     var newlyActive = [Entity]()
     var spawnCount = 0
-    for entity in waiting {
+    for entity in waiting[waitingIndex...] {
       guard try execute(entity, callback: \.shouldSpawn, default: 1) != 0 else {
         break
       }
@@ -456,7 +460,7 @@ final class EnginePlayRuntime {
       newlyActive.append(entity)
       spawnCount += 1
     }
-    waiting.removeFirst(spawnCount)
+    waitingIndex += spawnCount
     guard active.count + newlyActive.count + spawned.count <= entityLimit else {
       throw EngineInterpreterError.operationLimitExceeded
     }

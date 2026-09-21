@@ -4,6 +4,82 @@ import Metal
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testSpawnQueueStopsAtFirstWaitingEntityAndRewindsOnRestart() throws {
+    let b = RuntimeNodeBuilder()
+    func get(_ block: Int, _ index: Int) -> Int {
+      b.call("Get", [b.value(Double(block)), b.value(Double(index))])
+    }
+    let order = get(4001, 0)
+    let spawn = b.call("Execute", [
+      b.call("SetAdd", [b.value(2000), b.value(0), b.value(1)]),
+      b.call("GreaterOr", [get(1001, 0), get(4001, 1)])])
+    let terminate = b.call("Set", [b.value(4004), b.value(0), b.value(1)])
+    let engine = try b.engine(archetypes: [[
+      "name": "Note", "hasInput": true,
+      "imports": [["name": "order", "index": 0],
+                  ["name": "time", "index": 1]], "exports": [],
+      "spawnOrder": ["index": order], "shouldSpawn": ["index": spawn],
+      "initialize": ["index": terminate]]])
+    let level = try JSONDecoder().decode(LevelData.self, from: Data(#"""
+      {"bgmOffset":0,"entities":[
+        {"archetype":"Note","data":[
+          {"name":"order","value":2},{"name":"time","value":0}]},
+        {"archetype":"Note","data":[
+          {"name":"order","value":0},{"name":"time","value":1}]},
+        {"archetype":"Note","data":[
+          {"name":"order","value":1},{"name":"time","value":3}]}]}
+      """#.utf8))
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    for _ in 0..<2 {
+      try runtime.update(at: 0)
+      XCTAssertTrue(runtime.judgments.isEmpty)
+      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 1)
+      try runtime.update(at: 1)
+      XCTAssertEqual(runtime.judgments.map(\.entityIndex), [1])
+      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 3)
+      try runtime.update(at: 2)
+      XCTAssertTrue(runtime.judgments.isEmpty,
+        "The ready third entity must not bypass the blocked queue head")
+      try runtime.update(at: 3)
+      XCTAssertEqual(runtime.judgments.map(\.entityIndex), [2, 0])
+      XCTAssertEqual(runtime.resolvedInputCount, 3)
+      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 6)
+      try runtime.update(at: 4)
+      XCTAssertTrue(runtime.judgments.isEmpty)
+      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 6,
+        "An exhausted queue must not execute shouldSpawn again")
+      runtime.restart()
+    }
+  }
+
+  func testLargeSpawnQueueAdvancesOneEntityPerFrame() throws {
+    let b = RuntimeNodeBuilder()
+    let index = b.call("Get", [b.value(4003), b.value(0)])
+    let time = b.call("Get", [b.value(1001), b.value(0)])
+    let spawn = b.call("GreaterOr", [time, index])
+    let despawn = b.call("Set", [b.value(4004), b.value(0), b.value(1)])
+    let engine = try b.engine(archetypes: [[
+      "name": "Note", "hasInput": false, "imports": [], "exports": [],
+      "spawnOrder": ["index": index], "shouldSpawn": ["index": spawn],
+      "initialize": ["index": despawn]]])
+    let count = 20_000
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: Array(repeating:
+        LevelEntity(archetype: "Note", name: nil, data: []), count: count)),
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    for frame in 0..<count {
+      try runtime.update(at: Double(frame))
+      XCTAssertEqual(runtime.memory.value(block: 4103, index: frame * 3 + 2), 2)
+      if frame + 1 < count {
+        XCTAssertEqual(runtime.memory.value(block: 4103,
+          index: (frame + 1) * 3 + 2), 0)
+      }
+    }
+  }
+
   func testTouchPoolDoesNotCarryContactsAcrossPlaybackGenerations() {
     var pool = EngineTouchPool<Int>()
     let origin = EnginePoint(x: 0, y: 0)

@@ -108,6 +108,15 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Interpreter performance validation
 
+The prepared spawn queue now advances a cursor instead of shifting its entire
+remaining array each time entities activate. This removes quadratic queue-copy
+work over a long chart without changing the spawning contract. Synthetic tests
+cover a blocked head, nontrivial spawn order, exhaustion, restart, and 20,000
+entities activating and despawning one per frame. A single paired Debug
+simulator probe took 0.473 s before and 0.320 s after for those updates (including
+assertions, excluding preparation). This isolates queue overhead; it does not
+measure real-chart phone frame pacing. Independent review found no issues.
+
 Literal-address interpreter optimization retains live memory/entity binding,
 read-before-operand ordering, truncating address conversion, and the original
 operation/depth budgets. Four synthetic tests compare the optimized and ordinary
