@@ -169,6 +169,43 @@ These are synthetic CPU sprite-generation measurements, not GPU submission,
 audio or physical-device performance. Seed sharing follows the public
 [particle group contract](https://wiki.sonolus.com/particle-specs/resources/particle-data-effect).
 
+Particle property endpoints are also cached now. The `from`/`to` expressions
+depend only on the seeded variables; easing, visibility, geometry and runtime
+transforms remain live. Keys include effect, group and particle identity as
+well as the seed, so different definitions and reused restart handles cannot
+share incorrect values. Two generations retain at most 2,048 fixed-size
+six-property records. Once the current generation is full, overflow particles
+compute directly without failed cache lookups.
+
+Independent review found no correctness issue and prompted distinct-channel
+test values to catch x/y/width/height/rotation/alpha wiring errors. Four-mode
+comparisons cover caching neither, either, or both random variables and property
+endpoints, including animated/moved effects, looping, restart and over-capacity
+loads. The first endpoint-cache policy slightly regressed above capacity; the
+revised bounded-prefix policy improved the paired 2,048-sprite phone workload
+from 4.400 to 4.165 ms and 4.365 to 4.140 ms in two repetitions (~5%). At 256
+sprites, it improved from 0.468 to 0.397 ms and 0.470 to 0.400 ms (~15%).
+
+These September 21 measurements used the physical thyme5 Release configuration
+with verified `-O` and whole-module optimization. XCTest access and coverage
+instrumentation remained enabled, so they are not an uninstrumented TestFlight
+benchmark. The temporary scheme/settings are not part of the delivered project.
+All five cached chart checks passed before the endpoint optimization. The full
+209-test optimized phone suite passed with the initial cache; the final
+admission policy then passed the focused cache/equivalence/shake-it tests.
+Shake-it Hard 18's repeated-contact workload retained 489 successful inputs and
+121 matching restart samples: sprite mean/p95 changed from 1.118/2.418 ms to
+0.487/1.024 ms. Combined runtime/sprite mean/p95/p99 were 2.870/5.904/10.157 ms.
+The device harness is intentionally throttled and omits live audio/display
+pacing; physical curved-follow smoothness and audible alignment remain open.
+
+Final normal Debug verification on September 25 exercised all 209 tests with
+no skipped fixtures: 208 passed in the full run, whose Eleventh test was
+terminated when the simulator shut down. Xcode's device-state diagnostics
+record that shutdown; Eleventh then passed separately without code changes.
+The normal app build also succeeded. This is not a claim of an uninterrupted
+209-pass run or a new physical-device measurement.
+
 The prepared spawn queue now advances a cursor instead of shifting its entire
 remaining array each time entities activate. This removes quadratic queue-copy
 work over a long chart without changing the spawning contract. Synthetic tests

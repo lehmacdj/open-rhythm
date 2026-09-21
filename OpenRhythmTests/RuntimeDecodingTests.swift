@@ -233,7 +233,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
           commandBuffer: command)
         let encoded = ProcessInfo.processInfo.systemUptime
         command.commit()
-        command.waitUntilCompleted()
+        await command.completed()
         XCTAssertNil(command.error)
         if iteration >= 2 {
           encodeTimes.append(encoded - start)

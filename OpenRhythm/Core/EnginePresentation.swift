@@ -268,14 +268,27 @@ struct ParticleData: Decodable {
     let a: Property
   }
   struct Property: Decodable {
+    struct Endpoints {
+      let from: Double
+      let to: Double
+    }
+
     let from: EngineExpression?
     let to: EngineExpression?
     let ease: String?
 
     func value(at time: Double, variables: EngineExpression) -> Double {
-      let start = EngineGeometry.evaluate(from ?? [:], variables)
-      let end = EngineGeometry.evaluate(to ?? [:], variables)
-      return start + (end - start) * EngineEasing.value(ease ?? "linear", time)
+      value(at: time, endpoints: endpoints(variables: variables))
+    }
+
+    func endpoints(variables: EngineExpression) -> Endpoints {
+      Endpoints(from: EngineGeometry.evaluate(from ?? [:], variables),
+        to: EngineGeometry.evaluate(to ?? [:], variables))
+    }
+
+    func value(at time: Double, endpoints: Endpoints) -> Double {
+      endpoints.from + (endpoints.to - endpoints.from)
+        * EngineEasing.value(ease ?? "linear", time)
     }
   }
   let width: Int
@@ -283,6 +296,54 @@ struct ParticleData: Decodable {
   let interpolation: Bool
   let sprites: [Sprite]
   let effects: [Effect]
+}
+
+/// Only expression endpoints are time-independent. Never cache eased values,
+/// transformed quads, or particle visibility, all of which can change per frame.
+struct EngineParticlePropertyCache {
+  struct Key: Hashable {
+    let seed: UInt64
+    let effect: Int
+    let group: Int
+    let particle: Int
+  }
+
+  struct Properties {
+    let x, y, w, h, r, a: ParticleData.Property.Endpoints
+
+    init(_ particle: ParticleData.Particle, variables: EngineExpression) {
+      x = particle.x.endpoints(variables: variables)
+      y = particle.y.endpoints(variables: variables)
+      w = particle.w.endpoints(variables: variables)
+      h = particle.h.endpoints(variables: variables)
+      r = particle.r.endpoints(variables: variables)
+      a = particle.a.endpoints(variables: variables)
+    }
+  }
+
+  private var previous = [Key: Properties]()
+  private var current = [Key: Properties]()
+  let capacity: Int
+
+  init(capacity: Int = 1024) { self.capacity = max(0, capacity) }
+  var count: Int { previous.count + current.count }
+
+  mutating func beginFrame() {
+    previous = current
+    current = [:]
+  }
+
+  mutating func properties(for particle: ParticleData.Particle, key: Key,
+    variables: EngineExpression) -> Properties {
+    // Definitions belong to one immutable asset bundle. Include their identity
+    // as well as the seed: reused handles after restart can name another effect.
+    // Admit a bounded prefix. Once full, do no more hashing for this frame's
+    // overflow: sparse/large effects must not pay two failed lookups per sprite.
+    guard current.count < capacity else { return Properties(particle, variables: variables) }
+    let result = previous[key] ?? Properties(particle, variables: variables)
+    current[key] = result
+    return result
+  }
 }
 
 /// Random expressions depend only on the seed, not on animation time or the
@@ -491,14 +552,22 @@ final class EnginePresentationAssets {
   private(set) var skinRenderMode: EngineSkinRenderMode
   private var tintedParticles = [String: UIImage]()
   private var particleRandomCache = EngineParticleRandomCache()
+  private var particlePropertyCache = EngineParticlePropertyCache()
 
   func beginParticleFrame() {
     particleRandomCache.beginFrame()
+    particlePropertyCache.beginFrame()
   }
 
   func particleVariables(seed: UInt64, cached: Bool) -> EngineExpression {
     cached ? particleRandomCache.variables(seed: seed)
       : EngineGeometry.randomVariables(seed: seed)
+  }
+
+  func particleProperties(_ particle: ParticleData.Particle,
+    key: EngineParticlePropertyCache.Key, variables: EngineExpression)
+    -> EngineParticlePropertyCache.Properties {
+    particlePropertyCache.properties(for: particle, key: key, variables: variables)
   }
 
   init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
@@ -767,9 +836,12 @@ enum EngineRenderer {
 
   static func sprites(
     host: CommandEngineRuntimeHost, assets: EnginePresentationAssets,
-    cacheParticleRandomVariables: Bool = true
+    cacheParticleRandomVariables: Bool = true,
+    cacheParticleProperties: Bool = true
   ) -> [EngineRenderSprite] {
-    if cacheParticleRandomVariables { assets.beginParticleFrame() }
+    if cacheParticleRandomVariables || cacheParticleProperties {
+      assets.beginParticleFrame()
+    }
     var result = [EngineRenderSprite]()
     let ordered = host.draws.enumerated().sorted {
       if $0.element.zValues == $1.element.zValues { return $0.offset < $1.offset }
@@ -809,22 +881,28 @@ enum EngineRenderer {
       )
       for (groupIndex, group) in effect.groups.enumerated() {
         for repetition in 0..<group.count {
+          let groupSeed = seed &* 65_537 &+ UInt64(groupIndex * 1024 + repetition)
           let variables = assets.particleVariables(
-            seed: seed &* 65_537 &+ UInt64(groupIndex * 1024 + repetition),
+            seed: groupSeed,
             cached: cacheParticleRandomVariables
           )
-          for particle in group.particles {
+          for (particleIndex, particle) in group.particles.enumerated() {
             guard particle.duration > 0, progress >= particle.start,
               progress < particle.start + particle.duration,
               assets.particleImages.indices.contains(particle.sprite)
             else { continue }
             let time = (progress - particle.start) / particle.duration
-            let x = particle.x.value(at: time, variables: variables)
-            let y = particle.y.value(at: time, variables: variables)
-            let w = particle.w.value(at: time, variables: variables)
-            let h = particle.h.value(at: time, variables: variables)
-            let rotation = particle.r.value(at: time, variables: variables)
-            let alpha = particle.a.value(at: time, variables: variables)
+            let properties = cacheParticleProperties
+              ? assets.particleProperties(particle, key: .init(seed: groupSeed,
+                effect: instance.effectID, group: groupIndex, particle: particleIndex),
+                variables: variables)
+              : EngineParticlePropertyCache.Properties(particle, variables: variables)
+            let x = particle.x.value(at: time, endpoints: properties.x)
+            let y = particle.y.value(at: time, endpoints: properties.y)
+            let w = particle.w.value(at: time, endpoints: properties.w)
+            let h = particle.h.value(at: time, endpoints: properties.h)
+            let rotation = particle.r.value(at: time, endpoints: properties.r)
+            let alpha = particle.a.value(at: time, endpoints: properties.a)
             let cosine = cos(rotation), sine = sin(rotation)
             let points = [(-1.0,-1.0),(-1,1),(1,1),(1,-1)].map { sx, sy in
               let dx = sx * w / 2

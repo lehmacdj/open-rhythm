@@ -369,6 +369,52 @@ final class EngineHostTests: XCTestCase {
     }
   }
 
+  func testParticlePropertyCacheIsBoundedAndSeparatesDefinitions() {
+    func particle(_ value: Double) -> ParticleData.Particle {
+      func property(_ index: Int) -> ParticleData.Property {
+        let offset = Double(index)
+        return ParticleData.Property(from: ["c": value + offset, "r1": 2 + offset],
+          to: ["c": value + offset + 1, "r2": -3 - offset],
+          ease: ["none", "linear", "inOutCubic", "outQuad", "inSine", "outBack"][index])
+      }
+      return ParticleData.Particle(sprite: 0, color: "#fff", start: 0,
+        duration: 1, x: property(0), y: property(1), w: property(2),
+        h: property(3), r: property(4), a: property(5))
+    }
+    for capacity in [0, 1, 8, 128] {
+      var cache = EngineParticlePropertyCache(capacity: capacity)
+      for _ in 0..<4 {
+        cache.beginFrame()
+        for seed in UInt64(0)..<4 {
+          let variables = EngineGeometry.randomVariables(seed: seed)
+          for effect in 0..<2 {
+            for group in 0..<2 {
+              for index in 0..<2 {
+                let definition = particle(Double(effect * 100 + group * 10 + index))
+                let actual = cache.properties(for: definition,
+                  key: .init(seed: seed, effect: effect, group: group, particle: index),
+                  variables: variables)
+                let originals = [definition.x, definition.y, definition.w,
+                  definition.h, definition.r, definition.a]
+                let endpoints = [actual.x, actual.y, actual.w, actual.h, actual.r, actual.a]
+                for (original, cached) in zip(originals, endpoints) {
+                  for time in [0.0, 0.25, 0.75, 1] {
+                    XCTAssertEqual(original.value(at: time, endpoints: cached),
+                      original.value(at: time, variables: variables))
+                  }
+                }
+                XCTAssertLessThanOrEqual(cache.count, capacity * 2)
+              }
+            }
+          }
+        }
+      }
+      cache.beginFrame()
+      cache.beginFrame()
+      XCTAssertEqual(cache.count, 0, "Expired effects cannot accumulate")
+    }
+  }
+
   @MainActor
   func testParticleRandomCachingPreservesAnimatedAndMovedSprites() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
@@ -411,6 +457,8 @@ final class EngineHostTests: XCTestCase {
     for (effectCount, frameCount) in [(8, 120), (64, 35)] {
       for _ in 0..<2 {
         restore() // Reused particle IDs must be safe across restart.
+        var elapsed = Array(repeating: 0.0, count: 4)
+        var timedFrames = 0
         try host.beginFrame(at: 0)
         for _ in 0..<effectCount {
           _ = try host.call(function: "SpawnParticleEffect",
@@ -423,26 +471,38 @@ final class EngineHostTests: XCTestCase {
               arguments: [1] + quad.map { $0 * 2 })
             host.memory.set(block: 1004, index: 0, value: 1.5)
           }
-          var outputs = [[EngineRenderSprite](), [EngineRenderSprite]()]
-          for mode in frame.isMultiple(of: 2) ? [0, 1] : [1, 0] {
+          var outputs = Array(repeating: [EngineRenderSprite](), count: 4)
+          for mode in frame.isMultiple(of: 2) ? [0, 1, 2, 3] : [3, 2, 1, 0] {
+            let started = ProcessInfo.processInfo.systemUptime
             outputs[mode] = EngineRenderer.sprites(host: host, assets: assets,
-              cacheParticleRandomVariables: mode == 1)
+              cacheParticleRandomVariables: mode & 1 != 0,
+              cacheParticleProperties: mode & 2 != 0)
+            if frame >= 2 {
+              elapsed[mode] += ProcessInfo.processInfo.systemUptime - started
+            }
           }
+          if frame >= 2 { timedFrames += 1 }
           XCTAssertEqual(outputs[0].count, effectCount * 32)
-          XCTAssertEqual(outputs[0].count, outputs[1].count)
           let expectedMatrix = (0..<16).map {
             host.memory.value(block: 1004, index: $0)
           }
-          for (original, cached) in zip(outputs[0], outputs[1]) {
-            XCTAssertEqual(original.points, cached.points)
-            XCTAssertEqual(original.matrix, cached.matrix)
-            XCTAssertEqual(cached.matrix, expectedMatrix,
-              "Every particle must use this frame's current transform")
-            XCTAssertEqual(original.alpha, cached.alpha)
-            XCTAssertTrue(original.image === cached.image)
-            XCTAssertEqual(original.interpolation, cached.interpolation)
+          for output in outputs.dropFirst() {
+            XCTAssertEqual(outputs[0].count, output.count)
+            for (original, cached) in zip(outputs[0], output) {
+              XCTAssertEqual(original.points, cached.points)
+              XCTAssertEqual(original.matrix, cached.matrix)
+              XCTAssertEqual(cached.matrix, expectedMatrix,
+                "Every particle must use this frame's current transform")
+              XCTAssertEqual(original.alpha, cached.alpha)
+              XCTAssertTrue(original.image === cached.image)
+              XCTAssertEqual(original.interpolation, cached.interpolation)
+            }
           }
         }
+        print("PARTICLE CACHE \(effectCount * 32) sprites, \(timedFrames) frames: "
+          + "mean milliseconds none/random/properties/both "
+          + "\(elapsed.map { $0 * 1000 / Double(timedFrames) }); "
+          + "paired CPU-only synthetic workload, not live FPS.")
       }
     }
   }
