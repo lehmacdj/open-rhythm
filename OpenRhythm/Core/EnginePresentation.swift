@@ -575,8 +575,7 @@ final class EnginePresentationAssets {
     for effect in effects.values {
       for group in effect.groups {
         for particle in group.particles where particleImages.indices.contains(particle.sprite) {
-          _ = particleImage(index: particle.sprite,
-            color: EngineRenderer.color(particle.color), key: particle.color)
+          _ = particleImage(index: particle.sprite, key: particle.color)
         }
       }
     }
@@ -591,11 +590,11 @@ final class EnginePresentationAssets {
     skin.values.map(\.image) + Array(tintedParticles.values)
   }
 
-  func particleImage(index: Int, color: UIColor, key: String) -> UIImage {
+  func particleImage(index: Int, key: String) -> UIImage {
     let cacheKey = "\(index):\(key)"
     if let image = tintedParticles[cacheKey] { return image }
     let original = particleImages[index]
-    let image = Self.tinted(original, color: color)
+    let image = Self.tinted(original, color: EngineRenderer.color(key))
     tintedParticles[cacheKey] = image
     return image
   }
@@ -794,6 +793,10 @@ enum EngineRenderer {
           isStaticIntroDecoration: command.isStaticIntroDecoration))
       }
     }
+    // The particle transform is frame-wide. Reading its sixteen values for
+    // every emitted particle duplicates thousands of VM reads on busy hits.
+    let particleMatrix = host.particles.isEmpty ? []
+      : (0..<16).map { host.memory.value(block: 1004, index: $0) }
     for instance in host.particles.values.sorted(by: { $0.id < $1.id }) {
       guard let effect = assets.particles[instance.effectID] else { continue }
       let elapsed = (host.time - instance.startTime) / instance.duration
@@ -822,18 +825,17 @@ enum EngineRenderer {
             let h = particle.h.value(at: time, variables: variables)
             let rotation = particle.r.value(at: time, variables: variables)
             let alpha = particle.a.value(at: time, variables: variables)
+            let cosine = cos(rotation), sine = sin(rotation)
             let points = [(-1.0,-1.0),(-1,1),(1,1),(1,-1)].map { sx, sy in
               let dx = sx * w / 2
               let dy = sy * h / 2
               return EngineGeometry.bilinear(quad,
-                u: (x + dx * cos(rotation) - dy * sin(rotation) + 1) / 2,
-                v: (y + dx * sin(rotation) + dy * cos(rotation) + 1) / 2)
+                u: (x + dx * cosine - dy * sine + 1) / 2,
+                v: (y + dx * sine + dy * cosine + 1) / 2)
             }
-            let image = assets.particleImage(index: particle.sprite,
-              color: color(particle.color), key: particle.color)
-            let matrix = (0..<16).map { host.memory.value(block: 1004, index: $0) }
+            let image = assets.particleImage(index: particle.sprite, key: particle.color)
             result.append(EngineRenderSprite(image: image, points: points,
-              matrix: matrix, alpha: alpha,
+              matrix: particleMatrix, alpha: alpha,
               interpolation: assets.particleInterpolation))
           }
         }

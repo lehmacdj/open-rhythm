@@ -123,6 +123,47 @@ per-note timing charts.
   The final simulator suite passed all 206 tests, including all four cached
   chart lifecycle/restart fixtures, with zero failures or skips.
 
+### Curved-hold performance follow-up — September 21
+
+The reported **shake it! Hard 18, full MORE MORE JUMP / Kagamine Rin** is now
+a cached regression fixture (`sekai-best-550-2070-hard`, 544 inputs). Its
+currently supplied next-sekai-2.9.0 engine emits curved connectors as ordinary
+`Draw` quads, not `DrawCurved`; optimizing only `DrawCurved` would miss this
+workload. The user's affected build is unknown, so matching the chart does not
+establish that it is the same engine revision they played.
+
+The full lifecycle harness now separates runtime and sprite CPU measurements,
+records p95/p99, and replays peak runtime/draw/particle/curve frames through
+Metal to measure encoding and GPU work. It still covers Eleventh, 光, SIF
+Custom Charts and 22/7. A second full shake-it run supplies eight deterministic
+periodic contacts, exercising successful hold heads/ticks/releases and hit
+effects, with exactly-once resolution and restart checks. These are synthetic
+contacts, not a captured curved-hold gesture or physical frame-pacing proof.
+
+The original contact run resolved 544 inputs, including 489 successes, and
+peaked at 55 simultaneous effects. Debug simulator CPU means were 8.640 ms for
+runtime and 2.738 ms for sprites (combined p95 20.242 ms). Particle rendering
+now reads its frame-wide matrix once, reuses rotation trig values per particle,
+and avoids reparsing colors when tinted images are already cached. An attempted
+dense VM-memory optimization was rejected: it failed to improve this workload
+and independent review found a sparse-layout memory-cost risk.
+
+The final simulator suite passed **208 tests, zero failures/skips**, including
+all five cached charts and the extra contact run. The final contact run again
+had 489 successes, including 25 normal hold heads, 17 normal ticks and 23
+normal releases. Mean sprite CPU decreased from 2.738 to 2.419 ms (~12%);
+combined runtime/sprite p95 was 19.140 ms and p99 24.874 ms. This before/after
+Debug simulator comparison is not a Release or device frame-rate guarantee.
+The peak-effects frame had 304 sprites / 3,522 vertices, with offscreen Metal
+encoding averaging 0.907 ms and GPU execution 0.047 ms on the simulator host.
+Independent review found no remaining actionable issue in the retained diff.
+The reported phone slowdown remains open, not declared resolved by these tests.
+
+Only a bounded search and the exact chart data were fetched; shared engine,
+ROM and presentation assets were reused. No catalog crawl or music download
+was needed. Assets remain in ignored local caches. Physical verification is
+still open: thyme5 reported `passcodeRequired: true` during this follow-up.
+
 ### Device verification — September 20
 
 The user authorized installing the development build on thyme5 without deleting

@@ -1,11 +1,20 @@
 import XCTest
 import UIKit
+import Metal
 @testable import OpenRhythm
 
 /// Opt-in integration tests: independently obtained assets stay in the app's
 /// cache, never in the repository or test bundle. No network access is used.
 @MainActor
 final class CachedEngineIntegrationTests: XCTestCase {
+  func testShakeItHard18LifecycleAndRestart() throws {
+    try checkChart(engineFolder: "sekai", chart: "shake-it.gz")
+  }
+
+  func testShakeItHard18WithRepeatedContacts() throws {
+    try checkChart(engineFolder: "sekai", chart: "shake-it.gz",
+      repeatedContacts: true)
+  }
   func testEleventhLifecycleAndRestart() throws {
     try checkChart(engineFolder: "sekai", chart: "eleventh.gz")
   }
@@ -38,7 +47,8 @@ final class CachedEngineIntegrationTests: XCTestCase {
     }
   }
 
-  private func checkChart(engineFolder: String, chart: String) throws {
+  private func checkChart(engineFolder: String, chart: String,
+    repeatedContacts: Bool = false) throws {
     let cache = try XCTUnwrap(FileManager.default.urls(
       for: .cachesDirectory, in: .userDomainMask).first)
       .appendingPathComponent("OpenRhythmIntegrationFixtures")
@@ -75,14 +85,54 @@ final class CachedEngineIntegrationTests: XCTestCase {
     var opening = [(index: Int, snapshot: Frame)]()
     var firstResolutionFrame: Int?
     var durations = [Double]()
+    var runtimeDurations = [Double](), spriteDurations = [Double]()
+    var peaks = [String: (weight: Double, time: Double,
+      draws: Int, segments: Int, particles: Int, sprites: [EngineRenderSprite])]()
     var lastTime = startTime
+    var successfulInputs = 0
+    var successfulTypes = [String: Int]()
+    // A deterministic load case, not an autoplay implementation or a captured
+    // physical play. Eight contacts exercise touch callbacks, holds and hit
+    // effects; every contact ends before its next ID is introduced.
+    func contacts(_ frame: Int, _ time: Double) -> [EngineTouch] {
+      guard repeatedContacts else { return [] }
+      let phase = frame % 12
+      return (0..<8).map { lane in
+        let point = EnginePoint(x: -1.05 + Double(lane) * 0.3, y: -0.75)
+        return EngineTouch(id: (frame / 12) * 8 + lane + 1,
+          started: phase == 0, ended: phase == 11, time: time,
+          startTime: time - Double(phase) / 60,
+          position: point, startPosition: point, delta: EnginePoint(x: 0, y: 0))
+      }
+    }
     for frame in 0..<18000 {
       lastTime = startTime + Double(frame) / 60
+      let touches = contacts(frame, lastTime)
       let started = ProcessInfo.processInfo.systemUptime
-      try runtime.update(at: lastTime)
-      _ = EngineRenderer.sprites(host: runtime.host, assets: assets)
-      durations.append(ProcessInfo.processInfo.systemUptime - started)
+      try runtime.update(at: lastTime, touches: touches)
+      let updated = ProcessInfo.processInfo.systemUptime
+      let sprites = EngineRenderer.sprites(host: runtime.host, assets: assets)
+      let rendered = ProcessInfo.processInfo.systemUptime
+      durations.append(rendered - started)
+      runtimeDurations.append(updated - started)
+      spriteDurations.append(rendered - updated)
+      let segments = runtime.host.draws.reduce(0) { $0 + ($1.curve?.segments ?? 0) }
+      for (name, weight) in [("runtime", updated - started),
+        ("sprites", rendered - updated), ("draws", Double(runtime.host.draws.count)),
+        ("curves", Double(segments)), ("particles", Double(runtime.host.particles.count))] {
+        if weight > peaks[name]?.weight ?? -1 {
+          peaks[name] = (weight, lastTime, runtime.host.draws.count, segments,
+            runtime.host.particles.count, sprites)
+        }
+      }
       for input in runtime.judgments {
+        if input.grade > 0 {
+          successfulInputs += 1
+          if level.entities.indices.contains(input.entityIndex) {
+            successfulTypes[level.entities[input.entityIndex].archetype,
+              default: 0] += 1
+          }
+        }
         XCTAssertTrue(seen.insert(input.entityIndex).inserted,
           "Duplicate input resolution in \(chart): \(input.entityIndex)")
       }
@@ -98,10 +148,21 @@ final class CachedEngineIntegrationTests: XCTestCase {
     XCTAssertEqual(seen.count, runtime.inputCount, chart)
     XCTAssertEqual(runtime.resolvedInputCount, runtime.inputCount, chart)
     XCTAssertNotNil(firstResolutionFrame)
+    if repeatedContacts {
+      XCTAssertGreaterThan(successfulInputs, 0)
+      XCTAssertGreaterThan(peaks["particles"]?.particles ?? 0, 0)
+      XCTAssertTrue(level.entities.contains { entity in
+        entity.data.contains { $0.name == "connectorEase" && ($0.value ?? 0) > 1 }
+      }, "The stress fixture must retain its non-linear hold connectors")
+      for type in ["NormalHeadTapNote", "NormalTickNote", "NormalTailReleaseNote"] {
+        XCTAssertGreaterThan(successfulTypes[type, default: 0], 0, type)
+      }
+    }
     runtime.restart()
     var sample = 0
     for frame in 0...opening.last!.index {
-      try runtime.update(at: startTime + Double(frame) / 60)
+      let time = startTime + Double(frame) / 60
+      try runtime.update(at: time, touches: contacts(frame, time))
       let actual = Frame(runtime)
       guard frame == opening[sample].index else { continue }
       let expected = opening[sample].snapshot
@@ -115,11 +176,62 @@ final class CachedEngineIntegrationTests: XCTestCase {
     let sorted = durations.sorted()
     let mean = durations.reduce(0, +) / Double(durations.count)
     let p95 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+    let p99 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.99))]
     print("CACHED CHART \(chart): \(seen.count) inputs, last \(lastTime)s, "
       + "\(durations.count) frames, runtime+sprite CPU mean \(mean * 1000)ms, "
-      + "p95 \(p95 * 1000)ms; restart matched \(opening.count) sampled frames "
+      + "p95 \(p95 * 1000)ms, p99 \(p99 * 1000)ms; "
+      + "restart matched \(opening.count) sampled frames "
       + "through frame \(opening.last!.index). "
-      + "No live touches, music playback, or GPU submission.")
+      + "\(successfulInputs) successful inputs; repeated contacts: \(repeatedContacts). "
+      + "Lifecycle loop excludes physical touches, music and GPU submission.")
+    if repeatedContacts { print("SUCCESSFUL INPUT TYPES: \(successfulTypes)") }
+    for (name, values) in [("runtime", runtimeDurations), ("sprites", spriteDurations)] {
+      let sorted = values.sorted()
+      print("CPU PHASE \(chart) \(name): mean "
+        + "\(values.reduce(0, +) * 1000 / Double(values.count)) ms, "
+        + "p95 \(sorted[Int(Double(sorted.count) * 0.95)] * 1000) ms")
+    }
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      XCTFail("Metal unavailable for cached frame profiling")
+      return
+    }
+    let renderer = try EngineMetalRenderer(device: device)
+    try renderer.prepare(assets)
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm, width: 1800, height: 1000, mipmapped: false)
+    descriptor.usage = [.renderTarget]
+    let target = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
+    let size = CGSize(width: 1800, height: 1000)
+    for name in peaks.keys.sorted() {
+      let peak = peaks[name]!
+      var encodeTimes = [Double](), gpuTimes = [Double]()
+      for iteration in 0..<12 {
+        let command = try XCTUnwrap(renderer.queue.makeCommandBuffer())
+        let start = ProcessInfo.processInfo.systemUptime
+        try renderer.encode(peak.sprites, size: size, target: target,
+          commandBuffer: command)
+        let encoded = ProcessInfo.processInfo.systemUptime
+        command.commit()
+        command.waitUntilCompleted()
+        XCTAssertNil(command.error)
+        if iteration >= 2 {
+          encodeTimes.append(encoded - start)
+          if command.gpuEndTime > command.gpuStartTime {
+            gpuTimes.append(command.gpuEndTime - command.gpuStartTime)
+          }
+        }
+      }
+      let vertices = peak.sprites.reduce(0) {
+        $0 + EngineMetalRenderer.vertices(for: $1, size: size).count
+      }
+      let gpu = gpuTimes.isEmpty ? "unavailable"
+        : String(gpuTimes.reduce(0, +) * 1000 / Double(gpuTimes.count))
+      print("PEAK FRAME \(chart) \(name) at \(peak.time)s: "
+        + "\(peak.draws) draws, \(peak.segments) curve segments, "
+        + "\(peak.particles) effects, \(peak.sprites.count) sprites, \(vertices) vertices; "
+        + "encode mean \(encodeTimes.reduce(0, +) * 1000 / Double(encodeTimes.count)) ms, "
+        + "GPU mean \(gpu) ms. Replayed offline frame, not live FPS.")
+    }
   }
 }
 

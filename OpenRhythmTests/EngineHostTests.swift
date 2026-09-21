@@ -430,9 +430,14 @@ final class EngineHostTests: XCTestCase {
           }
           XCTAssertEqual(outputs[0].count, effectCount * 32)
           XCTAssertEqual(outputs[0].count, outputs[1].count)
+          let expectedMatrix = (0..<16).map {
+            host.memory.value(block: 1004, index: $0)
+          }
           for (original, cached) in zip(outputs[0], outputs[1]) {
             XCTAssertEqual(original.points, cached.points)
             XCTAssertEqual(original.matrix, cached.matrix)
+            XCTAssertEqual(cached.matrix, expectedMatrix,
+              "Every particle must use this frame's current transform")
             XCTAssertEqual(original.alpha, cached.alpha)
             XCTAssertTrue(original.image === cached.image)
             XCTAssertEqual(original.interpolation, cached.interpolation)
