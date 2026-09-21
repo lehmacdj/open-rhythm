@@ -113,7 +113,7 @@ per-note timing charts.
   and 8% at 2,048 sprites with identical outputs. Neither establishes phone
   performance under real successful hits.
 
-### Device verification attempt — September 20
+### Device verification — September 20
 
 The user authorized installing the development build on thyme5 without deleting
 app data. Apple's device query reports OpenRhythm 0.1.0 build 13, but that is
@@ -127,10 +127,27 @@ asked to open the app from an unlocked Home Screen. After the user's correction,
 an explicit `devicectl device install app` succeeded, and a fresh device query
 confirmed build 1 at the new installation path. No uninstall/data deletion was
 performed. The subsequent direct launch still failed with SpringBoard's Locked
-error (CoreDevice 10002 / FBSOpenApplicationErrorDomain 7). Installation is now
-verified; launch and gameplay are not. Xcode's interaction
-session tool listed only simulators, so physical UI automation is also not yet
-available. This attempt does not count as physical gameplay verification.
+error (CoreDevice 10002 / FBSOpenApplicationErrorDomain 7).
+
+Subsequently, launch and XCTest execution succeeded on the actual iPhone 16 Pro
+(thyme5, iOS 27.0). Seven selected particle, Metal framebuffer and synthetic
+touch tests passed. The full physical suite then passed 189 of 191 tests and
+crashed in two interpreter depth-limit tests. Both crash reports explicitly
+reported `Thread stack size exceeded`: the large recursive dispatcher exhausted
+the phone's approximately 1 MiB main stack before its 256-node depth guard.
+
+The dispatcher is now divided into smaller non-inlined operation families;
+literal-address handling has its own frame and argument evaluation avoids map
+closure frames. Evaluation order, side effects and the 256-node limit remain
+unchanged. Independent review found no semantic changes and prompted broader
+stress cases. All 193 simulator tests pass, including deep valid trees and
+cycles across 20 execution paths in both optimization modes, tested on the main
+actor and a dedicated 1 MiB thread. The device test build also succeeds.
+Physical rerun of this fix is still pending: thyme5 locked again before launch.
+
+Xcode's interaction session tool listed only simulators. Physical test execution
+and framebuffer checks are verified, but real-finger interaction, audible sync
+and full-chart device gameplay are not.
 
 ## Still unfinished
 

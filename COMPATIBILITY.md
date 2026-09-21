@@ -139,6 +139,16 @@ operation/depth budgets. Four synthetic tests compare the optimized and ordinary
 paths, including malformed/dynamic addresses, nested writes, ROM, temporary
 memory and partial side effects when budgets expire.
 
+Physical testing exposed a separate native-stack failure: the former large
+recursive dispatch frame overflowed thyme5's 1 MiB main stack before reaching
+the interpreter's 256-node limit. Operation-family dispatch and literal-address
+evaluation now use separate small frames; argument evaluation uses an explicit
+left-to-right loop. Deep trees and cycles cover 20 paths with and without
+literal optimization, on the main actor and a dedicated 1 MiB thread. All 193
+simulator tests pass and the device build succeeds; the post-fix physical run
+is pending an unlocked phone. This is not the separate Sonolus stack-function
+ABI gap listed below, nor proof of unbounded engine compatibility.
+
 Paired cached 1,800-frame no-touch runs compared every frame's judgments, draw
 commands and audio/loop commands exactly. In the Debug iPhone 17 Pro simulator,
 Eleventh averaged 16.54 ms unoptimized versus 11.71 ms optimized (p95 24.44 vs

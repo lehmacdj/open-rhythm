@@ -2,7 +2,80 @@ import XCTest
 import UIKit
 @testable import OpenRhythm
 
+private struct DepthFixtureHost: EngineRuntimeHost {
+  func call(function: String, arguments: [Double]) throws -> Double {
+    arguments.first ?? 0
+  }
+}
+
 final class RuntimeDecodingTests: XCTestCase {
+  @MainActor
+  func testDeepDispatchFamiliesRespectDepthLimitWithoutNativeStackOverflow() {
+    Self.checkDeepDispatchFamilies()
+  }
+
+  func testDeepDispatchFamiliesOnOneMiBStack() {
+    // Simulator main threads have a larger stack than iPhones. Keep a bounded
+    // stack regression there too, so simulator-only validation catches this.
+    let finished = expectation(description: "Bounded-stack evaluation")
+    let thread = Thread {
+      Self.checkDeepDispatchFamilies()
+      finished.fulfill()
+    }
+    thread.stackSize = 1024 * 1024
+    thread.start()
+    wait(for: [finished], timeout: 30)
+  }
+
+  private static func checkDeepDispatchFamilies() {
+    // Exercise every dispatch family, not only the unary cases that first
+    // crashed on the phone's 1 MiB main-thread stack.
+    let functions = ["Abs", "Equal", "Add", "Divide", "EaseInQuad", "Random",
+      "Copy", "GetShifted", "GetPointed", "SetShifted", "SetAdd",
+      "SetMod", "SetModShifted", "Execute", "Block", "DoWhile",
+      "If", "Switch", "SwitchInteger", "FixtureHost"]
+    for function in functions {
+      for optimized in [false, true] {
+        var nodes = [EngineDataNode(value: 0), EngineDataNode(value: 1),
+          EngineDataNode(value: 2), EngineDataNode(value: 2000)]
+        func arguments(_ child: Int) -> [Int] {
+          switch function {
+          case "Equal", "Add", "Divide", "Random": return [child, 2]
+          case "Copy": return [3, 0, 3, 0, child]
+          case "GetShifted": return [3, 0, child, 0]
+          case "GetPointed": return [child, 0, 0]
+          case "SetShifted", "SetModShifted": return [3, 0, 0, 0, child]
+          case "SetAdd", "SetMod": return [3, 0, child]
+          case "DoWhile": return [child, 0]
+          case "If": return [1, child, 0]
+          case "Switch": return [0, 0, child]
+          case "SwitchInteger": return [0, child]
+          default: return [child]
+          }
+        }
+        var root = 1
+        for _ in 0..<255 {
+          nodes.append(EngineDataNode(function: function,
+            arguments: arguments(root)))
+          root = nodes.count - 1
+        }
+        let cycle = nodes.count
+        nodes.append(EngineDataNode(function: function,
+          arguments: arguments(cycle)))
+        let interpreter = EngineInterpreter(nodes: nodes,
+          host: DepthFixtureHost(), optimizeLiteralAddresses: optimized)
+        XCTAssertNoThrow(try interpreter.execute(nodeAt: root), function)
+        XCTAssertThrowsError(try interpreter.execute(nodeAt: cycle), function) {
+          guard case EngineInterpreterError.operationLimitExceeded = $0 else {
+            return XCTFail("Unexpected error for \(function): \($0)")
+          }
+        }
+        XCTAssertEqual(try interpreter.execute(nodeAt: 1), 1,
+          "An exhausted evaluation must unwind its depth state")
+      }
+    }
+  }
+
   func testLiteralAddressesPreserveReadModifyWriteOrderAndLiveValues() throws {
     let cases: [(String, Double, Double)] = [
       ("Get", 4, 4), ("Set", 9, 9), ("SetAdd", 13, 13),
