@@ -7,28 +7,28 @@ import Metal
 /// cache, never in the repository or test bundle. No network access is used.
 @MainActor
 final class CachedEngineIntegrationTests: XCTestCase {
-  func testShakeItHard18LifecycleAndRestart() throws {
-    try checkChart(engineFolder: "sekai", chart: "shake-it.gz")
+  func testShakeItHard18LifecycleAndRestart() async throws {
+    try await checkChart(engineFolder: "sekai", chart: "shake-it.gz")
   }
 
-  func testShakeItHard18WithRepeatedContacts() throws {
-    try checkChart(engineFolder: "sekai", chart: "shake-it.gz",
+  func testShakeItHard18WithRepeatedContacts() async throws {
+    try await checkChart(engineFolder: "sekai", chart: "shake-it.gz",
       repeatedContacts: true)
   }
-  func testEleventhLifecycleAndRestart() throws {
-    try checkChart(engineFolder: "sekai", chart: "eleventh.gz")
+  func testEleventhLifecycleAndRestart() async throws {
+    try await checkChart(engineFolder: "sekai", chart: "eleventh.gz")
   }
 
-  func testHikariLifecycleAndRestart() throws {
-    try checkChart(engineFolder: "sekai", chart: "hikari.gz")
+  func testHikariLifecycleAndRestart() async throws {
+    try await checkChart(engineFolder: "sekai", chart: "hikari.gz")
   }
 
-  func testSIFCustomLifecycleAndRestart() throws {
-    try checkChart(engineFolder: "sif", chart: "sif/level.gz")
+  func testSIFCustomLifecycleAndRestart() async throws {
+    try await checkChart(engineFolder: "sif", chart: "sif/level.gz")
   }
 
-  func testNanaonLifecycleAndRestart() throws {
-    try checkChart(engineFolder: "nanaon", chart: "nanaon/level.gz")
+  func testNanaonLifecycleAndRestart() async throws {
+    try await checkChart(engineFolder: "nanaon", chart: "nanaon/level.gz")
   }
 
   private struct Frame {
@@ -48,7 +48,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
   }
 
   private func checkChart(engineFolder: String, chart: String,
-    repeatedContacts: Bool = false) throws {
+    repeatedContacts: Bool = false) async throws {
     let cache = try XCTUnwrap(FileManager.default.urls(
       for: .cachesDirectory, in: .userDomainMask).first)
       .appendingPathComponent("OpenRhythmIntegrationFixtures")
@@ -81,6 +81,25 @@ final class CachedEngineIntegrationTests: XCTestCase {
     UIApplication.shared.isIdleTimerDisabled = true
     defer { UIApplication.shared.isIdleTimerDisabled = wasIdleDisabled }
     let startTime = BGMClockMapping(offset: level.bgmOffset).initialChartTime
+    // This offline simulation otherwise consumes a core continuously, unlike
+    // display-driven gameplay, and iOS can terminate it for CPU resource use.
+    // Yield between bounded work bursts, outside every measured frame. Never
+    // report these intentionally throttled runs as real-time frame pacing.
+    #if !targetEnvironment(simulator)
+    var burstStarted = ProcessInfo.processInfo.systemUptime
+    #endif
+    func yieldToDevice() async throws {
+      #if !targetEnvironment(simulator)
+      if ProcessInfo.processInfo.systemUptime - burstStarted >= 0.1 {
+        try await Task.sleep(nanoseconds: 100_000_000)
+        burstStarted = ProcessInfo.processInfo.systemUptime
+      }
+      #endif
+    }
+    #if !targetEnvironment(simulator)
+    print("Device lifecycle simulation is throttled between work bursts; "
+      + "reported CPU samples exclude those pauses and are not live FPS.")
+    #endif
     var seen = Set<Int>()
     var opening = [(index: Int, snapshot: Frame)]()
     var firstResolutionFrame: Int?
@@ -143,6 +162,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
       if frame == 0 || firstResolutionFrame.map({ frame < $0 + 120 }) == true {
         opening.append((frame, snapshot))
       }
+      try await yieldToDevice()
       if runtime.resolvedInputCount == runtime.inputCount { break }
     }
     XCTAssertEqual(seen.count, runtime.inputCount, chart)
@@ -164,6 +184,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
       let time = startTime + Double(frame) / 60
       try runtime.update(at: time, touches: contacts(frame, time))
       let actual = Frame(runtime)
+      try await yieldToDevice()
       guard frame == opening[sample].index else { continue }
       let expected = opening[sample].snapshot
       XCTAssertEqual(actual.draws, expected.draws, chart)

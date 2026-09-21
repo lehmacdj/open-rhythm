@@ -164,6 +164,32 @@ ROM and presentation assets were reused. No catalog crawl or music download
 was needed. Assets remain in ignored local caches. Physical verification is
 still open: thyme5 reported `passcodeRequired: true` during this follow-up.
 
+### Resumed device check and push — September 21, afternoon
+
+`main` was pushed to the verified configured `origin` at `75a0d485` after the
+208-test simulator suite and another successful Xcode build. The phone then
+became available. The first new full shake-it contact test was killed for CPU
+resource use (48 CPU-seconds over 49 seconds), not a memory-access exception.
+The tight offline loop was running continuously rather than at display cadence.
+
+The test harness now yields between bounded work bursts on physical devices,
+outside all per-frame timing samples. No production timing or runtime behavior
+was changed. Independent review found no correctness issue. The rerun passed
+on thyme5: 544 inputs resolved, 489 successful judgments, hold heads/ticks/
+releases and 121 restart snapshots verified. It also replayed peak frames
+through the phone's offscreen Metal renderer. Xcode completed successfully after
+the tool's five-minute response timeout; the completed result bundle confirms
+the device ID and zero failures. A simulator SIF lifecycle/restart test also
+passed after the async harness change.
+
+The throttled Debug phone run measured runtime mean/p95 17.955/36.792 ms and
+sprite mean/p95 4.370/8.653 ms. The peak-effects frame (55 effects, 304 sprites)
+encoded in 1.446 ms and executed on the GPU in 0.854 ms on average. Pauses alter
+thermal conditions, and Debug timings are not Release timings: these numbers
+identify further interpreter and particle work, not live FPS or proof of a
+stable physical play. Release profiling, real touches, audio/display latency,
+and the original curved-hold slowdown remain open.
+
 ### Device verification — September 20
 
 The user authorized installing the development build on thyme5 without deleting

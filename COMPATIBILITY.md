@@ -209,14 +209,15 @@ hosts. An independent read-only review found no actionable correctness issues.
 `CachedEngineIntegrationTests` uses an opt-in
 `Library/Caches/OpenRhythmIntegrationFixtures` directory in the test host's app
 container. It never fetches resources. Missing fixture directories skip these
-four integration tests; incomplete installed fixtures fail rather than skip.
+cached integration tests; incomplete installed fixtures fail rather than skip.
 Only test code belongs in the repository, not downloaded assets.
 
 The fixture layout has `sekai`, `sif`, and `nanaon` engine directories, each
 containing `engine.gz`, `configuration`, `skinData`, `skinTexture`,
 `particleData`, `particleTexture`, `effectData`, and `effectAudio`. Include
 `rom.bin` when supplied by the engine. Charts are `eleventh.gz`, `hikari.gz`,
-`sif/level.gz`, and `nanaon/level.gz`, relative to the fixture root. Copy an
+`shake-it.gz`, `sif/level.gz`, and `nanaon/level.gz`, relative to the fixture
+root. Copy an
 already-cached fixture directory with `devicectl device copy to`, using the
 `appDataContainer` domain and the installed app's bundle identifier; do not
 replace the whole app container or delete user downloads.
@@ -224,8 +225,21 @@ replace the whole app container or delete user downloads.
 The tests simulate from media time zero at 60 Hz through every input's
 resolution, checking exactly-once judgments and generating CPU sprites. Restart
 replays from the original initial chart time and compares frame zero plus a
-bounded window beginning with the first judgment. They do not play music,
-submit GPU frames, synthesize live touches, or exercise the results-screen UI.
+bounded window beginning with the first judgment. The harness now also replays
+peak frames through offscreen Metal, separately from the timed lifecycle loop.
+An extra shake-it Hard 18 run supplies deterministic repeated contacts and
+checks successful hold heads, ticks and releases. Neither run plays music,
+synthesizes physical touches, or exercises the results-screen UI.
+
+On devices, the offline lifecycle and restart loops suspend for 100 ms between
+roughly 100 ms work bursts. A continuous shake-it contact simulation was killed
+by iOS for consuming 48 CPU-seconds in 49 seconds (80% over 60 seconds limit).
+Pauses are outside the per-frame timing samples and do not change chart time or
+skip simulated frames. They avoid artificially pegging a core for the entire
+chart, but also change thermal/frequency conditions: these remain throttled
+workload measurements, not live frame pacing or proof that production gameplay
+avoids CPU-resource pressure. Independent review verified deterministic
+sequencing, restart state and cancellation cleanup.
 
 On September 20 at 23:55, the full suite passed on thyme5 (iPhone 16 Pro,
 iOS 27.0): 197 passed, zero failed or skipped. Each cached chart resolved every
