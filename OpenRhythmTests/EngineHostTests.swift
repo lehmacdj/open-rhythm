@@ -5,6 +5,102 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testActiveCallbackOrderSurvivesSpawnDespawnAndRestart() throws {
+    let b = RuntimeNodeBuilder()
+    func get(_ block: Double, _ index: Double) -> Int {
+      b.call("Get", [b.value(block), b.value(index)])
+    }
+    func set(_ block: Double, _ index: Double, _ value: Int) -> Int {
+      b.call("Set", [b.value(block), b.value(index), value])
+    }
+    let marker = get(4000, 0)
+    func log(_ index: Double) -> Int {
+      set(2000, index, b.call("Add", [
+        b.call("Multiply", [get(2000, index), b.value(10)]), marker]))
+    }
+    let now = get(1001, 0)
+    let prepare = b.call("Execute", [set(4000, 0, get(4001, 0)),
+      set(4000, 1, get(4001, 2))])
+    let expire = set(4004, 0, b.call("GreaterOr", [now, get(4000, 1)]))
+    let sequential = b.call("Execute", [log(0), expire])
+    let spawnAt = get(4001, 1)
+    func archetype(_ name: String, sequentialOrder: Double, touchOrder: Double)
+      -> [String: Any] {
+      ["name": name, "hasInput": false,
+        "imports": [["name": "marker", "index": 0],
+          ["name": "start", "index": 1], ["name": "end", "index": 2]],
+        "exports": [], "preprocess": ["index": prepare],
+        "spawnOrder": ["index": spawnAt],
+        "shouldSpawn": ["index": b.call("GreaterOr", [now, spawnAt])],
+        "updateSequential": ["index": sequential, "order": sequentialOrder],
+        "touch": ["index": log(1), "order": touchOrder]]
+    }
+    let dynamic = b.call("Spawn", [b.value(0), b.value(9), b.value(3)])
+    let engine = try b.engine(archetypes: [
+      archetype("A", sequentialOrder: 0.5, touchOrder: -0.5),
+      archetype("B", sequentialOrder: -0.5, touchOrder: 0.5),
+      ["name": "Spawner", "hasInput": false, "imports": [], "exports": [],
+        "initialize": ["index": dynamic]],
+      ["name": "NoCallbacks", "hasInput": false, "imports": [], "exports": []]])
+    let level = try JSONDecoder().decode(LevelData.self, from: Data(#"""
+      {"bgmOffset":0,"entities":[
+        {"archetype":"A","data":[{"name":"marker","value":1},
+          {"name":"start","value":0},{"name":"end","value":2}]},
+        {"archetype":"B","data":[{"name":"marker","value":2},
+          {"name":"start","value":0},{"name":"end","value":10}]},
+        {"archetype":"A","data":[{"name":"marker","value":3},
+          {"name":"start","value":1},{"name":"end","value":10}]},
+        {"archetype":"Spawner","data":[]},
+        {"archetype":"NoCallbacks","data":[]}]}
+      """#.utf8))
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: [], aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    let point = EnginePoint(x: 0, y: 0)
+    for _ in 0..<2 {
+      for (frame, expected) in [(21, 12), (2139, 1392), (2139, 1392),
+        (239, 392), (23, 32)].enumerated() {
+        runtime.memory.set(block: 2000, index: 0, value: 0)
+        runtime.memory.set(block: 2000, index: 1, value: 0)
+        try runtime.update(at: Double(frame), touches: [EngineTouch(id: 1,
+          started: frame == 0, ended: false, time: Double(frame), startTime: 0,
+          position: point, startPosition: point, delta: point)])
+        XCTAssertEqual(runtime.memory.value(block: 2000, index: 0),
+          Double(expected.0), "Sequential order at frame \(frame)")
+        XCTAssertEqual(runtime.memory.value(block: 2000, index: 1),
+          Double(expected.1), "Touch order at frame \(frame)")
+      }
+      runtime.restart()
+    }
+  }
+
+  func testStableActiveCallbackWorkload() throws {
+    let b = RuntimeNodeBuilder()
+    let noOp = b.value(0)
+    let archetypes: [[String: Any]] = (0..<32).map { index in
+      ["name": "A\(index)", "hasInput": false, "imports": [], "exports": [],
+        "updateSequential": ["index": noOp, "order": Double(31 - index) / 2],
+        "touch": ["index": noOp, "order": Double(index) / 2]]
+    }
+    let engine = try b.engine(archetypes: archetypes)
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: (0..<512).map {
+        LevelEntity(archetype: "A\($0 % 32)", name: nil, data: [])
+      }), options: [], aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    try runtime.update(at: 0)
+    let point = EnginePoint(x: 0, y: 0)
+    let start = ProcessInfo.processInfo.systemUptime
+    for frame in 1...300 {
+      try runtime.update(at: Double(frame) / 60, touches: [EngineTouch(id: 1,
+        started: false, ended: false, time: Double(frame) / 60, startTime: 0,
+        position: point, startPosition: point, delta: point)])
+    }
+    let duration = ProcessInfo.processInfo.systemUptime - start
+    print("Stable 512-entity callback workload: \(duration * 1000 / 300) ms/frame")
+    XCTAssertEqual(runtime.memory.value(block: 4103, index: 511 * 3 + 2), 1)
+  }
+
   @MainActor
   func testGameplayIntroStopsForVisualEffectBeforeMusic() async throws {
     try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "OpeningEffect")

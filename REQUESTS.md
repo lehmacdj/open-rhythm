@@ -104,14 +104,24 @@ per-note timing charts.
   probes by about 29% for Eleventh and 25% for 22/7; all 1,800 frames matched in
   judgments, draws and audio commands. This is not a Release benchmark. Phone
   frame-time tails under dense successful hits remain unverified. Apple has
-  energy reports for 0.1.0 builds 4–8; build selection was requested. TestFlight
-  hang reports are not offered by that Apple API.
+  version entries for 0.1.0 builds 4–8. A follow-up query of the sole listed
+  version failed to download processor-usage logs and suggested connecting the
+  app in Xcode Organizer; available entries do not prove usable report data.
+  TestFlight hang reports are not offered by that Apple API.
   The spawn queue now advances without repeatedly shifting every future entity;
   blocked-head, exhaustion, restart and large-queue regressions cover the change.
   Particle random expressions are now cached with bounded frame retention;
   paired synthetic sprite-generation probes improved about 17% at 256 sprites
   and 8% at 2,048 sprites with identical outputs. Neither establishes phone
   performance under real successful hits.
+  Active sequential/touch callback lists now retain their ordering across
+  stable frames instead of sorting all entities every frame. A 512-entity
+  synthetic simulator workload improved from 1.066 to 0.506 ms/frame, with
+  explicit lifecycle/order regressions and independent review. Full cached
+  Hikari input resolution and restart comparison passed; its 21.068 ms p95
+  runtime-plus-sprite CPU time still leaves gameplay performance work open.
+  The final simulator suite passed all 206 tests, including all four cached
+  chart lifecycle/restart fixtures, with zero failures or skips.
 
 ### Device verification — September 20
 

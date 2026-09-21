@@ -34,6 +34,12 @@ integration probes, including successful inputs and restart/buffering paths.
   streams and queued commands return to their preparation snapshot. Effective
   engine-option, playback-speed or viewport/safe-area changes rebuild it;
   host-only display settings and equivalent option values do not reroll it.
+- Sequential and touch callback lists retain immutable callback ordering,
+  with entity key as a stable tie-breaker. Only entities implementing the
+  callback enter its list. Lists sort when participating entities spawn and
+  remove retired entities after the full termination phase; restart clears both.
+  A synthetic trace covers independent fractional orders, tied level/dynamic
+  entities, empty callbacks, expiration-frame touch delivery and repeated runs.
 - Reachable unsupported calls in lazy successful-hit branches and dynamically
   spawnable archetypes, not just functions encountered by a no-touch run.
 - Separate event and frame timestamps, paused/running/rate-changing clocks,
@@ -124,6 +130,28 @@ integration probes, including successful inputs and restart/buffering paths.
   cannot affect a restarted session. Physical waveform/latency checks remain open.
 
 ## Interpreter performance validation
+
+### Active callback dispatch — September 21, 2026
+
+The runtime previously sorted all active entities separately for sequential
+updates and touch dispatch every frame. It now retains sorted participating
+lists across stable frames. Callback ordering follows the [sequential update
+contract](https://wiki.sonolus.com/engine-specs/play-lifecycle/sequential-update-system).
+
+On the same iPhone 17 Pro / iOS 26.5 simulator, a synthetic stable 512-entity,
+300-frame workload measured 1.066 ms/frame before and 0.506 ms/frame after the
+change. This isolates sorting overhead; it is not a chart-wide or physical FPS
+claim. Its explicit ordering regression passes both before and after the change.
+The cached Hikari Hard 18 fixture subsequently resolved all 563 inputs exactly
+once and matched 121 restart frames through frame 667. Runtime plus CPU-sprite
+time averaged 8.951 ms, with p95 21.068 ms, on that simulator. This remains above
+a 60 Hz frame budget in the tail and excludes actual GPU/audio/touch work;
+gameplay performance is not signed off.
+
+The complete simulator suite then passed 206 tests with zero failures or
+skips, including all four installed offline chart lifecycle/restart fixtures.
+Independent read-only review found no ordering or retirement regressions.
+Result bundle: `Test-OpenRhythm-2026.09.21_00-27-13--0400.xcresult`.
 
 Particle random expressions now reuse seed-derived values across frames. The
 cache retains at most 512 seeds per frame in two generations, never animation

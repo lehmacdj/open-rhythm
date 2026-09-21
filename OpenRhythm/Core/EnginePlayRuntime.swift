@@ -256,6 +256,11 @@ final class EnginePlayRuntime {
   // shifts all future entities and makes a full chart quadratic in length.
   private var waitingIndex = 0
   private var active = [Entity]()
+  // Callback orders are immutable. Keep only participating entities, sorted
+  // when membership changes instead of re-sorting the whole active set every
+  // frame (and once again for every frame with touches).
+  private var sequentialActive = [Entity]()
+  private var touchActive = [Entity]()
   private var nextKey: Int
   private var previousTime = 0.0
   private let entityLimit = 100_000
@@ -410,6 +415,8 @@ final class EnginePlayRuntime {
       self.life = life
       self.nextKey = nextKey
       self.active.removeAll(keepingCapacity: true)
+      self.sequentialActive.removeAll(keepingCapacity: true)
+      self.touchActive.removeAll(keepingCapacity: true)
       self.judgments.removeAll(keepingCapacity: true)
       self.resolvedInputCount = 0
       self.hasActivatedInput = false
@@ -476,6 +483,22 @@ final class EnginePlayRuntime {
       newlyActive.append(entity)
     }
     active.append(contentsOf: newlyActive)
+    if !newlyActive.isEmpty {
+      let sequential = newlyActive.filter {
+        engine.archetypes[$0.archetype].updateSequential != nil
+      }
+      let touching = newlyActive.filter {
+        engine.archetypes[$0.archetype].touch != nil
+      }
+      if !sequential.isEmpty {
+        sequentialActive.append(contentsOf: sequential)
+        sequentialActive = ordered(sequentialActive, by: \.updateSequential)
+      }
+      if !touching.isEmpty {
+        touchActive.append(contentsOf: touching)
+        touchActive = ordered(touchActive, by: \.touch)
+      }
+    }
     if newlyActive.contains(where: {
       $0.index != nil && engine.archetypes[$0.archetype].hasInput
     }) {
@@ -484,11 +507,11 @@ final class EnginePlayRuntime {
     for entity in newlyActive {
       _ = try execute(entity, callback: \.initialize)
     }
-    for entity in ordered(active, by: \.updateSequential) {
+    for entity in sequentialActive {
       _ = try execute(entity, callback: \.updateSequential)
     }
     if !touches.isEmpty {
-      for entity in ordered(active, by: \.touch) {
+      for entity in touchActive {
         _ = try execute(entity, callback: \.touch)
       }
     }
@@ -533,7 +556,11 @@ final class EnginePlayRuntime {
       despawned.insert(entity.key)
       memory.removeEntity(key: entity.key)
     }
-    active.removeAll { despawned.contains($0.key) }
+    if !despawned.isEmpty {
+      active.removeAll { despawned.contains($0.key) }
+      sequentialActive.removeAll { despawned.contains($0.key) }
+      touchActive.removeAll { despawned.contains($0.key) }
+    }
   }
 
   private func select(_ entity: Entity, parallelDrawing: Bool = false) {
