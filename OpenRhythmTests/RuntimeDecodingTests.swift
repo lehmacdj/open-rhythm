@@ -1443,6 +1443,7 @@ final class RuntimeDecodingTests: XCTestCase {
     let legacy = try JSONDecoder().decode(GameplayPreferences.self,
       from: Data("{}".utf8))
     XCTAssertEqual(legacy.inputOffsetMilliseconds, 0)
+    XCTAssertEqual(legacy.visualOffsetMilliseconds, 0)
     var settings = GameplayPreferences(inputOffsetMilliseconds: 300)
     XCTAssertEqual(settings.inputOffsetMilliseconds, 250)
     settings.inputOffsetMilliseconds = -.infinity
@@ -1452,6 +1453,18 @@ final class RuntimeDecodingTests: XCTestCase {
     let decoded = try JSONDecoder().decode(GameplayPreferences.self,
       from: Data(#"{"inputOffsetMilliseconds":900}"#.utf8))
     XCTAssertEqual(decoded.inputOffsetMilliseconds, 250)
+    var visual = GameplayPreferences(visualOffsetMilliseconds: -500)
+    XCTAssertEqual(visual.visualOffsetSeconds, -0.25)
+    visual.visualOffsetMilliseconds = .nan
+    XCTAssertEqual(visual.visualOffsetMilliseconds, 0)
+    visual.visualOffsetMilliseconds = 500
+    XCTAssertEqual(visual.visualOffsetMilliseconds, 250)
+    let restored = try JSONDecoder().decode(GameplayPreferences.self,
+      from: Data(#"{"visualOffsetMilliseconds":-900}"#.utf8))
+    XCTAssertEqual(restored.visualOffsetMilliseconds, -250)
+    visual.visualOffsetMilliseconds = 0
+    XCTAssertEqual(try JSONDecoder().decode(GameplayPreferences.self,
+      from: JSONEncoder().encode(visual)).visualOffsetSeconds, 0)
   }
 
   @MainActor
@@ -1486,6 +1499,42 @@ final class RuntimeDecodingTests: XCTestCase {
     model.settings.inputOffsetMilliseconds = 0
     model.start()
     XCTAssertEqual(model.playInputOffset, 0)
+    XCTAssertTrue(model.modifiedOptions.isEmpty)
+  }
+
+  @MainActor
+  func testFallbackVisualAndInputCalibrationComposeWithoutDoubleAdjustment() throws {
+    let model = try gameplayModel()
+    let original = model.settings
+    defer { model.stop(); model.settings = original }
+    for visual in [-120.0, 120] {
+      for input in [-30.0, 30] {
+        model.settings = GameplayPreferences(inputOffsetMilliseconds: input,
+          visualOffsetMilliseconds: visual)
+        model.start()
+        let adjustment = (visual + input) / 1000
+        model.update(mediaTime: 0.95 + adjustment)
+        XCTAssertEqual(model.currentTime, 1 + input / 1000, accuracy: 1e-12)
+        model.press(lane: 0)
+        model.release(lane: 0)
+        model.update(mediaTime: 1.95 + adjustment)
+        model.slide(lane: 1)
+        model.release(lane: 1)
+        model.update(mediaTime: 3.95 + adjustment)
+        model.press(lane: 3)
+        model.update(mediaTime: 4.95 + adjustment)
+        model.release(lane: 3)
+        XCTAssertEqual(model.judgements[.perfect], 4)
+        XCTAssertTrue(model.noteTimings.compactMap(\.accuracy)
+          .allSatisfy { abs($0) < 1e-12 })
+        XCTAssertEqual(Set(model.modifiedOptions.map(\.name)),
+          ["Input Timing", "Visual Timing"])
+        model.stop()
+      }
+    }
+    model.settings = GameplayPreferences()
+    model.start()
+    XCTAssertEqual(model.playAudioOffset, 0)
     XCTAssertTrue(model.modifiedOptions.isEmpty)
   }
 

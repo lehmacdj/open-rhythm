@@ -5,6 +5,32 @@ import UIKit
 @testable import OpenRhythm
 
 final class PlaybackClockTests: XCTestCase {
+  func testVisualCalibrationMapsMusicAndInputOnceAtEverySpeed() {
+    for speed in [0.5, 1.0, 2.0] {
+      let neutral = BGMClockMapping(offset: 0.4, speed: speed)
+      for offset in [-0.25, 0, 0.25] {
+        let mapping = BGMClockMapping(offset: 0.4, speed: speed,
+          audioOffset: offset)
+        XCTAssertEqual(mapping.initialMediaTime, 0)
+        XCTAssertEqual(mapping.initialChartTime,
+          neutral.initialChartTime - offset, accuracy: 1e-12)
+        for mediaTime in [0.0, 0.4, 12.0] {
+          let time = mapping.chartTime(mediaTime: mediaTime)
+          XCTAssertEqual(time, neutral.chartTime(mediaTime: mediaTime) - offset,
+            accuracy: 1e-12)
+          XCTAssertEqual(mapping.mediaTime(chartTime: time), mediaTime,
+            accuracy: 1e-12)
+          XCTAssertEqual(mapping.inputChartTime(mediaTime: mediaTime,
+            minimumMediaTime: 0), time, accuracy: 1e-12)
+          // The host maps scheduled SFX into runtime time by subtracting the
+          // same offset: reaching it always corresponds to unmodified music.
+          XCTAssertEqual(mapping.mediaTime(chartTime: 2 - offset),
+            neutral.mediaTime(chartTime: 2), accuracy: 1e-12)
+        }
+      }
+    }
+  }
+
   @MainActor
   func testMetalDisplayLinkFollowsPlayfieldWindowLifetime() throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
@@ -60,8 +86,20 @@ final class PlaybackClockTests: XCTestCase {
   }
 
   @MainActor
+  func testLiveVisualCalibrationAndRestartsKeepPlayerAndInputAligned() async throws {
+    try await checkLiveClocks(nativePlayfield: true, calibrateVisuals: true)
+  }
+
+  @MainActor
+  func testLiveEngineAudioOverridePrecedesIntroSeekAndSurvivesRestart() async throws {
+    try await checkLiveClocks(nativePlayfield: false, calibrateVisuals: true,
+      engineAdjustsAudioOffset: true)
+  }
+
+  @MainActor
   private func checkLiveClocks(nativePlayfield: Bool,
-    softwareFallback: Bool = false) async throws {
+    softwareFallback: Bool = false, calibrateVisuals: Bool = false,
+    engineAdjustsAudioOffset: Bool = false) async throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("live-clock-\(UUID())")
     try FileManager.default.createDirectory(at: directory,
@@ -83,10 +121,20 @@ final class PlaybackClockTests: XCTestCase {
       let file = try AVAudioFile(forWriting: audio, settings: format.settings)
       try file.write(from: buffer)
     }
-    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+    let engineJSON = engineAdjustsAudioOffset ? #"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"buckets":[],
+       "archetypes":[{"name":"Offset","hasInput":false,
+         "imports":[],"exports":[],"preprocess":{"index":5}}],
+       "nodes":[{"value":1000},{"value":2},{"func":"Get","args":[0,1]},
+         {"value":0.02},{"func":"Add","args":[2,3]},
+         {"func":"Set","args":[0,1,4]}]}
+      """# : #"""
       {"skin":{"sprites":[]},"effect":{"clips":[]},
        "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
-      """#.utf8))
+      """#
+    let engine = try JSONDecoder().decode(EnginePlayData.self,
+      from: Data(engineJSON.utf8))
     let presentation = RuntimePresentation(resources: [
       "configuration": Data(#"""
         {"options":[{"name":"#SPEED","type":"slider","def":1,
@@ -99,7 +147,8 @@ final class PlaybackClockTests: XCTestCase {
       cover: resource, bgm: resource, data: resource)
     let model = GameplayModel(resultStore: ResultStore(rootURL: directory))
     model.prepare(bundle: RuntimeBundle(engine: engine,
-      level: LevelData(bgmOffset: 0.25, entities: []), bgmURL: audio,
+      level: LevelData(bgmOffset: 0.25, entities: engineAdjustsAudioOffset
+        ? [LevelEntity(archetype: "Offset", name: nil, data: [])] : []), bgmURL: audio,
       isOffline: true, presentation: presentation), level: level,
       server: ServerDescriptor(id: "live-clock", name: "Fixture",
         baseURL: URL(string: "https://example.com")!), title: "Live clock fixture")
@@ -133,12 +182,21 @@ final class PlaybackClockTests: XCTestCase {
     let idleDisabled = UIApplication.shared.isIdleTimerDisabled
     UIApplication.shared.isIdleTimerDisabled = true
     defer { UIApplication.shared.isIdleTimerDisabled = idleDisabled }
-    for speed in [0.5, 1.0, 2.0, 1.0] {
+    for (index, speed) in [0.5, 1.0, 2.0, 1.0].enumerated() {
+      let audioOffset = calibrateVisuals ? [0.125, -0.125, 0.25, -0.25][index] : 0
+      model.settings.visualOffsetMilliseconds = audioOffset * 1000
       model.settings.engineOptions["#SPEED"] = speed
       if model.phase == .ready { model.start() } else { model.restart() }
-      let initial = BGMClockMapping(offset: 0.25, speed: speed).initialChartTime
+      let initial = BGMClockMapping(offset: 0.25, speed: speed,
+        audioOffset: audioOffset).initialChartTime
       XCTAssertEqual(model.currentTime, initial, accuracy: 1e-9,
         "Verify the requested speed before both clock paths can agree at a wrong rate")
+      let effectiveOffset = audioOffset + (engineAdjustsAudioOffset ? 0.02 : 0)
+      if engineAdjustsAudioOffset {
+        model.engineFrame(size: size, touches: [])
+        XCTAssertEqual(model.currentTime, initial - 0.02, accuracy: 1e-9,
+          "Preprocess must change the initial clock before intro analysis or seeking")
+      }
       let deadline = CACurrentMediaTime() + 8
       while model.phase == .playing,
         model.isStartingPlayback || model.currentTime < initial + 0.1 {
@@ -152,6 +210,10 @@ final class PlaybackClockTests: XCTestCase {
       XCTAssertEqual(model.phase, .playing)
       XCTAssertEqual(model.skippedIntroDuration, 0, accuracy: 0.001)
       let runtime = try XCTUnwrap(model.engineRuntime)
+      XCTAssertEqual(try runtime.audioOffset, effectiveOffset)
+      XCTAssertEqual(model.playAudioOffset, effectiveOffset)
+      XCTAssertEqual(model.modifiedOptions.first { $0.name == "Visual Timing" }?.value,
+        effectiveOffset == 0 ? nil : String(format: "%+.0f ms", effectiveOffset * 1000))
       XCTAssertEqual(runtime.memory.value(block: 2002, index: 0), speed)
       XCTAssertEqual(runtime.host.timeline.bpm(at: 0), 60 * speed)
       var differences = [Double]()

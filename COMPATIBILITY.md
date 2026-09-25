@@ -299,6 +299,10 @@ execute; the successful rerun and final suite have separate result bundles.
 ## Remaining checks, including engines we have not sampled
 
 - Stack layout/control semantics and native rendering parity.
+- An independent audio-offset sign/unit reference: scheduled-audio docs require
+  automatic BGM compensation but do not state the convention. Current tests
+  establish the client's explicit wall-clock convention and internal timeline
+  consistency, not parity with an independently observed native reference.
 - Optional/missing resources, callback-specific memory access and defaults,
   and unknown enum values.
 - Runtime metadata lists a play-mode `skip` slot. The public Python framework
@@ -600,3 +604,52 @@ an injected GPU/encoding failure inside an in-flight frame. The unit is still
 local at this checkpoint; the user has since deferred physical verification
 until Sonolus API coverage is complete (see REQUESTS.md). Do not resume phone
 checks unless that gate is met or the user requests a specific exception.
+
+## Manual visual calibration and scheduled-audio offset contract
+
+Visual Timing defaults to zero and is saved per engine independently of Input
+Timing. The control accepts ±250 ms in 1 ms steps and has a reset button.
+Positive values delay visual/input timing relative to BGM; negative values
+advance it. Both settings are snapshotted per play. Changing either effective
+environment input invalidates the prepared-runtime cache; an unchanged restart
+restores the engine's preprocessed state. The effective visual value appears
+in result options, including engine preprocessing adjustments.
+
+The client's explicit mapping is:
+
+`runtimeTime = (mediaTime - levelBGMOffset) / playbackSpeed - audioOffset`
+
+The inverse preserves media zero and supplies intro/seek/EOF mapping. Offset
+seconds are wall-clock seconds, not divided again by playback speed. Hardware
+touch time uses the same mapping; the separate input offset is still subtracted
+once by the runtime. No latency measurement or histogram bias is automatically
+added. `RuntimeEnvironment[2]` receives the user's value before preprocessing;
+the model adopts the engine's final finite value before intro analysis/seeking.
+
+The public contracts for
+[PlayScheduled](https://wiki.sonolus.com/engine-specs/functions/play-scheduled),
+[PlayLoopedScheduled](https://wiki.sonolus.com/engine-specs/functions/play-looped-scheduled)
+and [StopLoopedScheduled](https://wiki.sonolus.com/engine-specs/functions/stop-looped-scheduled)
+require automatic audio-offset compensation. Scheduled commands subtract the
+environment value at invocation to map BGM time into runtime time. Thus their
+music position is unchanged by calibration. Immediate commands keep current
+runtime time, so user-triggered feedback is not deliberately delayed. These
+pages do not independently specify offset sign/units or retroactive behavior
+if preprocessing changes the offset after issuing a scheduled command. These
+under-specified cases remain compatibility uncertainties; the deterministic
+tests are not a native-client oracle.
+
+Verification: five focused simulator tests passed at 02:01 September 25, and
+the normal-size iPhone settings preview at 02:02 shows the new control,
+explanation and reset without truncation. The 02:04 full simulator run passed
+232 tests, including every cached-engine lifecycle check. The fallback
+composition test added during that run was reported as not run, then passed
+at 02:09 together with three focused regressions. All 233 tests therefore have
+passing evidence across those runs, not one uninterrupted final suite. The
+new model-level test verifies a preprocess override before intro/seek, retained
+media zero, live input clocks and result metadata across speeds/restarts.
+Preference decoding, clamping, per-engine persistence and reset are covered.
+The 02:09 normal simulator build passed; independent read-only review found no
+actionable defects and did not run tests. Physical testing remains deferred by
+user instruction until API coverage is complete. Native parity for the
+underdocumented offset conventions remains open despite the passing tests.

@@ -75,7 +75,8 @@ Status of the live-play follow-ups; offline probes do not certify live sync:
   Detach/reattach is covered, the device build passes, and independent review
   found no further issue after centralizing both software-fallback paths.
   Physical before/after latency comparison is deferred to the post-API batch.
-  This scheduling change is not yet pushed or claimed to improve device sync.
+  This scheduling change is simulator-verified, not claimed to improve device
+  sync; its physical comparison remains deferred under the current policy.
 - Add persistent manual timing overrides in Gameplay Settings so the player
   can compensate for observed bias. Define adjustment direction and units
   clearly, provide a neutral default/reset, and distinguish visual alignment
@@ -89,7 +90,23 @@ Status of the live-play follow-ups; offline probes do not certify live sync:
   is supplied before engine preprocessing, and the engine's resulting offset
   is honored for touch times. Engine-defined options retain their own defaults;
   there is no separate default-input-offset field in Engine Configuration.
-  Audio/visual calibration and live synchronization measurements remain open.
+  Visual Timing is now implemented alongside Input Timing: a separate per-engine
+  ±250 ms slider/stepper/reset, default zero, snapshotted for the next play.
+  Positive delays chart/input relative to music; negative advances them.
+  The adjustment uses wall-clock seconds at every playback speed, does not
+  seek past supplied audio, and appears in saved result options. The runtime
+  receives it as audio offset before preprocessing and honors the engine's
+  resulting value before intro analysis and seeking. Scheduled effects and
+  loop starts/stops compensate once to stay on the BGM timeline; immediate
+  hit sounds remain immediate. All 232 tests in the full simulator run passed;
+  the added fallback-composition test and three focused regressions passed
+  afterward. A model-level engine-preprocess override covers initial timing,
+  preserved media-zero seek, live input mapping and restarts. The normal build
+  and final independent read-only review passed. Physical synchronization and
+  calibration usability are deferred to the post-API device batch. Independent
+  review found no arithmetic inconsistency, but the public scheduled-audio
+  docs do not independently specify offset sign/units; that parity check
+  remains an explicit API-contract uncertainty, not a demonstrated correction.
   Independent review found no calibration correctness issue. All 212 tests
   passed across the full run and a rerun of shake-it's no-touch test after a
   simulator shutdown; this was not an uninterrupted suite. The normal build
@@ -410,10 +427,12 @@ model level, checking that future judgments and spawned entities do not leak.
 4. Full-chart no-touch runtime integration now passes on the physical device
    for four cached charts. Interactive playback, audio and display integration
    beyond those probes still need verification in the deferred device batch.
-5. Manual visual/audio alignment calibration remains separate from the
-   implemented input-judgment adjustment. Use measured clock/display/audio
-   behavior to define its direction and avoid double-applying engine offsets;
-   opt-in diagnostics alone do not finish this request.
+5. Physically verify the implemented manual visual/audio alignment control,
+   independently of input-judgment adjustment. Passing simulator regressions
+   and explicit sign/unit documentation do not certify acoustic alignment.
+   Check calibration usability and alignment in the deferred device batch;
+   resolve the public API's underdocumented audio-offset sign/unit convention
+   without guessing a correction from the user's early/late distribution.
 
 ## Deliberately not added / superseded requests
 

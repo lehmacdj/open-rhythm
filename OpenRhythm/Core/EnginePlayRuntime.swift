@@ -275,12 +275,13 @@ final class EnginePlayRuntime {
     safeArea: [Double]? = nil,
     playbackSpeed: Double = 1,
     inputOffset: Double = 0,
+    audioOffset: Double = 0,
     backgroundQuad: [Double]? = nil,
     optimizeLiteralAddresses: Bool = true
   ) throws {
     guard aspectRatio.isFinite, aspectRatio > 0,
       playbackSpeed.isFinite, (0.05...4).contains(playbackSpeed),
-      inputOffset.isFinite,
+      inputOffset.isFinite, audioOffset.isFinite,
       level.entities.count <= 100_000,
       uiConfiguration.count == 10, uiConfiguration.allSatisfy(\.isFinite),
       backgroundQuad == nil || (backgroundQuad?.count == 8
@@ -324,6 +325,7 @@ final class EnginePlayRuntime {
       archetypes[$0.archetype].map { engine.archetypes[$0].hasInput } ?? false
     }.count
     memory.set(block: 1000, index: 1, value: aspectRatio)
+    memory.set(block: 1000, index: 2, value: audioOffset)
     memory.set(block: 1000, index: 3, value: inputOffset)
     for (index, value) in (backgroundQuad ??
       [-aspectRatio, -1, -aspectRatio, 1, aspectRatio, 1, aspectRatio, -1]).enumerated() {
@@ -434,7 +436,18 @@ final class EnginePlayRuntime {
     restorePreparedState?()
   }
 
+  var audioOffset: Double {
+    get throws {
+      let offset = memory.value(block: 1000, index: 2)
+      guard offset.isFinite else {
+        throw EngineInterpreterError.invalidArguments("audio offset")
+      }
+      return offset
+    }
+  }
+
   func update(at time: TimeInterval, touches: [EngineTouch] = []) throws {
+    _ = try audioOffset
     // RuntimeEnvironment is writable in preprocess. Use the engine's resulting
     // value, and adjust only event times, not frame time or measured velocity.
     let inputOffset = memory.value(block: 1000, index: 3)

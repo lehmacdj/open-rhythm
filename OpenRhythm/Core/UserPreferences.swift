@@ -38,6 +38,11 @@ struct GameplayPreferences: Codable, Equatable {
   var engineOptions: [String: Double] = [:]
   var skinRenderMode = EngineSkinRenderMode.standard
   var recordTimingDiagnostics = false
+  var visualOffsetMilliseconds: Double = 0 {
+    didSet {
+      visualOffsetMilliseconds = Self.clampedInputOffset(visualOffsetMilliseconds)
+    }
+  }
   var inputOffsetMilliseconds: Double = 0 {
     didSet {
       inputOffsetMilliseconds = Self.clampedInputOffset(inputOffsetMilliseconds)
@@ -49,12 +54,14 @@ struct GameplayPreferences: Codable, Equatable {
   }
 
   var inputOffsetSeconds: Double { inputOffsetMilliseconds / 1000 }
+  var visualOffsetSeconds: Double { visualOffsetMilliseconds / 1000 }
 
   init(scoreDisplay: ScoreDisplayMode = .countUp, noteSpeed: Double? = nil,
     judgementDisplay: JudgementDisplayMode = .timing, scoreMode: Int? = nil,
     engineOptions: [String: Double] = [:],
     skinRenderMode: EngineSkinRenderMode = .standard,
-    inputOffsetMilliseconds: Double = 0, recordTimingDiagnostics: Bool = false) {
+    inputOffsetMilliseconds: Double = 0, recordTimingDiagnostics: Bool = false,
+    visualOffsetMilliseconds: Double = 0) {
     self.scoreDisplay = scoreDisplay
     self.noteSpeed = noteSpeed
     self.judgementDisplay = judgementDisplay
@@ -63,11 +70,13 @@ struct GameplayPreferences: Codable, Equatable {
     self.skinRenderMode = skinRenderMode
     self.recordTimingDiagnostics = recordTimingDiagnostics
     self.inputOffsetMilliseconds = Self.clampedInputOffset(inputOffsetMilliseconds)
+    self.visualOffsetMilliseconds = Self.clampedInputOffset(visualOffsetMilliseconds)
   }
 
   private enum CodingKeys: String, CodingKey {
     case scoreDisplay, noteSpeed, judgementDisplay, scoreMode, engineOptions
     case skinRenderMode, inputOffsetMilliseconds, recordTimingDiagnostics
+    case visualOffsetMilliseconds
   }
 
   init(from decoder: Decoder) throws {
@@ -87,6 +96,9 @@ struct GameplayPreferences: Codable, Equatable {
     inputOffsetMilliseconds = Self.clampedInputOffset(
       try values.decodeIfPresent(Double.self,
         forKey: .inputOffsetMilliseconds) ?? 0)
+    visualOffsetMilliseconds = Self.clampedInputOffset(
+      try values.decodeIfPresent(Double.self,
+        forKey: .visualOffsetMilliseconds) ?? 0)
   }
 }
 

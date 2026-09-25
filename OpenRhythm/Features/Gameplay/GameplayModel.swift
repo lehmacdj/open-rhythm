@@ -13,11 +13,18 @@ enum GameplayPhase: Equatable {
 struct BGMClockMapping {
   let offset: Double
   var speed: Double = 1
+  // Wall-clock seconds, not source-audio seconds: +100 ms delays the chart
+  // by 100 ms at every playback speed. Input shares this visual timeline.
+  var audioOffset: Double = 0
   // The offset aligns two timelines; it is not permission to trim audio.
   var initialMediaTime: Double { 0 }
   var initialChartTime: Double { chartTime(mediaTime: initialMediaTime) }
-  func chartTime(mediaTime: Double) -> Double { (mediaTime - offset) / speed }
-  func mediaTime(chartTime: Double) -> Double { chartTime * speed + offset }
+  func chartTime(mediaTime: Double) -> Double {
+    (mediaTime - offset) / speed - audioOffset
+  }
+  func mediaTime(chartTime: Double) -> Double {
+    (chartTime + audioOffset) * speed + offset
+  }
   func inputChartTime(mediaTime: Double, minimumMediaTime: Double) -> Double {
     chartTime(mediaTime: max(minimumMediaTime, mediaTime))
   }
@@ -211,6 +218,7 @@ final class GameplayModel {
   private var preparedRuntimeOptions: [Double]?
   private var preparedRuntimeSpeed: Double?
   private var preparedRuntimeInputOffset: Double?
+  private var preparedRuntimeAudioOffset: Double?
   private var preparedRuntimeAspect: Double?
   private var preparedRuntimeSafeArea: [Double]?
   private var preferenceKey = ""
@@ -249,6 +257,10 @@ final class GameplayModel {
       options.append(EngineOptionOverride(name: "Input Timing",
         value: String(format: "%+.0f ms", playInputOffset * 1000)))
     }
+    if playAudioOffset != 0 {
+      options.append(EngineOptionOverride(name: "Visual Timing",
+        value: String(format: "%+.0f ms", playAudioOffset * 1000)))
+    }
     return options
   }
 
@@ -271,8 +283,11 @@ final class GameplayModel {
   private var bgmOffset = 0.0
   private var playbackSpeed = 1.0
   private(set) var playInputOffset = 0.0
+  private(set) var playAudioOffset = 0.0
+  private var requestedAudioOffset = 0.0
   private var clockMapping: BGMClockMapping {
-    BGMClockMapping(offset: bgmOffset, speed: playbackSpeed)
+    BGMClockMapping(offset: bgmOffset, speed: playbackSpeed,
+      audioOffset: playAudioOffset)
   }
   private var player: AVPlayer?
   private var eventClock: PlaybackEventClock?
@@ -342,6 +357,7 @@ final class GameplayModel {
     preparedRuntimeOptions = nil
     preparedRuntimeSpeed = nil
     preparedRuntimeInputOffset = nil
+    preparedRuntimeAudioOffset = nil
     preparedRuntimeAspect = nil
     preparedRuntimeSafeArea = nil
     do {
@@ -397,6 +413,8 @@ final class GameplayModel {
     }
     playbackSpeed = speed
     playInputOffset = settings.inputOffsetSeconds
+    requestedAudioOffset = settings.visualOffsetSeconds
+    playAudioOffset = requestedAudioOffset
     timingRecorder = settings.recordTimingDiagnostics ? PlaybackTimingRecorder() : nil
     playbackTiming = nil
     frameTiming = nil
@@ -778,6 +796,7 @@ final class GameplayModel {
         if let preparedRuntime, preparedRuntimeOptions == options,
           preparedRuntimeSpeed == playbackSpeed,
           preparedRuntimeInputOffset == playInputOffset,
+          preparedRuntimeAudioOffset == requestedAudioOffset,
           preparedRuntimeAspect == aspect, preparedRuntimeSafeArea == safeArea {
           preparedRuntime.restart()
           engineRuntime = preparedRuntime
@@ -792,16 +811,23 @@ final class GameplayModel {
               ?? Array(repeating: 1, count: 10),
             safeArea: safeArea, playbackSpeed: playbackSpeed,
             inputOffset: playInputOffset,
+            audioOffset: requestedAudioOffset,
             backgroundQuad: try assets.background?.initialQuad(screenAspect: aspect)
           )
           preparedRuntime = engineRuntime
           preparedRuntimeOptions = options
           preparedRuntimeSpeed = playbackSpeed
           preparedRuntimeInputOffset = playInputOffset
+          preparedRuntimeAudioOffset = requestedAudioOffset
           preparedRuntimeAspect = aspect
           preparedRuntimeSafeArea = safeArea
         }
         if let runtime = engineRuntime {
+          // Preprocessing may refine the supplied environment. Honor its
+          // result before intro analysis, seeking, event clocks or rendering.
+          playAudioOffset = try runtime.audioOffset
+          currentTime = clockMapping.initialChartTime
+          startupNextTime = currentTime
           engineUI = (0..<8).map { EngineUIElement(memory: runtime.memory, index: $0) }
           engineLife = runtime.life
         }

@@ -679,10 +679,78 @@ final class EngineHostTests: XCTestCase {
     model.restart()
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
     XCTAssertTrue(model.engineRuntime === calibrated)
+    model.settings.visualOffsetMilliseconds = 80
+    model.restart()
+    model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
+    let visuallyCalibrated = try XCTUnwrap(model.engineRuntime)
+    XCTAssertFalse(visuallyCalibrated === calibrated)
+    XCTAssertEqual(try visuallyCalibrated.audioOffset, 0.08)
+    XCTAssertEqual(model.playAudioOffset, 0.08)
+    XCTAssertEqual(model.currentTime, -0.08, accuracy: 1e-12)
+    model.settings.visualOffsetMilliseconds = -80
+    XCTAssertEqual(model.playAudioOffset, 0.08,
+      "Changing settings must not move an active play's clock")
+    model.settings.visualOffsetMilliseconds = 80
+    model.restart()
+    model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
+    XCTAssertTrue(model.engineRuntime === visuallyCalibrated)
     model.restart()
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [],
       safeAreaInsets: UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 0))
-    XCTAssertFalse(model.engineRuntime === calibrated)
+    XCTAssertFalse(model.engineRuntime === visuallyCalibrated)
+  }
+
+  func testAudioCalibrationHonorsEnginePreparationAndScheduledSounds() throws {
+    let b = RuntimeNodeBuilder()
+    func get(_ block: Double, _ index: Double) -> Int {
+      b.call("Get", [b.value(block), b.value(index)])
+    }
+    func set(_ block: Double, _ index: Double, _ value: Int) -> Int {
+      b.call("Set", [b.value(block), b.value(index), value])
+    }
+    let preprocess = b.call("Execute", [
+      set(2000, 0, get(1000, 2)),
+      set(1000, 2, b.call("Add", [get(1000, 2), b.value(0.02)]))])
+    let initialize = b.call("Execute", [
+      b.call("Play", [b.value(8), b.value(0)]),
+      b.call("PlayScheduled", [b.value(8), b.value(3), b.value(0)]),
+      set(2000, 1, b.call("PlayLooped", [b.value(8)])),
+      set(2000, 2, b.call("PlayLoopedScheduled", [b.value(8), b.value(4)])),
+      b.call("StopLooped", [get(2000, 1)]),
+      b.call("StopLoopedScheduled", [get(2000, 2), b.value(5)])])
+    let engine = try b.engine(archetypes: [[
+      "name": "Audio", "hasInput": false, "imports": [], "exports": [],
+      "preprocess": ["index": preprocess], "initialize": ["index": initialize]]])
+    let level = LevelData(bgmOffset: 0, entities: [
+      LevelEntity(archetype: "Audio", name: nil, data: [])])
+    for speed in [0.5, 1, 2] {
+      for offset in [-0.25, 0, 0.25] {
+        let runtime = try EnginePlayRuntime(engine: engine, level: level,
+          options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [8],
+          particleEffectIDs: [], playbackSpeed: speed, audioOffset: offset)
+        let effective = offset + 0.02
+        for _ in 0..<2 {
+          XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), offset)
+          XCTAssertEqual(try runtime.audioOffset, effective)
+          try runtime.update(at: 2)
+          XCTAssertEqual(runtime.host.takeAudioCommands().map(\.time),
+            [2, 3 - effective])
+          XCTAssertEqual(runtime.host.takeLoopCommands(), [
+            .start(id: 1, clipID: 8, time: 2),
+            .start(id: 2, clipID: 8, time: 4 - effective),
+            .stop(id: 1, time: 2), .stop(id: 2, time: 5 - effective)])
+          runtime.restart()
+        }
+        runtime.memory.set(block: 1000, index: 2, value: .nan)
+        XCTAssertThrowsError(try runtime.audioOffset)
+        XCTAssertThrowsError(try runtime.update(at: 2))
+        XCTAssertThrowsError(try runtime.host.call(function: "PlayScheduled",
+          arguments: [8, 3, 0]))
+      }
+    }
+    XCTAssertThrowsError(try EnginePlayRuntime(engine: engine, level: level,
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [8],
+      particleEffectIDs: [], audioOffset: .infinity))
   }
 
   func testInputCalibrationHonorsPreprocessAndKeepsFrameClockAndMotion() throws {

@@ -322,7 +322,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       guard effectClipIDs.contains(id) else { return 0 }
       try checkLimit(audio.count + loopAudio.count)
       audio.append(EngineAudioCommand(
-        clipID: id, time: function == "Play" ? time : a[1],
+        clipID: id, time: function == "Play" ? time : try audioTime(a[1]),
         minimumDistance: max(0, a.last!)
       ))
       return 0
@@ -338,13 +338,13 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       nextLoopID += 1
       loopStops[id] = .infinity
       loopAudio.append(.start(id: id, clipID: clipID,
-        time: function == "PlayLooped" ? time : a[1]))
+        time: function == "PlayLooped" ? time : try audioTime(a[1])))
       return Double(id)
     case "StopLooped", "StopLoopedScheduled":
       try validate(a, count: function == "StopLooped" ? 1 : 2, function: function)
       let id = try identifier(a[0], function: function)
       guard let existing = loopStops[id] else { return 0 }
-      let end = function == "StopLooped" ? time : a[1]
+      let end = function == "StopLooped" ? time : try audioTime(a[1])
       guard end < existing else { return 0 }
       try checkLimit(audio.count + loopAudio.count)
       loopAudio.append(.stop(id: id, time: end))
@@ -446,6 +446,16 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     default:
       throw EngineInterpreterError.unsupportedFunction(function)
     }
+  }
+
+  private func audioTime(_ scheduledTime: Double) throws -> Double {
+    // Scheduled effects use the BGM timeline. Immediate effects remain on
+    // the current runtime clock so hit feedback is never deliberately delayed.
+    let result = scheduledTime - memory.value(block: 1000, index: 2)
+    guard result.isFinite else {
+      throw EngineInterpreterError.invalidArguments("scheduled audio offset")
+    }
+    return result
   }
 
   private func points(_ arguments: [Double]) -> [EnginePoint] {

@@ -370,6 +370,18 @@ private struct GameplaySettingsPanel: View {
           Text("Early/Late uses the engine’s timing-display threshold, including qualifying PERFECT judgements.")
             .font(.footnote).foregroundStyle(.secondary)
         }
+        Section("Visual Timing") {
+          LabeledContent("Offset",
+            value: String(format: "%+.0f ms", settings.visualOffsetMilliseconds))
+          Slider(value: $settings.visualOffsetMilliseconds,
+            in: -250...250, step: 1)
+            .accessibilityLabel("Visual Timing Offset in milliseconds")
+          Stepper("Adjust by 1 ms", value: $settings.visualOffsetMilliseconds,
+            in: -250...250, step: 1)
+          Text("Positive values show notes later relative to music; negative values show them earlier. Input timing follows the notes. Music is not trimmed, and judgment-window sizes are unchanged. Applies on the next play.")
+            .font(.footnote).foregroundStyle(.secondary)
+          Button("Reset Visual Timing") { settings.visualOffsetMilliseconds = 0 }
+        }
         Section("Input Timing") {
           LabeledContent("Offset",
             value: String(format: "%+.0f ms", settings.inputOffsetMilliseconds))
