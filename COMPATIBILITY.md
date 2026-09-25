@@ -11,6 +11,23 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Particle preparation now crops only sprites referenced by selected engine
+  effects, while keeping the resource's original sprite indices. Previously
+  an invalid crop used by an unrelated effect could reject a valid selected
+  effect. Optional prepared slots avoid allocating unused crops; shared
+  references crop once and tint caches retain their index/color separation.
+  Selected bad bounds and out-of-range references still fail, with the effect
+  name and sprite index in bounds errors. The failed-before-fix regression
+  now checks a selected sprite after unused invalid entries, fractional UVs,
+  emitted geometry, all four property/random-cache modes, and shared/distinct
+  tint identities. Five focused simulator tests passed at 06:31; the final
+  tint checks passed at 06:32. Independent review found no actionable issue.
+  The full 06:32 simulator suite passed all 286 tests with no failures or
+  skips, including all cached-chart probes; the normal build passed at 06:37.
+  Xcode's observer timed out, but the same run's completed report and
+  TEST FINISHED marker confirmed success without restarting the suite.
+  This selection boundary does not bypass structural JSON decoding or atlas
+  validation, and does not claim native behavior for malformed resources.
 - UI animation endpoints and durations no longer have undocumented +/-1024
   and 3,600-second limits. The public [UI configuration schema](
   https://wiki.sonolus.com/engine-specs/resources/engine-configuration-ui)
@@ -758,6 +775,20 @@ display latency. They are profiling leads, not Release frame-rate guarantees.
 The initial Eleventh attempt failed to connect to the test runner and did not
 execute; the successful rerun and final suite have separate result bundles.
 
+## Resource acceptance boundaries
+
+These distinguish the implemented selection/default rules from native parity
+questions. They do not certify every legal combination of resource fields.
+
+| Surface | Implemented boundary | Remaining evidence |
+| --- | --- | --- |
+| Engine configuration | Required for server playback; declared options, categories, UI metrics, visibility and animations are consumed. Per-engine preference policy is explicit. | Missing UI sections still use app defaults; do not mistake acceptance of incomplete configuration for a specified native default. |
+| Skin atlas | Only named sprites requested by the engine are cropped. Interpolation, transforms, fractional bounds and render mode are honored. | Exact native filtering and treatment of declared atlas dimensions that differ from image dimensions. |
+| Particle atlas | Selected effects are validated, original sprite indices are preserved, and only their referenced sprites are cropped. Structural decoding and atlas validation still apply. | Native rasterization/random realization parity beyond the public Studio reference; selected numeric limits remain explicit host limits. |
+| Particle property defaults | Missing from/to coefficients use zero, and omitted easing uses linear, supported by the public Studio importer. | These defaults are not proprietary-client observation. |
+| Effect audio | Engine-requested named clips are selected from the ZIP and prepared through the native audio backend; missing names remain unavailable to HasEffectClip. | An exhaustive supported codec contract is not supplied by the public MP3 recommendation; native format support and acoustic alignment remain separate checks. |
+| Background | Natural aspect and unit scaling apply when overrides are absent; declared fit, color, mask and blur are consumed. | The blur kernel/radius is not specified publicly; the current size-normalized Gaussian is host policy. |
+
 ## Remaining checks, including engines we have not sampled
 
 - Fourteen play-capable stack entry points remain unimplemented: StackEnter,
@@ -780,6 +811,9 @@ execute; the successful rerun and final suite have separate result bundles.
   establish the client's explicit wall-clock convention and internal timeline
   consistency, not parity with an independently observed native reference.
 - Optional/missing resource defaults and host-function callback legality.
+  The resource acceptance table above names the current boundaries and
+  outstanding evidence; unrelated bad particle crop bounds no longer broaden
+  the selected effect's validation scope.
   Specified initial play-memory defaults and the known presentation enum lists
   now have dedicated conformance checks above. Underdocumented defaults still
   need independent evidence rather than being inferred from those tests. Memory-block callback

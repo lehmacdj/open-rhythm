@@ -1319,6 +1319,82 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticlePreparationIgnoresUnreferencedSpriteBounds() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[{"id":9,"name":"selected"}]},
+       "archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let texture = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 2),
+      format: format).pngData { context in
+        UIColor.red.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 4, height: 2))
+      }
+    let identity = Dictionary(uniqueKeysWithValues:
+      ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"].map { ($0, [$0: 1]) })
+    func presentation(selected: Int, copies: Int = 1) throws -> RuntimePresentation {
+      let zero: [String: Any] = ["from": ["c": 0], "to": ["c": 0]]
+      let one: [String: Any] = ["from": ["c": 1], "to": ["c": 1]]
+      func effect(_ name: String, sprite: Int) -> [String: Any] {
+        let particle: [String: Any] = ["sprite": sprite, "color": "#fff",
+          "start": 0, "duration": 1, "x": zero, "y": zero,
+          "w": one, "h": one, "r": zero, "a": one]
+        return ["name": name, "transform": identity, "groups": [["count": 1,
+          "particles": Array(repeating: particle, count: copies)]]]
+      }
+      let data: [String: Any] = ["width": 4, "height": 2,
+        "interpolation": true, "sprites": [
+          ["x": -1, "y": 0, "w": 2, "h": 2],
+          ["x": 0, "y": 0, "w": 0, "h": 2],
+          ["x": 1.25, "y": 0, "w": 1.5, "h": 2]],
+        "effects": [effect("unused", sprite: 0),
+          effect("selected", sprite: selected)]]
+      return RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8),
+        "particleData": try JSONSerialization.data(withJSONObject: data),
+        "particleTexture": texture])
+    }
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: presentation(selected: 2))
+    XCTAssertEqual(assets.particleSprites.count, 3,
+      "Resource sprite indices must not shift during selective preparation")
+    XCTAssertNil(assets.particleSprites[0])
+    XCTAssertNil(assets.particleSprites[1])
+    XCTAssertNotNil(assets.particleSprites[2])
+    let host = makeHost()
+    _ = try host.call(function: "SpawnParticleEffect", arguments: [9] + quad + [1, 0])
+    let rendered = EngineRenderer.sprites(host: host, assets: assets)
+    XCTAssertEqual(rendered.count, 1)
+    let sprite = try XCTUnwrap(rendered.first)
+    XCTAssertEqual(sprite.textureRegion.minU, 1.25 / 4)
+    XCTAssertEqual(sprite.textureRegion.maxU, 2.75 / 4)
+    XCTAssertEqual(sprite.points.map(\.x), [-1, -1, 1, 1])
+    XCTAssertEqual(sprite.alpha, 1)
+    let shared = try EnginePresentationAssets(engine: engine,
+      presentation: presentation(selected: 2, copies: 3))
+    XCTAssertEqual(shared.particleSprites.compactMap { $0 }.count, 1)
+    for mode in 0..<4 {
+      let sprites = EngineRenderer.sprites(host: host, assets: shared,
+        cacheParticleRandomVariables: mode & 1 != 0,
+        cacheParticleProperties: mode & 2 != 0)
+      XCTAssertEqual(sprites.count, 3)
+      XCTAssertTrue(sprites.allSatisfy { $0.image === sprites.first?.image },
+        "Repeated references share the prepared tint without renumbering")
+    }
+    let white = try XCTUnwrap(shared.particleImage(index: 2, key: "#fff"))
+    let green = try XCTUnwrap(shared.particleImage(index: 2, key: "#0f0"))
+    XCTAssertFalse(white === green, "Different colors must not reuse a tint")
+    XCTAssertTrue(green === shared.particleImage(index: 2, key: "#0f0"))
+    for index in [0, 1, 3] {
+      XCTAssertThrowsError(try EnginePresentationAssets(engine: engine,
+        presentation: presentation(selected: index)),
+        "Invalid selected bounds or indices must still fail: \(index)")
+    }
+  }
+
+  @MainActor
   func testParticleEasingValidationCoversEveryPropertyAndOptionalDefault() throws {
     let engine = try RuntimeNodeBuilder().engine(archetypes: [])
     let selected = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""

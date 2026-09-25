@@ -33,6 +33,18 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Particle-selection follow-up: unused sprite crop bounds no longer prevent a
+valid selected effect from loading. Only referenced sprites are cropped, with
+original indices and fractional UVs retained; shared references reuse crops
+and color-specific tints. Selected invalid references/bounds still fail. Five
+focused simulator tests passed at 06:31, and final tint checks passed at 06:32.
+Independent review found no actionable issue. The full 06:32 simulator run
+passed all 286 tests with no failures or skips; its observer timed out but
+the same run's completed report confirmed success. The 06:37 normal build
+passed. Malformed JSON/atlases are still rejected, and physical checks stay
+deferred. COMPATIBILITY.md now separates each resource family's implemented
+selection/default behavior from remaining native-parity evidence.
+
 UI-animation follow-up: engine values beyond the app's former +/-1024 endpoint
 and one-hour duration limits are now retained. Easing overshoot is no longer
 clamped. Judgment/combo completion waits use bounded cancellable timer chunks

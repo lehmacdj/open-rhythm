@@ -696,6 +696,10 @@ final class EnginePresentationAssets {
     let transform: EngineQuadTransform
     let textureRegion: EngineTextureRegion
   }
+  struct ParticleSprite {
+    let image: UIImage
+    let region: EngineTextureRegion
+  }
   let options: [Double]
   let configuration: EngineConfiguration
   let ui: EngineConfiguration.UI?
@@ -706,8 +710,8 @@ final class EnginePresentationAssets {
   private let noteSpeedIndex: Int?
   let skin: [Int: Sprite]
   let particles: [Int: ParticleData.Effect]
-  let particleImages: [UIImage]
-  let particleRegions: [EngineTextureRegion]
+  // Retain resource indices without cropping or allocating unused sprites.
+  let particleSprites: [ParticleSprite?]
   let interpolation: Bool
   let particleInterpolation: Bool
   let background: EngineBackgroundAssets?
@@ -777,8 +781,7 @@ final class EnginePresentationAssets {
     // require a particle texture merely because a skin or configuration exists.
     guard !engine.particle.effects.isEmpty else {
       particleInterpolation = false
-      particleImages = []
-      particleRegions = []
+      particleSprites = []
       particles = [:]
       return
     }
@@ -791,11 +794,6 @@ final class EnginePresentationAssets {
     )?.cgImage else {
       throw RuntimeBundleError.missingResource("valid particle texture")
     }
-    let crops = try particleData.sprites.map {
-      try Self.crop(texture, x: $0.x, y: $0.y, w: $0.w, h: $0.h)
-    }
-    particleImages = crops.map(\.image)
-    particleRegions = crops.map(\.region)
     var effects = [Int: ParticleData.Effect]()
     for definition in engine.particle.effects {
       guard let effect = particleData.effects.first(where: {
@@ -808,16 +806,36 @@ final class EnginePresentationAssets {
       for group in effect.groups {
         for particle in group.particles {
           try particle.validate(effectName: definition.name,
-            spriteCount: particleImages.count)
+            spriteCount: particleData.sprites.count)
         }
       }
       effects[definition.id] = effect
     }
     particles = effects
+    var prepared = [ParticleSprite?](repeating: nil,
+      count: particleData.sprites.count)
+    for effect in effects.values {
+      for group in effect.groups {
+        for particle in group.particles where prepared[particle.sprite] == nil {
+          let sprite = particleData.sprites[particle.sprite]
+          let crop: (image: UIImage, region: EngineTextureRegion)
+          do {
+            crop = try Self.crop(texture, x: sprite.x, y: sprite.y,
+              w: sprite.w, h: sprite.h)
+          } catch EngineInterpreterError.invalidArguments {
+            throw EngineInterpreterError.invalidArguments(
+              "particle \(effect.name) sprite \(particle.sprite) bounds")
+          }
+          prepared[particle.sprite] = ParticleSprite(image: crop.image,
+            region: crop.region)
+        }
+      }
+    }
+    particleSprites = prepared
     // Build color variants while preparing the chart, not during a first hit.
     for effect in effects.values {
       for group in effect.groups {
-        for particle in group.particles where particleImages.indices.contains(particle.sprite) {
+        for particle in group.particles {
           _ = particleImage(index: particle.sprite, key: particle.color)
         }
       }
@@ -833,11 +851,12 @@ final class EnginePresentationAssets {
     skin.values.map(\.image) + Array(tintedParticles.values)
   }
 
-  func particleImage(index: Int, key: String) -> UIImage {
+  func particleImage(index: Int, key: String) -> UIImage? {
     let cacheKey = "\(index):\(key)"
     if let image = tintedParticles[cacheKey] { return image }
-    let original = particleImages[index]
-    let image = Self.tinted(original, color: EngineRenderer.color(key))
+    guard particleSprites.indices.contains(index), let sprite = particleSprites[index]
+    else { return nil }
+    let image = Self.tinted(sprite.image, color: EngineRenderer.color(key))
     tintedParticles[cacheKey] = image
     return image
   }
@@ -1091,7 +1110,8 @@ enum EngineRenderer {
               ? progress + 1 : progress
             guard particle.duration > 0, particleProgress >= particle.start,
               particleProgress <= particle.start + particle.duration,
-              assets.particleImages.indices.contains(particle.sprite)
+              assets.particleSprites.indices.contains(particle.sprite),
+              let sprite = assets.particleSprites[particle.sprite]
             else { continue }
             let time = (particleProgress - particle.start) / particle.duration
             let properties = cacheParticleProperties
@@ -1115,11 +1135,12 @@ enum EngineRenderer {
                 u: (x + dx * cosine - dy * sine + 1) / 2,
                 v: (y + dx * sine + dy * cosine + 1) / 2)
             }
-            let image = assets.particleImage(index: particle.sprite, key: particle.color)
+            guard let image = assets.particleImage(index: particle.sprite,
+              key: particle.color) else { continue }
             result.append(EngineRenderSprite(image: image, points: points,
               matrix: particleMatrix, alpha: alpha,
               interpolation: assets.particleInterpolation,
-              textureRegion: assets.particleRegions[particle.sprite]))
+              textureRegion: sprite.region))
           }
         }
       }
