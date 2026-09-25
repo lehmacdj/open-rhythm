@@ -274,11 +274,13 @@ final class EnginePlayRuntime {
     uiConfiguration: [Double] = Array(repeating: 1, count: 10),
     safeArea: [Double]? = nil,
     playbackSpeed: Double = 1,
+    inputOffset: Double = 0,
     backgroundQuad: [Double]? = nil,
     optimizeLiteralAddresses: Bool = true
   ) throws {
     guard aspectRatio.isFinite, aspectRatio > 0,
       playbackSpeed.isFinite, (0.05...4).contains(playbackSpeed),
+      inputOffset.isFinite,
       level.entities.count <= 100_000,
       uiConfiguration.count == 10, uiConfiguration.allSatisfy(\.isFinite),
       backgroundQuad == nil || (backgroundQuad?.count == 8
@@ -322,6 +324,7 @@ final class EnginePlayRuntime {
       archetypes[$0.archetype].map { engine.archetypes[$0].hasInput } ?? false
     }.count
     memory.set(block: 1000, index: 1, value: aspectRatio)
+    memory.set(block: 1000, index: 3, value: inputOffset)
     for (index, value) in (backgroundQuad ??
       [-aspectRatio, -1, -aspectRatio, 1, aspectRatio, 1, aspectRatio, -1]).enumerated() {
       memory.set(block: 1005, index: index, value: value)
@@ -432,6 +435,12 @@ final class EnginePlayRuntime {
   }
 
   func update(at time: TimeInterval, touches: [EngineTouch] = []) throws {
+    // RuntimeEnvironment is writable in preprocess. Use the engine's resulting
+    // value, and adjust only event times, not frame time or measured velocity.
+    let inputOffset = memory.value(block: 1000, index: 3)
+    guard inputOffset.isFinite else {
+      throw EngineInterpreterError.invalidArguments("input offset")
+    }
     let spawned = host.takeSpawnCommands()
     try host.beginFrame(at: time)
     for amount in host.takeScheduledLife(at: time) { life.add(amount) }
@@ -449,7 +458,8 @@ final class EnginePlayRuntime {
         y: delta > 0 ? touch.delta.y / delta : 0)
       let values: [Double] = [
         Double(touch.id), touch.started ? 1 : 0, touch.ended ? 1 : 0,
-        touch.time, touch.startTime, touch.position.x, touch.position.y,
+        touch.time - inputOffset, touch.startTime - inputOffset,
+        touch.position.x, touch.position.y,
         touch.startPosition.x, touch.startPosition.y,
         touch.delta.x, touch.delta.y,
         velocity.x, velocity.y, hypot(velocity.x, velocity.y),

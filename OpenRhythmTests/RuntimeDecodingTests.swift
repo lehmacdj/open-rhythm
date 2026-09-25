@@ -1439,6 +1439,56 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertTrue(model.noteTimings.allSatisfy { abs($0.accuracy ?? 1) < 0.001 })
   }
 
+  func testInputCalibrationDecodesDefaultsAndClampsInvalidValues() throws {
+    let legacy = try JSONDecoder().decode(GameplayPreferences.self,
+      from: Data("{}".utf8))
+    XCTAssertEqual(legacy.inputOffsetMilliseconds, 0)
+    var settings = GameplayPreferences(inputOffsetMilliseconds: 300)
+    XCTAssertEqual(settings.inputOffsetMilliseconds, 250)
+    settings.inputOffsetMilliseconds = -.infinity
+    XCTAssertEqual(settings.inputOffsetMilliseconds, 0)
+    settings.inputOffsetMilliseconds = -500
+    XCTAssertEqual(settings.inputOffsetSeconds, -0.25)
+    let decoded = try JSONDecoder().decode(GameplayPreferences.self,
+      from: Data(#"{"inputOffsetMilliseconds":900}"#.utf8))
+    XCTAssertEqual(decoded.inputOffsetMilliseconds, 250)
+  }
+
+  @MainActor
+  func testFallbackCalibrationShiftsInputsNotMusicAndSnapshotsEachPlay() throws {
+    let model = try gameplayModel()
+    let original = model.settings
+    defer { model.stop(); model.settings = original }
+    for offset in [-200.0, 200] {
+      model.settings.inputOffsetMilliseconds = offset
+      model.start()
+      model.settings.inputOffsetMilliseconds = 0 // Applies only next play.
+      XCTAssertEqual(model.playInputOffset, offset / 1000)
+      model.update(mediaTime: 0.95 + offset / 1000)
+      XCTAssertEqual(model.currentTime, 1 + offset / 1000, accuracy: 1e-12)
+      model.press(lane: 0)
+      model.release(lane: 0)
+      model.update(mediaTime: 1.95 + offset / 1000)
+      model.slide(lane: 1)
+      model.release(lane: 1)
+      model.update(mediaTime: 3.95 + offset / 1000)
+      model.press(lane: 3)
+      model.update(mediaTime: 4.95 + offset / 1000)
+      model.release(lane: 3)
+      XCTAssertEqual(model.judgements[.perfect], 4)
+      let hits = model.noteTimings.filter { $0.accuracy != nil }
+      XCTAssertEqual(hits.count, 4)
+      XCTAssertTrue(hits.allSatisfy { abs($0.accuracy ?? 1) < 1e-12 })
+      XCTAssertEqual(model.modifiedOptions.last?.value,
+        String(format: "%+.0f ms", offset))
+      model.stop()
+    }
+    model.settings.inputOffsetMilliseconds = 0
+    model.start()
+    XCTAssertEqual(model.playInputOffset, 0)
+    XCTAssertTrue(model.modifiedOptions.isEmpty)
+  }
+
   @MainActor
   func testGameplayCompletesAndSavesAfterAudioEnds() async throws {
     let root = FileManager.default.temporaryDirectory

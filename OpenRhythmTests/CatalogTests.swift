@@ -107,7 +107,7 @@ final class CatalogTests: XCTestCase {
     preferences.save(filter, for: "one")
     preferences.save(GameplayPreferences(scoreDisplay: .countDown, noteSpeed: 8,
       judgementDisplay: .off, scoreMode: 2, engineOptions: ["#MIRROR": 1],
-      skinRenderMode: .lightweight),
+      skinRenderMode: .lightweight, inputOffsetMilliseconds: -35),
       for: "one")
     let reopened = UserPreferences(defaults: defaults)
     filter.query = ""
@@ -117,6 +117,7 @@ final class CatalogTests: XCTestCase {
     XCTAssertEqual(reopened.gameplay(for: "one").judgementDisplay, .off)
     XCTAssertEqual(reopened.gameplay(for: "one").scoreMode, 2)
     XCTAssertEqual(reopened.gameplay(for: "one").skinRenderMode, .lightweight)
+    XCTAssertEqual(reopened.gameplay(for: "one").inputOffsetSeconds, -0.035)
     XCTAssertEqual(reopened.gameplay(for: "one").engineOptions, ["#MIRROR": 1])
     XCTAssertEqual(reopened.gameplay(for: "two"), GameplayPreferences())
     XCTAssertEqual(ScoreDisplayMode.countDown.score(judgements: [:],

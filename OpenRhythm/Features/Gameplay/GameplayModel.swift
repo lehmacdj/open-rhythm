@@ -203,6 +203,7 @@ final class GameplayModel {
   private var preparedRuntime: EnginePlayRuntime?
   private var preparedRuntimeOptions: [Double]?
   private var preparedRuntimeSpeed: Double?
+  private var preparedRuntimeInputOffset: Double?
   private var preparedRuntimeAspect: Double?
   private var preparedRuntimeSafeArea: [Double]?
   private var preferenceKey = ""
@@ -235,7 +236,13 @@ final class GameplayModel {
   var accuracyScore: Int? { engineAccuracy?.earned }
 
   var modifiedOptions: [EngineOptionOverride] {
-    presentationAssets?.configuration.modifiedStandardOptions(preferences: settings) ?? []
+    var options = presentationAssets?.configuration
+      .modifiedStandardOptions(preferences: settings) ?? []
+    if playInputOffset != 0 {
+      options.append(EngineOptionOverride(name: "Input Timing",
+        value: String(format: "%+.0f ms", playInputOffset * 1000)))
+    }
+    return options
   }
 
   var playbackTime: TimeInterval {
@@ -256,6 +263,7 @@ final class GameplayModel {
   private let resultStore: ResultStore
   private var bgmOffset = 0.0
   private var playbackSpeed = 1.0
+  private(set) var playInputOffset = 0.0
   private var clockMapping: BGMClockMapping {
     BGMClockMapping(offset: bgmOffset, speed: playbackSpeed)
   }
@@ -325,6 +333,7 @@ final class GameplayModel {
     preparedRuntime = nil
     preparedRuntimeOptions = nil
     preparedRuntimeSpeed = nil
+    preparedRuntimeInputOffset = nil
     preparedRuntimeAspect = nil
     preparedRuntimeSafeArea = nil
     do {
@@ -379,6 +388,7 @@ final class GameplayModel {
       return
     }
     playbackSpeed = speed
+    playInputOffset = settings.inputOffsetSeconds
     player.defaultRate = Float(speed)
     if let bundle = runtimeBundle {
       let timeline = BPMTimeline(level: bundle.level, speed: speed)
@@ -564,13 +574,15 @@ final class GameplayModel {
   func press(lane: Int, at time: TimeInterval? = nil) {
     guard phase == .playing else { return }
     guard pressedLanes.insert(lane).inserted else { return }
-    hit(lane: lane, swingsOnly: false, at: time ?? currentTime)
+    hit(lane: lane, swingsOnly: false,
+      at: (time ?? currentTime) - playInputOffset)
   }
 
   func slide(lane: Int, at time: TimeInterval? = nil) {
     guard phase == .playing else { return }
     pressedLanes.insert(lane)
-    hit(lane: lane, swingsOnly: true, at: time ?? currentTime)
+    hit(lane: lane, swingsOnly: true,
+      at: (time ?? currentTime) - playInputOffset)
   }
 
   private func hit(lane: Int, swingsOnly: Bool, at time: TimeInterval) {
@@ -603,7 +615,7 @@ final class GameplayModel {
       resolvedHoldTailIDs.insert(hold.id).inserted
     else { return }
 
-    let difference = (time ?? currentTime) - endTime
+    let difference = (time ?? currentTime) - playInputOffset - endTime
     if abs(difference) <= 0.18 {
       record(difference: difference, note: hold, tail: true)
     } else {
@@ -687,13 +699,14 @@ final class GameplayModel {
   func update(mediaTime: TimeInterval) {
     guard phase == .playing, mediaTime.isFinite else { return }
     currentTime = clockMapping.chartTime(mediaTime: mediaTime)
+    let inputTime = currentTime - playInputOffset
 
     for lane in pressedLanes {
-      hit(lane: lane, swingsOnly: true, at: currentTime)
+      hit(lane: lane, swingsOnly: true, at: inputTime)
     }
 
     while nextMissIndex < chart.notes.count,
-      chart.notes[nextMissIndex].time < currentTime - 0.18
+      chart.notes[nextMissIndex].time < inputTime - 0.18
     {
       let note = chart.notes[nextMissIndex]
       if !hitNoteIDs.contains(note.id) {
@@ -706,7 +719,7 @@ final class GameplayModel {
     for note in chart.notes {
       guard
         let endTime = note.endTime,
-        endTime < currentTime - 0.18,
+        endTime < inputTime - 0.18,
         resolvedHoldTailIDs.insert(note.id).inserted
       else { continue }
       if activeHolds[note.lane]?.id == note.id {
@@ -740,6 +753,7 @@ final class GameplayModel {
         let options = assets.configuration.runtimeOptions(preferences: settings)
         if let preparedRuntime, preparedRuntimeOptions == options,
           preparedRuntimeSpeed == playbackSpeed,
+          preparedRuntimeInputOffset == playInputOffset,
           preparedRuntimeAspect == aspect, preparedRuntimeSafeArea == safeArea {
           preparedRuntime.restart()
           engineRuntime = preparedRuntime
@@ -753,11 +767,13 @@ final class GameplayModel {
             uiConfiguration: assets.ui?.runtimeValues
               ?? Array(repeating: 1, count: 10),
             safeArea: safeArea, playbackSpeed: playbackSpeed,
+            inputOffset: playInputOffset,
             backgroundQuad: try assets.background?.initialQuad(screenAspect: aspect)
           )
           preparedRuntime = engineRuntime
           preparedRuntimeOptions = options
           preparedRuntimeSpeed = playbackSpeed
+          preparedRuntimeInputOffset = playInputOffset
           preparedRuntimeAspect = aspect
           preparedRuntimeSafeArea = safeArea
         }

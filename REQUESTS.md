@@ -14,12 +14,33 @@ These requests are open, not certified by the existing offline probes:
   Distinguish clock bugs from output/display latency; do not guess a default
   correction from the reported excess Earlies. Prioritize this alongside live
   frame-pacing checks, not only particle or curved-hold CPU benchmarks.
+  September 25 source trace: `engineFrame` samples the AVPlayer-derived chart
+  clock before runtime work; sprite generation/Metal encoding follows, and
+  presentation is queued as soon as possible. The display-link target and
+  drawable's actual presentation timestamp are not currently recorded. This
+  leaves a measurable render-age gap, not a proven cause or correction value.
+  Measure sample-to-present age and audio-route/output latency together before
+  changing display prediction or applying audio compensation. Touch timestamps
+  already use the player's timebase rather than delayed event delivery time.
 - Add persistent manual timing overrides in Gameplay Settings so the player
   can compensate for observed bias. Define adjustment direction and units
   clearly, provide a neutral default/reset, and distinguish visual alignment
   from input judgment adjustment. Preserve engine judgment windows and test
   persistence, restart and playback-speed behavior. This is newly requested
   configuration, not evidence that the underlying synchronization is correct.
+  Input calibration is now implemented: per-engine ±250 ms, 1 ms slider/stepper,
+  reset to zero, and the selected adjustment is retained in result details.
+  Positive subtracts from input timestamps to compensate late inputs; negative
+  compensates early inputs. Music and frame clocks stay unchanged. The value
+  is supplied before engine preprocessing, and the engine's resulting offset
+  is honored for touch times. Engine-defined options retain their own defaults;
+  there is no separate default-input-offset field in Engine Configuration.
+  Audio/visual calibration and live synchronization measurements remain open.
+  Independent review found no calibration correctness issue. All 212 tests
+  passed across the full run and a rerun of shake-it's no-touch test after a
+  simulator shutdown; this was not an uninterrupted suite. The normal build
+  passed without warnings. Settings visual verification remains open because
+  Xcode's preview timed out without producing an image.
 - Redesign the results timing distribution using the supplied ITG evaluation
   photo as the visual reference: a crisp, high-contrast filled silhouette,
   saturated judgment colors, a clear centered zero and Early/Late labels,

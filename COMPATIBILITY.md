@@ -379,6 +379,29 @@ https://wiki.sonolus.com/engine-specs/resources/engine-configuration-option) and
 [Spawn](https://wiki.sonolus.com/engine-specs/functions/spawn) inform the tests.
 See [the thread request audit](REQUESTS.md) for delivery vs verification status.
 
+Input calibration follows the [input contract](
+https://wiki.sonolus.com/engine-specs/essentials/input) and
+[Runtime Environment](https://wiki.sonolus.com/engine-specs/play-blocks/runtime-environment).
+The host supplies the selected per-engine offset before preprocessing, then
+subtracts the resulting environment value from touch `t` and `st` exactly once.
+Engines can modify that value during preprocessing; those changes are honored,
+including after restart. Raw frame time, velocity and music time are unchanged.
+Offsets are real seconds, independent of playback speed. Positive offsets
+compensate late inputs; negative offsets compensate early inputs. The ±250 ms
+UI range is host policy, not an engine judgment window. Legacy preferences use
+zero, and changing settings affects the next play rather than a live gesture.
+Audio/display calibration and end-to-end latency measurements remain separate
+unfinished work; input calibration does not establish synchronization.
+Independent read-only review found no correctness issues. Regressions cover
+engine-added offsets, invalid preprocessing writes, both signs, real-second
+units at 0.5×/1×/2× speed, unchanged motion/frame clocks, restart invalidation,
+fallback hold/miss deadlines, legacy defaults and per-engine persistence.
+On September 25, the normal simulator suite passed 211 of 212 tests; a
+documented simulator shutdown interrupted shake-it's no-touch test, which
+passed separately without code changes. All fixtures ran, with no skips.
+The normal app build succeeded with no build warnings. The settings preview
+timed out without a snapshot, so visual/device validation remains open.
+
 Accuracy follows the [public result-screen formula](
 https://wiki.sonolus.com/getting-started/explore/result-screen), using absolute
 errors from [EntityInput](https://wiki.sonolus.com/engine-specs/play-blocks/entity-input).

@@ -670,10 +670,80 @@ final class EngineHostTests: XCTestCase {
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
     let resized = try XCTUnwrap(model.engineRuntime)
     XCTAssertFalse(resized === changedSettings)
+    model.settings.inputOffsetMilliseconds = -30
+    model.restart()
+    model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
+    let calibrated = try XCTUnwrap(model.engineRuntime)
+    XCTAssertFalse(calibrated === resized)
+    XCTAssertEqual(calibrated.memory.value(block: 1000, index: 3), -0.03)
+    model.restart()
+    model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
+    XCTAssertTrue(model.engineRuntime === calibrated)
     model.restart()
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [],
       safeAreaInsets: UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 0))
-    XCTAssertFalse(model.engineRuntime === resized)
+    XCTAssertFalse(model.engineRuntime === calibrated)
+  }
+
+  func testInputCalibrationHonorsPreprocessAndKeepsFrameClockAndMotion() throws {
+    let b = RuntimeNodeBuilder()
+    func get(_ block: Double, _ index: Double) -> Int {
+      b.call("Get", [b.value(block), b.value(index)])
+    }
+    func set(_ block: Double, _ index: Double, _ value: Int) -> Int {
+      b.call("Set", [b.value(block), b.value(index), value])
+    }
+    // An engine may add its own adjustment before computing its input windows.
+    let preprocess = b.call("Execute", [
+      set(2000, 0, get(1000, 3)),
+      set(1000, 3, b.call("Add", [get(1000, 3), b.value(0.02)]))])
+    let judge = b.call("JudgeSimple", [get(1002, 4), b.value(1),
+      b.value(0.05), b.value(0.1), b.value(0.15)])
+    let touch = set(2000, 1, judge)
+    let engine = try b.engine(archetypes: [[
+      "name": "Note", "hasInput": true, "imports": [], "exports": [],
+      "preprocess": ["index": preprocess], "touch": ["index": touch]]])
+    let level = LevelData(bgmOffset: 0, entities: [
+      LevelEntity(archetype: "Note", name: nil, data: [])])
+    for speed in [0.5, 1, 2] {
+      for offset in [-0.25, 0, 0.25] {
+        let runtime = try EnginePlayRuntime(engine: engine, level: level,
+          options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+          particleEffectIDs: [], playbackSpeed: speed, inputOffset: offset)
+        let effective = offset + 0.02
+        XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), offset)
+        for _ in 0..<2 {
+          XCTAssertEqual(runtime.memory.value(block: 1000, index: 3), effective)
+          try runtime.update(at: 2, touches: [EngineTouch(id: 1,
+            started: true, ended: true, time: 1.1 + effective,
+            startTime: 1 + effective, position: EnginePoint(x: 0.2, y: 0.4),
+            startPosition: EnginePoint(x: 0, y: 0),
+            delta: EnginePoint(x: 0.1, y: 0.2),
+            velocity: EnginePoint(x: 3, y: 4))])
+          XCTAssertEqual(runtime.memory.value(block: 1001, index: 0), 2)
+          XCTAssertEqual(runtime.memory.value(block: 1002, index: 3), 1.1,
+            accuracy: 1e-12)
+          XCTAssertEqual(runtime.memory.value(block: 1002, index: 4), 1,
+            accuracy: 1e-12)
+          XCTAssertEqual(runtime.memory.value(block: 1002, index: 11), 3)
+          XCTAssertEqual(runtime.memory.value(block: 1002, index: 12), 4)
+          XCTAssertEqual(runtime.memory.value(block: 2000, index: 1), 1)
+          runtime.restart()
+        }
+      }
+    }
+    XCTAssertThrowsError(try EnginePlayRuntime(engine: engine, level: level,
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [], inputOffset: .nan))
+    let invalid = try b.engine(archetypes: [[
+      "name": "Note", "hasInput": true, "imports": [], "exports": [],
+      "preprocess": ["index": set(1000, 3,
+        b.call("Divide", [b.value(0), b.value(0)]))]]])
+    let runtime = try EnginePlayRuntime(engine: invalid, level: level,
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    XCTAssertThrowsError(try runtime.update(at: 2))
+    XCTAssertEqual(runtime.memory.value(block: 1001, index: 0), 0)
   }
 
   func testRestartRestoresPreparationWithoutRerollingOrLeakingPlayState() throws {

@@ -369,6 +369,18 @@ private struct GameplaySettingsPanel: View {
           Text("Early/Late uses the engine’s timing-display threshold, including qualifying PERFECT judgements.")
             .font(.footnote).foregroundStyle(.secondary)
         }
+        Section("Input Timing") {
+          LabeledContent("Offset",
+            value: String(format: "%+.0f ms", settings.inputOffsetMilliseconds))
+          Slider(value: $settings.inputOffsetMilliseconds,
+            in: -250...250, step: 1)
+            .accessibilityLabel("Input Timing Offset in milliseconds")
+          Stepper("Adjust by 1 ms", value: $settings.inputOffsetMilliseconds,
+            in: -250...250, step: 1)
+          Text("Negative values compensate for early inputs; positive values compensate for late inputs. This does not change music timing or judgment-window sizes.")
+            .font(.footnote).foregroundStyle(.secondary)
+          Button("Reset Input Timing") { settings.inputOffsetMilliseconds = 0 }
+        }
         Section("Graphics") {
           if let forcedSkinRenderMode {
             LabeledContent("Render Mode", value: forcedSkinRenderMode.title)

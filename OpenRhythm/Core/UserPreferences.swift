@@ -37,22 +37,35 @@ struct GameplayPreferences: Codable, Equatable {
   var scoreMode: Int? = nil
   var engineOptions: [String: Double] = [:]
   var skinRenderMode = EngineSkinRenderMode.standard
+  var inputOffsetMilliseconds: Double = 0 {
+    didSet {
+      inputOffsetMilliseconds = Self.clampedInputOffset(inputOffsetMilliseconds)
+    }
+  }
+
+  static func clampedInputOffset(_ value: Double) -> Double {
+    value.isFinite ? min(250, max(-250, value)) : 0
+  }
+
+  var inputOffsetSeconds: Double { inputOffsetMilliseconds / 1000 }
 
   init(scoreDisplay: ScoreDisplayMode = .countUp, noteSpeed: Double? = nil,
     judgementDisplay: JudgementDisplayMode = .timing, scoreMode: Int? = nil,
     engineOptions: [String: Double] = [:],
-    skinRenderMode: EngineSkinRenderMode = .standard) {
+    skinRenderMode: EngineSkinRenderMode = .standard,
+    inputOffsetMilliseconds: Double = 0) {
     self.scoreDisplay = scoreDisplay
     self.noteSpeed = noteSpeed
     self.judgementDisplay = judgementDisplay
     self.scoreMode = scoreMode
     self.engineOptions = engineOptions
     self.skinRenderMode = skinRenderMode
+    self.inputOffsetMilliseconds = Self.clampedInputOffset(inputOffsetMilliseconds)
   }
 
   private enum CodingKeys: String, CodingKey {
     case scoreDisplay, noteSpeed, judgementDisplay, scoreMode, engineOptions
-    case skinRenderMode
+    case skinRenderMode, inputOffsetMilliseconds
   }
 
   init(from decoder: Decoder) throws {
@@ -67,6 +80,9 @@ struct GameplayPreferences: Codable, Equatable {
       forKey: .judgementDisplay) ?? .timing
     skinRenderMode = try values.decodeIfPresent(EngineSkinRenderMode.self,
       forKey: .skinRenderMode) ?? .standard
+    inputOffsetMilliseconds = Self.clampedInputOffset(
+      try values.decodeIfPresent(Double.self,
+        forKey: .inputOffsetMilliseconds) ?? 0)
   }
 }
 
