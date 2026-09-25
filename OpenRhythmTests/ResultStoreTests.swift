@@ -168,7 +168,66 @@ final class ResultStoreTests: XCTestCase {
       NoteTiming(id: $0, songTime: Double($0), noteType: "TapNote",
         judgement: .perfect, accuracy: Double($0) / 50000)
     }
-    XCTAssertLessThan(PlayStatistics(samples: many).density.count, 1024)
+    // Narrower kernels preserve local peaks. Geometry is still bounded by
+    // the range/bandwidth ratio rather than growing one mark per input.
+    XCTAssertLessThan(PlayStatistics(samples: many).density.count, 16_384)
+  }
+
+  func testDensityKeepsNearbyPeaksSharpAndIndependentOfSampleCount() {
+    func sample(_ id: Int, _ error: Double) -> NoteTiming {
+      NoteTiming(id: id, songTime: Double(id), noteType: "Tap",
+        judgement: .perfect, accuracy: error)
+    }
+    let sparse = PlayStatistics(samples: [sample(0, -0.006), sample(1, 0.006)])
+    let dense = PlayStatistics(samples: (0..<200).map {
+      sample($0, $0.isMultiple(of: 2) ? -0.006 : 0.006)
+    })
+    XCTAssertEqual(sparse.bandwidthMS, 1)
+    XCTAssertEqual(dense.bandwidthMS, sparse.bandwidthMS)
+    XCTAssertEqual(dense.density.first { $0.timingMS == 0 }?.density, 0)
+    XCTAssertGreaterThan(dense.density.filter {
+      abs($0.timingMS - 6) < 0.2
+    }.map(\.density).max() ?? 0, 70)
+    for scale in [0.001, 1, 1000] {
+      let broad = PlayStatistics(samples: (0..<10_000).map {
+        NoteTiming(id: $0, songTime: Double($0), noteType: "Tap",
+          judgement: [.perfect, .great, .good][$0 % 3],
+          accuracy: Double($0 - 5000) / 5000 * scale)
+      })
+      XCTAssertLessThan(broad.density.count, 16_384)
+      XCTAssertTrue(broad.density.allSatisfy { $0.density.isFinite })
+      let ticks = broad.distributionTicksMS
+      XCTAssertEqual(ticks[ticks.count / 2], 0)
+      XCTAssertEqual(ticks, ticks.reversed().map { -$0 })
+      XCTAssertLessThanOrEqual(ticks.last!, broad.distributionLimitMS * 0.85)
+    }
+  }
+
+  func testNormalizedDensityPreservesKernelShapeAndDisconnectedSupportGaps() {
+    let errors = [-0.015, -0.0148, 0.018, 0.06]
+    let stats = PlayStatistics(samples: errors.enumerated().map { index, error in
+      NoteTiming(id: index, songTime: Double(index), noteType: "Tap",
+        judgement: .great, accuracy: error)
+    })
+    let h = stats.bandwidthMS
+    var scale: Double?
+    for point in stats.density {
+      let reference = errors.reduce(0.0) { sum, error in
+        let t = (point.timingMS - error * 1000) / h
+        return sum + max(0, 0.75 * (1 - t * t) / h)
+      }
+      if reference > 1e-6 {
+        if scale == nil { scale = point.density / reference }
+        XCTAssertEqual(point.density, reference * scale!, accuracy: 1e-8)
+      } else {
+        XCTAssertEqual(point.density, 0, accuracy: 1e-8)
+      }
+    }
+    // Both polygon endpoints bracketing a gap must be zero: an integral alone
+    // would miss false bridges after the polygon is normalized to note count.
+    let gap = stats.density.filter { (-13...16).contains($0.timingMS) }
+    XCTAssertGreaterThan(gap.count, 2)
+    XCTAssertTrue(gap.allSatisfy { $0.density == 0 })
   }
   func testEngineLifeAndFailureSurviveHistoryRoundTrip() throws {
     var play = result(levelID: "life", perfect: 9)

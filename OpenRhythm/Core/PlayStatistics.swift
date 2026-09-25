@@ -165,17 +165,11 @@ struct PlayStatistics {
     excludedHoldTicks = timed.count - distribution.count
     distributionCount = distribution.count
     let values = distribution.map { $0.accuracy! * 1000 }.sorted()
-    let mean = values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
-    let sigma = values.isEmpty ? 0 : sqrt(values.reduce(0) {
-      $0 + pow($1 - mean, 2)
-    } / Double(values.count))
-    let iqr = values.isEmpty ? 0 : values[(values.count - 1) * 3 / 4]
-      - values[(values.count - 1) / 4]
-    let scale = iqr > 0 ? min(sigma, iqr / 1.349) : sigma
-    // Limit the resolution for pathological, hours-wide stored errors too.
-    // This is smoothing, not data binning: every input still contributes.
-    bandwidthMS = max(1, (values.map(abs).max() ?? 0) / 1024,
-      2.34 * scale * pow(Double(max(1, values.count)), -0.2))
+    // A narrow compact kernel keeps the histogram-like structure of actual
+    // inputs instead of smoothing across a whole judgment window. Widen only
+    // for very broad ranges to bound the sampled geometry, not with note count
+    // or statistical spread. Every input still contributes; these are not bins.
+    bandwidthMS = max(1, (values.map(abs).max() ?? 0) / 256)
     distributionLimitMS = max(25, (values.map(abs).max() ?? 0) + bandwidthMS)
     let bandwidthMS = bandwidthMS
     let distributionLimitMS = distributionLimitMS
@@ -226,9 +220,20 @@ struct PlayStatistics {
           .map { $0.accuracy! * 1000 }.sorted()
         guard !group.isEmpty else { continue }
         let kernel = TimingDensity(values: group, bandwidth: bandwidthMS)
+        let heights = positionsInOrder.map { kernel.value(at: $0) }
+        // The chart draws straight edges between samples. Normalize that
+        // polygon's area, so narrow kernels don't lose judgment mass to the
+        // trapezoidal approximation. This never moves peaks or fills gaps.
+        let area = zip(positionsInOrder.indices,
+          positionsInOrder.indices.dropFirst()).reduce(0.0) { sum, pair in
+          sum + (heights[pair.0] + heights[pair.1]) / 2
+            * (positionsInOrder[pair.1] - positionsInOrder[pair.0])
+        }
+        let normalization = area > 0 && area.isFinite
+          ? Double(group.count) / area : 1
         for (index, x) in positionsInOrder.enumerated() {
           curve.append(DensityPoint(index: index, judgement: judgement,
-            timingMS: x, density: kernel.value(at: x)))
+            timingMS: x, density: heights[index] * normalization))
         }
       }
     }
@@ -236,6 +241,15 @@ struct PlayStatistics {
   }
 
   var misses: Int { samples.filter { $0.judgement == .miss }.count }
+  /// Symmetric, readable ticks with room for edge labels inside the plot card.
+  var distributionTicksMS: [Double] {
+    let target = distributionLimitMS / 4
+    let magnitude = pow(10, floor(log10(target)))
+    let step = ([1.0, 2, 5, 10].first { $0 * magnitude >= target } ?? 10)
+      * magnitude
+    let count = max(1, Int(floor(distributionLimitMS * 0.85 / step)))
+    return (-count...count).map { Double($0) * step }
+  }
   var early: Int { timingsMS.filter { $0 < 0 }.count }
   var late: Int { timingsMS.filter { $0 > 0 }.count }
   var exact: Int { timingsMS.filter { $0 == 0 }.count }

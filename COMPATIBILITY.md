@@ -400,7 +400,21 @@ On September 25, the normal simulator suite passed 211 of 212 tests; a
 documented simulator shutdown interrupted shake-it's no-touch test, which
 passed separately without code changes. All fixtures ran, with no skips.
 The normal app build succeeded with no build warnings. The settings preview
-timed out without a snapshot, so visual/device validation remains open.
+initially timed out; a later iPhone 17 Pro/iOS 27 preview verifies the calibration
+controls and explanatory text. Physical input/latency validation remains open.
+
+The result-screen distribution uses narrow continuous Epanechnikov kernels:
+bandwidth is max(1 ms, maximum absolute error / 256). This preserves the jagged
+peaks requested from the ITG reference without copying its palette. Both result
+plots use Swift Charts' default judgment colors; explicitly requested red miss
+lines remain red. Sampled polygon areas are normalized per judgment to retain
+note counts despite straight-edge approximation. Explicit support boundaries
+prevent interpolation through empty gaps. Broader error ranges widen kernels
+to bound geometry independently of input count; 10,000-input tests across three
+scales remain below 16,384 marks. This is result analysis, not the live HUD
+heatmap, whose streaming contract is unchanged. Twenty-one focused result tests
+pass; native light/dark, zero-only, empty, dense, outlier and accessibility-size
+previews were inspected. No gameplay clocks or judgment windows changed.
 
 Accuracy follows the [public result-screen formula](
 https://wiki.sonolus.com/getting-started/explore/result-screen), using absolute

@@ -68,8 +68,7 @@ struct ResultStatisticsSections: View {
   }
 }
 
-private let judgementLabels = ["PERFECT", "GREAT", "GOOD", "MISS"]
-private let judgementColors: [Color] = [.cyan, .green, .orange, .red]
+private let judgementLabels = ["PERFECT", "GREAT", "GOOD"]
 
 struct TimingScatterplot: View {
   let stats: PlayStatistics
@@ -105,7 +104,7 @@ struct TimingScatterplot: View {
         }
       }
     }
-    .chartForegroundStyleScale(domain: judgementLabels, range: judgementColors)
+    .chartForegroundStyleScale(domain: judgementLabels)
     .chartXScale(domain: timeRange)
     .chartYScale(domain: -stats.timingLimitMS...stats.timingLimitMS)
     .chartXAxisLabel("Song time (s)")
@@ -117,37 +116,67 @@ struct TimingScatterplot: View {
 
 struct TimingHistogram: View {
   let stats: PlayStatistics
+  @ScaledMetric(relativeTo: .caption) private var chartHeight: CGFloat = 200
 
   private var errorRange: ClosedRange<Double> {
     (-stats.distributionLimitMS)...stats.distributionLimitMS
   }
 
   var body: some View {
-    Chart {
-      ForEach(stats.density) { point in
-        AreaMark(x: .value("Timing error", point.timingMS),
-          y: .value("Density", point.density), stacking: .standard)
-          .foregroundStyle(by: .value("Judgement",
-            point.judgement.rawValue.uppercased()))
-          .interpolationMethod(.linear)
+    VStack(spacing: 8) {
+      HStack {
+        Text("EARLY")
+        Spacer()
+        Text("LATE")
       }
-      RuleMark(x: .value("Perfect timing", 0))
-        .foregroundStyle(.secondary.opacity(0.5))
-        .lineStyle(StrokeStyle(lineWidth: 0.5))
-    }
-    .chartForegroundStyleScale(domain: Array(judgementLabels.prefix(3)),
-      range: Array(judgementColors.prefix(3)))
-    .chartXScale(domain: errorRange)
-    .chartXAxisLabel("Early ← Timing error (ms) → Late")
-    .chartYAxisLabel("Density (notes/ms)")
-    .frame(height: 200)
-    .accessibilityLabel("Timing error distribution, colored by judgement")
-    .overlay {
-      if stats.distributionCount == 0 {
-        Text("No timed hits").foregroundStyle(.secondary)
+      .font(.caption.weight(.semibold))
+      .foregroundStyle(.secondary)
+      Chart {
+        ForEach(stats.density) { point in
+          AreaMark(x: .value("Timing error", point.timingMS),
+            y: .value("Density", point.density), stacking: .standard)
+            .foregroundStyle(by: .value("Judgement",
+              point.judgement.rawValue.uppercased()))
+            .interpolationMethod(.linear)
+        }
+        RuleMark(x: .value("Perfect timing", 0))
+          .foregroundStyle(.primary.opacity(0.65))
+          .lineStyle(StrokeStyle(lineWidth: 0.75))
+      }
+      .chartForegroundStyleScale(domain: judgementLabels)
+      .chartXScale(domain: errorRange)
+      .chartYScale(domain: .automatic(includesZero: true))
+      .chartXAxis {
+        AxisMarks(preset: .aligned, values: stats.distributionTicksMS) { value in
+          AxisTick().foregroundStyle(.secondary)
+          AxisValueLabel(centered: false,
+            anchor: .top, horizontalSpacing: 0) {
+            if let timing = value.as(Double.self) {
+              Text(timing.formatted(.number.notation(.compactName)
+                .precision(.fractionLength(0...1))))
+            }
+          }
+            .foregroundStyle(.secondary)
+        }
+      }
+      .chartYAxis(.hidden)
+      .chartXAxisLabel("Timing error (ms)")
+      .chartLegend(position: .bottom, spacing: 8)
+      .foregroundStyle(.secondary)
+      .frame(height: chartHeight)
+      .accessibilityLabel("Timing error distribution, colored by judgement")
+      .accessibilityValue("\(stats.distributionCount) timed hits. Vertical height is density in notes per millisecond.")
+      .overlay {
+        if stats.distributionCount == 0 {
+          Text("No timed hits").foregroundStyle(.secondary)
+        }
       }
     }
+    .padding(12)
+    .background(Color(.secondarySystemGroupedBackground),
+      in: RoundedRectangle(cornerRadius: 10))
   }
+
 }
 
 #Preview("Timing Charts") {
@@ -173,4 +202,28 @@ struct TimingHistogram: View {
       accuracy: Double(index % 11 - 5) * 0.006)
   }
   Form { TimingHistogram(stats: PlayStatistics(samples: samples)) }
+}
+
+#Preview("Distribution States", traits: .fixedLayout(width: 420, height: 1180)) {
+  let dense = (0..<500).map { index in
+    let x = Double(index)
+    let error = (sin(x * 1.37) + sin(x * 2.17) + sin(x * 0.79)) * 0.028 - 0.008
+    return NoteTiming(id: index, songTime: x, noteType: "Tap",
+      judgement: abs(error) < 0.025 ? .perfect : abs(error) < 0.055 ? .great : .good,
+      accuracy: error)
+  }
+  VStack(spacing: 8) {
+    TimingHistogram(stats: PlayStatistics(samples: dense))
+    TimingHistogram(stats: PlayStatistics(samples: [
+      NoteTiming(id: 0, songTime: 0, noteType: "Tap",
+        judgement: .perfect, accuracy: 0)]))
+    TimingHistogram(stats: PlayStatistics(samples: []))
+    TimingHistogram(stats: PlayStatistics(samples: [
+      NoteTiming(id: 0, songTime: 0, noteType: "Tap",
+        judgement: .perfect, accuracy: 0),
+      NoteTiming(id: 1, songTime: 1, noteType: "Tap",
+        judgement: .good, accuracy: 1)]))
+  }
+  .padding()
+  .background(Color(.systemGroupedBackground))
 }

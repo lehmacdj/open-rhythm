@@ -6,7 +6,7 @@ phone audio alignment, touch handling, or frame pacing is correct.
 
 ## Live-play follow-up — September 25, 2026
 
-These requests are open, not certified by the existing offline probes:
+Status of the live-play follow-ups; offline probes do not certify live sync:
 
 - Investigate the reported audio/animation timing difference thoroughly across
   engines. Trace audio presentation, chart/render timestamps, display delivery
@@ -39,16 +39,26 @@ These requests are open, not certified by the existing offline probes:
   Independent review found no calibration correctness issue. All 212 tests
   passed across the full run and a rerun of shake-it's no-touch test after a
   simulator shutdown; this was not an uninterrupted suite. The normal build
-  passed without warnings. Settings visual verification remains open because
-  Xcode's preview timed out without producing an image.
+  passed without warnings. The settings preview initially timed out; a later
+  iPhone 17 Pro/iOS 27 render now verifies the offset, slider, stepper, explanatory
+  text and reset control without truncation. Physical interaction remains open.
 - Redesign the results timing distribution using the supplied ITG evaluation
-  photo as the visual reference: a crisp, high-contrast filled silhouette,
-  saturated judgment colors, a clear centered zero and Early/Late labels,
-  without the current washed-out overlapping areas. Retain shared note-type
+  photo as the visual reference for jagged peaks, not its colors. Use Swift
+  Charts' default palette and normal light/dark appearance, a clear centered
+  zero and Early/Late labels. Retain shared note-type
   filtering and exclusion of automatic intermediate hold ticks. Prefer a
   continuous representation where practical; verify sparse, dense, zero-only
   and outlier cases plus light/dark appearance. The photo is a design reference,
   not a source for this app's judgment windows or score rules.
+  Implemented with narrow continuous kernels (1 ms, widened only for very broad
+  ranges to bound drawing work). The sampled polygon is normalized per judgment
+  so its area retains all note contributions without filling support gaps.
+  Twenty-one result/statistics tests pass, including direct kernel-shape, gap,
+  mass, nearby-peak, outlier, hold-exclusion and bounded-work regressions.
+  Native previews verify dense, exact-zero, empty and outlier states in both
+  appearances; an accessibility-size preview prompted scaling chart height so
+  enlarged labels do not consume the plot. Independent review found no
+  correctness issue; its additional explicit support-gap regression was added.
 
 ## Implemented and regression-covered
 
