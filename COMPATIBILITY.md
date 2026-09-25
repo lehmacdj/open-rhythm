@@ -557,6 +557,41 @@ remained near zero, even when raw startup differences reached approximately
 seek floors, negative raw values and all three speeds. No gameplay timing
 behavior, calibration or judgment windows changed. Three focused tests passed
 on both simulator and device; the final device build passed without warnings.
+
+## Metal display scheduling follow-up (physical comparison pending)
+
+The playfield now uses `CAMetalDisplayLink` on the existing iOS 17 minimum,
+with `preferredFrameLatency = 1`. The renderer consumes the drawable supplied
+by the update instead of calling `nextDrawable` a second time. Diagnostics
+use `targetPresentationTimestamp` (intended display time), not the distinct
+Metal submission deadline. Software rendering retains `CADisplayLink`.
+Both asset-preparation and drawing failures switch the display driver along
+with the renderer. Window removal invalidates the link; reattachment creates
+a new one. Chart, input, audio and judgment clocks are unchanged.
+
+This follows Apple's documented
+[Metal display-link contract](https://developer.apple.com/documentation/quartzcore/cametaldisplaylink)
+and [one/two-frame latency preference](https://developer.apple.com/documentation/quartzcore/cametaldisplaylink/preferredframelatency).
+The initial real-window simulator regression passed on September 25 at 01:46.
+The simulator cannot measure drawable presentation timestamps. Physical
+before/after comparison is still pending because thyme5 locked again; do not
+interpret the API change itself as proof of lower latency. The prior measured
+33.76–34.12 ms sample-to-present means are the unchanged-driver baseline.
+The display-target difference is not directly comparable between driver APIs;
+sample-to-actual-presentation age remains the common end-to-end measurement.
+
+Verification: the September 25 01:47 full simulator run passed 227 tests,
+including all six cached-engine lifecycle/stress checks. The software-fallback
+test added while that run was active was correctly reported as not run.
+At 01:52 it passed in a separate seven-test focused run, together with live
+Metal/player clocks, manual player clocks, detach/reattach, native drawable
+delivery, upright sprites/translucent connectors and both curved-rendering
+backends. Thus all 228 tests have passing evidence, not in a single final
+suite run. The final physical-device build at 01:53 passed. Independent
+read-only review found no remaining actionable issue; it did not run tests.
+The fallback regression exercises the real attached-view driver handoff, not
+an injected GPU/encoding failure inside an in-flight frame. This unit remains
+local until its physical presentation behavior is checked.
 Independent review also prompted rejecting repeated reads of a stale frame:
 the native test now requires distinct frame timestamps and continued runtime
 advancement during observation. All 17 clock/diagnostics tests pass together on

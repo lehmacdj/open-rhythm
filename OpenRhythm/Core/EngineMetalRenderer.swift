@@ -76,7 +76,8 @@ final class EngineMetalRenderer {
   }
 
   func draw(host: CommandEngineRuntimeHost, assets: EnginePresentationAssets,
-    size: CGSize, timing: PlaybackFrameTiming? = nil
+    size: CGSize, timing: PlaybackFrameTiming? = nil,
+    drawable suppliedDrawable: CAMetalDrawable? = nil
   ) throws {
     guard size.width > 0, size.height > 0 else { return }
     guard inFlight.wait(timeout: .now()) == .success else {
@@ -84,7 +85,10 @@ final class EngineMetalRenderer {
       return
     }
     let drawableStart = timing.map { _ in CACurrentMediaTime() }
-    guard let drawable = layer.nextDrawable(), let buffer = queue.makeCommandBuffer()
+    // A Metal display-link update already owns the drawable for this refresh.
+    // Acquiring another would bypass its scheduling and occupy a second slot.
+    guard let drawable = suppliedDrawable ?? layer.nextDrawable(),
+      let buffer = queue.makeCommandBuffer()
     else {
       timing?.recorder.increment(.noDrawable)
       inFlight.signal()

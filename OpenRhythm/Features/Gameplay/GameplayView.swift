@@ -834,13 +834,15 @@ private struct EnginePlayfield: UIViewRepresentable {
   }
 }
 
-final class EnginePlayfieldView: UIView {
+final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
   weak var model: GameplayModel? {
     didSet {
       if oldValue !== model { touchPool = EngineTouchPool() }
     }
   }
   private var displayLink: CADisplayLink?
+  private var metalDisplayLink: CAMetalDisplayLink?
+  var isUsingMetalDisplayLink: Bool { metalDisplayLink != nil }
   private var touchPool = EngineTouchPool<ObjectIdentifier>()
   private var metal: EngineMetalRenderer?
   private let backgroundLayer = EngineBackgroundLayer()
@@ -870,10 +872,16 @@ final class EnginePlayfieldView: UIView {
     do {
       try metal?.prepare(assets)
     } catch {
-      metal?.layer.removeFromSuperlayer()
-      metal = nil
-      softwareSurface.isHidden = false
+      fallBackToSoftware()
     }
+  }
+
+  func fallBackToSoftware() {
+    metal?.layer.removeFromSuperlayer()
+    metal = nil
+    softwareSurface.isHidden = false
+    startDisplayLink()
+    softwareSurface.setNeedsDisplay()
   }
 
   override func layoutSubviews() {
@@ -884,27 +892,49 @@ final class EnginePlayfieldView: UIView {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
+    startDisplayLink()
+  }
+
+  private func startDisplayLink() {
     displayLink?.invalidate()
     displayLink = nil
+    metalDisplayLink?.invalidate()
+    metalDisplayLink = nil
     if window != nil {
-      let link = CADisplayLink(target: self, selector: #selector(updateFrame))
-      link.add(to: .main, forMode: .common)
-      displayLink = link
+      if let metal {
+        let link = CAMetalDisplayLink(metalLayer: metal.layer)
+        link.delegate = self
+        link.preferredFrameLatency = 1
+        link.add(to: .main, forMode: .common)
+        metalDisplayLink = link
+      } else {
+        let link = CADisplayLink(target: self, selector: #selector(updateFrame))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+      }
     }
   }
 
   @objc private func updateFrame() {
-    advanceFrame(present: true)
+    advanceFrame(targetHostTime: displayLink?.targetTimestamp)
   }
 
-  private func advanceFrame(present: Bool) {
+  func metalDisplayLink(_ link: CAMetalDisplayLink,
+    needsUpdate update: CAMetalDisplayLink.Update) {
+    guard link === metalDisplayLink else { return }
+    advanceFrame(targetHostTime: update.targetPresentationTimestamp,
+      drawable: update.drawable)
+  }
+
+  private func advanceFrame(targetHostTime: Double?,
+    drawable: CAMetalDrawable? = nil) {
     guard let model else { return }
     touchPool.beginPlayback(generation: model.playbackGeneration)
     let sampleTime = model.playbackTime
     model.engineFrame(size: bounds.size,
       touches: touchPool.touches, safeAreaInsets: safeAreaInsets)
     touchPool.nextFrame(at: sampleTime)
-    guard present, !model.isStartingPlayback else { return }
+    guard !model.isStartingPlayback else { return }
     if let memory = model.engineRuntime?.memory {
       backgroundLayer.update(quad: (0..<8).map { memory.value(block: 1005, index: $0) },
         size: bounds.size)
@@ -913,15 +943,12 @@ final class EnginePlayfieldView: UIView {
       let assets = model.presentationAssets {
       do {
         var timing = model.frameTiming
-        timing?.targetHostTime = displayLink?.targetTimestamp
+        timing?.targetHostTime = targetHostTime
         try metal.draw(host: runtime.host, assets: assets, size: bounds.size,
-          timing: timing)
+          timing: timing, drawable: drawable)
       } catch {
         // Keep a functioning software path if this device cannot render Metal.
-        metal.layer.removeFromSuperlayer()
-        self.metal = nil
-        softwareSurface.isHidden = false
-        softwareSurface.setNeedsDisplay()
+        fallBackToSoftware()
       }
     } else if metal == nil {
       softwareSurface.setNeedsDisplay()

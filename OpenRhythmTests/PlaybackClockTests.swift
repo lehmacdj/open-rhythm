@@ -5,6 +5,29 @@ import UIKit
 @testable import OpenRhythm
 
 final class PlaybackClockTests: XCTestCase {
+  @MainActor
+  func testMetalDisplayLinkFollowsPlayfieldWindowLifetime() throws {
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }.first)
+    let priorKeyWindow = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    let controller = UIViewController()
+    window.rootViewController = controller
+    defer { window.isHidden = true; priorKeyWindow?.makeKey() }
+    let playfield = EnginePlayfieldView(frame:
+      CGRect(x: 0, y: 0, width: 300, height: 500))
+    XCTAssertFalse(playfield.isUsingMetalDisplayLink)
+    controller.view.addSubview(playfield)
+    window.makeKeyAndVisible()
+    XCTAssertTrue(playfield.isUsingMetalDisplayLink)
+    playfield.removeFromSuperview()
+    XCTAssertFalse(playfield.isUsingMetalDisplayLink)
+    controller.view.addSubview(playfield)
+    XCTAssertTrue(playfield.isUsingMetalDisplayLink)
+    playfield.removeFromSuperview()
+    XCTAssertFalse(playfield.isUsingMetalDisplayLink)
+  }
+
   func testScheduledAudioStartClampsInputWithoutHidingRawClockDifference() {
     for speed in [0.5, 1.0, 2.0] {
       let mapping = BGMClockMapping(offset: 0.25, speed: speed)
@@ -32,7 +55,13 @@ final class PlaybackClockTests: XCTestCase {
   }
 
   @MainActor
-  private func checkLiveClocks(nativePlayfield: Bool) async throws {
+  func testSoftwareFallbackKeepsDisplayDrivenClockAdvancing() async throws {
+    try await checkLiveClocks(nativePlayfield: true, softwareFallback: true)
+  }
+
+  @MainActor
+  private func checkLiveClocks(nativePlayfield: Bool,
+    softwareFallback: Bool = false) async throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("live-clock-\(UUID())")
     try FileManager.default.createDirectory(at: directory,
@@ -93,6 +122,11 @@ final class PlaybackClockTests: XCTestCase {
       playfield.prepareAssets()
       controller.view.addSubview(playfield)
       nativeWindow.makeKeyAndVisible()
+      XCTAssertTrue(playfield.isUsingMetalDisplayLink)
+      if softwareFallback {
+        playfield.fallBackToSoftware()
+        XCTAssertFalse(playfield.isUsingMetalDisplayLink)
+      }
       window = nativeWindow
     }
     defer { window?.isHidden = true; priorKeyWindow?.makeKey() }
@@ -159,7 +193,7 @@ final class PlaybackClockTests: XCTestCase {
       XCTAssertGreaterThan(report.metrics[
         PlaybackTimingMetric.clockDifference.rawValue]?.count ?? 0, 0,
         "Must exercise the real player timebase, not a fallback clock")
-      if nativePlayfield {
+      if nativePlayfield && !softwareFallback {
         XCTAssertGreaterThan(report.counters[
           PlaybackTimingCounter.submitted.rawValue] ?? 0, 0)
         #if !targetEnvironment(simulator)
@@ -170,7 +204,12 @@ final class PlaybackClockTests: XCTestCase {
         #endif
         print(report.text)
       }
-      print("Live clocks (native playfield: \(nativePlayfield)) \(speed)×: mean difference \(mean * 1000) ms, "
+      if softwareFallback {
+        XCTAssertGreaterThan(report.counters[
+          PlaybackTimingCounter.software.rawValue] ?? 0, 0)
+        XCTAssertNil(report.counters[PlaybackTimingCounter.submitted.rawValue])
+      }
+      print("Live clocks (native: \(nativePlayfield), software: \(softwareFallback)) \(speed)×: mean difference \(mean * 1000) ms, "
         + "max absolute \(maximum * 1000) ms, \(differences.count) samples")
     }
   }

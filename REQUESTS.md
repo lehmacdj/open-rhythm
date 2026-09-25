@@ -14,11 +14,11 @@ Status of the live-play follow-ups; offline probes do not certify live sync:
   Distinguish clock bugs from output/display latency; do not guess a default
   correction from the reported excess Earlies. Prioritize this alongside live
   frame-pacing checks, not only particle or curved-hold CPU benchmarks.
-  September 25 source trace: `engineFrame` samples the AVPlayer-derived chart
+  Initial September 25 source trace: `engineFrame` samples the AVPlayer-derived chart
   clock before runtime work; sprite generation/Metal encoding follows, and
   presentation is queued as soon as possible. The display-link target and
-  drawable's actual presentation timestamp are not currently recorded. This
-  leaves a measurable render-age gap, not a proven cause or correction value.
+  drawable's actual presentation timestamp were not recorded at that point.
+  This left a measurable render-age gap, not a proven cause or correction value.
   Measure sample-to-present age and audio-route/output latency together before
   changing display prediction or applying audio compensation. Touch timestamps
   already use the player's timebase rather than delayed event delivery time.
@@ -51,6 +51,15 @@ Status of the live-play follow-ups; offline probes do not certify live sync:
   now labeled separately from the seek-clamped input clock. This is a concrete
   rendering investigation lead, not an acoustic correction or dense-chart
   performance sign-off; no gameplay timing offset was changed.
+  The next rendering change uses `CAMetalDisplayLink` with one-frame preferred
+  latency and the update's supplied drawable/presentation target. It does not
+  predict or shift chart/input time. The initial live-window simulator probe
+  passes. All 227 tests in the full simulator run passed; the added live
+  software-fallback test and six focused regressions passed afterward.
+  Detach/reattach is covered, the device build passes, and independent review
+  found no further issue after centralizing both software-fallback paths.
+  Physical before/after latency comparison remains pending.
+  This scheduling change is not yet pushed or claimed to improve device sync.
 - Add persistent manual timing overrides in Gameplay Settings so the player
   can compensate for observed bias. Define adjustment direction and units
   clearly, provide a neutral default/reset, and distinguish visual alignment
