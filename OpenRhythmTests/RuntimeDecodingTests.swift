@@ -1,6 +1,7 @@
 import XCTest
 import UIKit
 import Metal
+import SwiftUI
 @testable import OpenRhythm
 
 /// Opt-in integration tests: independently obtained assets stay in the app's
@@ -1120,6 +1121,61 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(config.ui?.secondaryMetric, "life")
   }
 
+  func testUIAnimationPreservesExtendedValuesAndEasingOvershoot() throws {
+    func tween(_ from: Double, _ to: Double, _ duration: Double,
+      _ ease: String = "linear") throws -> EngineConfiguration.UI.Animation.Tween {
+      try JSONDecoder().decode(EngineConfiguration.UI.Animation.Tween.self,
+        from: JSONSerialization.data(withJSONObject: ["from": from,
+          "to": to, "duration": duration, "ease": ease]))
+    }
+    let overshoot = try tween(0, 1024, 1, "outBack")
+    // Independent polynomial: outBack(0.5) = 1 + 0.125 * 1.70158 - 0.125.
+    XCTAssertEqual(overshoot.value(at: 0.5), 1113.80224, accuracy: 1e-8)
+    let long = try tween(-2048, 2048, 7200)
+    XCTAssertEqual(long.value(at: 0), -2048)
+    XCTAssertEqual(long.value(at: 3600), 0)
+    XCTAssertEqual(long.value(at: 7200), 2048)
+    let large = try tween(-Double.greatestFiniteMagnitude,
+      Double.greatestFiniteMagnitude, 1)
+    XCTAssertEqual(large.value(at: 0.5), 0)
+    let inward = try tween(0.95 * Double.greatestFiniteMagnitude,
+      Double.greatestFiniteMagnitude, 1, "inBack")
+    XCTAssertEqual(inward.value(at: 0.5) / Double.greatestFiniteMagnitude,
+      0.945615125, accuracy: 1e-12)
+  }
+
+  @MainActor
+  func testExtendedUIAnimationScalesRenderInBoundedViewport() throws {
+    for scale in [1.0, 2048, -2048, 1e300, Double.greatestFiniteMagnitude] {
+      let tween: [String: Any] = ["from": scale, "to": scale,
+        "duration": 0, "ease": "linear"]
+      let animation = try JSONDecoder().decode(
+        EngineConfiguration.UI.Animation.self,
+        from: JSONSerialization.data(withJSONObject: ["scale": tween,
+          "alpha": ["from": 1, "to": 1, "duration": 0, "ease": "linear"]]))
+      // Exercise the production scaleEffect path inside a screen-sized clip.
+      // This guards framework safety, not native-client rasterization parity.
+      let view = EngineComboText(combo: 123, animation: animation)
+        .frame(width: 320, height: 120).clipped()
+      let renderer = ImageRenderer(content: view)
+      let image = try XCTUnwrap(renderer.cgImage, "scale \(scale)")
+      XCTAssertEqual(image.width, 320)
+      XCTAssertEqual(image.height, 120)
+      if scale == 1 {
+        let context = try XCTUnwrap(CGContext(data: nil, width: image.width,
+          height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo:
+            CGImageAlphaInfo.premultipliedLast.rawValue
+              | CGBitmapInfo.byteOrder32Big.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 320, height: 120))
+        let pixels = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        XCTAssertTrue(stride(from: 3, to: 320 * 120 * 4, by: 4).contains {
+          pixels[$0] != 0
+        }, "The control must contain text, not only a blank viewport")
+      }
+    }
+  }
+
   @MainActor
   func testPresentationEnumsValidateBeforeGameplayCanStart() throws {
     let metrics = ["arcade", "arcadePercentage", "accuracy", "accuracyPercentage",
@@ -1203,8 +1259,8 @@ final class RuntimeDecodingTests: XCTestCase {
     }
   }
 
-  func testOversizedEngineAnimationsAreRejectedWithoutDurationTraps() {
-    for (from, duration) in [("1", "1e300"), ("1e300", "0.3"), ("1", "-1")] {
+  func testInvalidEngineAnimationNumbersAreRejected() {
+    for (from, duration) in [("1", "1e400"), ("1e400", "0.3"), ("1", "-1")] {
       let json = """
         {"options":[],"ui":{"judgmentAnimation":{
         "scale":{"from":\(from),"to":1,"duration":\(duration),"ease":"linear"},
@@ -1213,6 +1269,44 @@ final class RuntimeDecodingTests: XCTestCase {
       XCTAssertThrowsError(try JSONDecoder().decode(EngineConfiguration.self,
         from: Data(json.utf8)))
     }
+  }
+
+  func testEngineAnimationWaitUsesBoundedCancellableSleeps() async throws {
+    var intervals = [Double]()
+    try await EngineConfiguration.UI.Animation.wait(duration: 7200.5) {
+      intervals.append($0)
+    }
+    XCTAssertEqual(intervals, [3600, 3600, 0.5])
+    intervals.removeAll()
+    try await EngineConfiguration.UI.Animation.wait(duration: 0) {
+      intervals.append($0)
+    }
+    XCTAssertTrue(intervals.isEmpty)
+    do {
+      try await EngineConfiguration.UI.Animation.wait(duration: 1e300) {
+        XCTAssertEqual($0, 3600)
+        // Exercise the real conversion that previously could trap, without
+        // actually sleeping: only a bounded interval reaches Duration.
+        XCTAssertEqual(Duration.seconds($0), .seconds(3600))
+        throw CancellationError()
+      }
+      XCTFail("Cancellation must propagate to the view task")
+    } catch is CancellationError { }
+    // Also cancel a real child task before it reaches the wait. This checks
+    // cancellation itself, independently of a throwing fake sleep function.
+    let gate = AsyncStream<Void>.makeStream()
+    let task = Task {
+      for await _ in gate.stream { }
+      try await EngineConfiguration.UI.Animation.wait(duration: 1e300) { _ in
+        XCTFail("A canceled wait must not schedule another timer")
+      }
+    }
+    task.cancel()
+    gate.continuation.finish()
+    do {
+      try await task.value
+      XCTFail("A canceled task must fail its animation wait")
+    } catch is CancellationError { }
   }
 
   @MainActor

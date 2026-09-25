@@ -33,6 +33,18 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+UI-animation follow-up: engine values beyond the app's former +/-1024 endpoint
+and one-hour duration limits are now retained. Easing overshoot is no longer
+clamped. Judgment/combo completion waits use bounded cancellable timer chunks
+to avoid overflowing Swift's duration conversion. Five focused simulator tests
+pass at 06:20, including the regression that failed before the fix. Independent
+review caught an intermediate-overflow case; the correction, actual task
+cancellation and bounded combo-view snapshots pass in the final six-test
+06:26 run. The full run passed 284 compiled tests, including cached charts;
+the snapshot was added after that build and passed in the focused run instead.
+The normal build passes, and follow-up review found no further concrete defect.
+Physical presentation checks remain in the deferred batch.
+
 API inventory follow-up: a pinned official function list now checks all 191
 names through registration, reachable touch-path preflight, and dispatch.
 175 entries execute valid smoke calls, 14 stack functions remain unimplemented,

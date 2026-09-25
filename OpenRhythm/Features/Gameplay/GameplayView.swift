@@ -606,7 +606,8 @@ private struct JudgementOverlay: View {
         visible = feedback != nil
         isAnimating = visible
         do {
-          try await Task.sleep(for: .seconds(animation?.duration ?? 0.65))
+          try await EngineConfiguration.UI.Animation.wait(
+            duration: animation?.duration ?? 0.65)
           isAnimating = false
           // Engine animations own their final alpha; a tween ending at one
           // keeps the grade visible, rather than imposing our own timeout.
@@ -616,7 +617,7 @@ private struct JudgementOverlay: View {
   }
 }
 
-private struct EngineComboText: View {
+struct EngineComboText: View {
   let combo: Int
   var isLabel = false
   let animation: EngineConfiguration.UI.Animation?
@@ -636,7 +637,7 @@ private struct EngineComboText: View {
       started = Date()
       isAnimating = true
       do {
-        try await Task.sleep(for: .seconds(animation.duration))
+        try await EngineConfiguration.UI.Animation.wait(duration: animation.duration)
         isAnimating = false
       } catch { }
     }

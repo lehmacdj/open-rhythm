@@ -11,6 +11,30 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- UI animation endpoints and durations no longer have undocumented +/-1024
+  and 3,600-second limits. The public [UI configuration schema](
+  https://wiki.sonolus.com/engine-specs/resources/engine-configuration-ui)
+  declares numeric tween values without those limits. Easing overshoot is
+  preserved instead of being clamped at 1024. Weighted interpolation also
+  avoids an overflowing endpoint difference; a complementary difference-based
+  calculation handles same-sign overshoot if weighted products overflow.
+  Negative durations and nonfinite inputs remain rejected;
+  unrepresentable interpolated output still falls back to the finite endpoint.
+  Judgment and combo completion tasks now sleep in cancellable bounded chunks,
+  preserving long lifetimes without directly converting arbitrary engine
+  durations to Swift's fixed-width Duration. Five focused simulator tests
+  passed at 06:20. Independent review caught the weighted-product overflow;
+  its regression and the correction now pass, along with real child-task
+  cancellation and bounded combo-view snapshots. The snapshot has a nonblank
+  scale-1 control and exercises +/-2048, 1e300 and Double.max in a clipped
+  viewport. It is not live HUD lifecycle or native rasterization evidence.
+  The 06:20 full simulator run passed all 284 compiled tests, including cached
+  charts, with no failures. The observer timed out, but the same run finished.
+  Its report also lists the later-added snapshot as "No result" because it
+  was not in that build. All six focused tests passed on the final revision
+  at 06:26, including that snapshot, and the normal build passed. Independent
+  follow-up review found no further concrete defect. General resource/native
+  conformance and physical presentation verification remain open.
 - Public function-name coverage is pinned to the official
   [runtime metadata](
   https://github.com/Sonolus/runtime-metadata/blob/8da7fab2580701fdff82e10224f428db05add4bc/Runtime/Functions.json).

@@ -134,22 +134,45 @@ struct EngineConfiguration: Decodable {
           duration = try values.decode(Double.self, forKey: .duration)
           ease = try values.decode(String.self, forKey: .ease)
           try EngineEasing.validate(ease, field: "UI animation easing")
-          guard from.isFinite, to.isFinite, abs(from) <= 1024, abs(to) <= 1024,
-            duration.isFinite, (0...3600).contains(duration) else {
+          guard from.isFinite, to.isFinite,
+            duration.isFinite, duration >= 0 else {
             throw DecodingError.dataCorruptedError(forKey: .duration, in: values,
-              debugDescription: "Engine UI animation exceeds supported numeric bounds.")
+              debugDescription: "Engine UI animation needs finite values and a nonnegative duration.")
           }
         }
 
         func value(at elapsed: Double) -> Double {
           guard duration > 0, elapsed < duration else { return to }
-          let result = from + (to - from) * EngineEasing.value(ease, elapsed / duration)
-          return result.isFinite ? Swift.min(1024, Swift.max(-1024, result)) : to
+          let progress = EngineEasing.value(ease, elapsed / duration)
+          // Weighted interpolation avoids overflowing the difference between
+          // opposite large endpoints. Preserve easing overshoot, too.
+          let result = from * (1 - progress) + to * progress
+          if result.isFinite { return result }
+          // Overshoot can overflow a weighted product of same-sign endpoints
+          // even when their small difference yields a representable result.
+          let alternative = from + (to - from) * progress
+          return alternative.isFinite ? alternative : to
         }
       }
       let scale: Tween
       let alpha: Tween
       var duration: Double { Swift.max(scale.duration, alpha.duration) }
+
+      /// Do not convert an arbitrary engine duration directly into Swift's
+      /// fixed-width Duration: huge finite values can trap during conversion.
+      /// Bounded sleeps retain the declared lifetime and task cancellation.
+      static func wait(duration: Double,
+        sleep: (Double) async throws -> Void = {
+          try await Task.sleep(for: .seconds($0))
+        }) async throws {
+        var remaining = duration
+        while remaining > 0 {
+          try Task.checkCancellation()
+          let interval = Swift.min(remaining, 3600)
+          try await sleep(interval)
+          remaining -= interval
+        }
+      }
     }
     struct Visibility: Decodable {
       let scale: Double
