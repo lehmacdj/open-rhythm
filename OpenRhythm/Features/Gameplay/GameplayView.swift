@@ -834,7 +834,7 @@ private struct EnginePlayfield: UIViewRepresentable {
   }
 }
 
-private final class EnginePlayfieldView: UIView {
+final class EnginePlayfieldView: UIView {
   weak var model: GameplayModel? {
     didSet {
       if oldValue !== model { touchPool = EngineTouchPool() }

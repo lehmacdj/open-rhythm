@@ -18,6 +18,9 @@ struct BGMClockMapping {
   var initialChartTime: Double { chartTime(mediaTime: initialMediaTime) }
   func chartTime(mediaTime: Double) -> Double { (mediaTime - offset) / speed }
   func mediaTime(chartTime: Double) -> Double { chartTime * speed + offset }
+  func inputChartTime(mediaTime: Double, minimumMediaTime: Double) -> Double {
+    chartTime(mediaTime: max(minimumMediaTime, mediaTime))
+  }
 }
 
 struct JudgementFeedback: Hashable {
@@ -299,7 +302,8 @@ final class GameplayModel {
     else { return playbackTime }
     // AVPlayer may schedule its moving timebase to start in the future.
     // Extrapolation before that anchor must not go behind the completed seek.
-    return clockMapping.chartTime(mediaTime: max(skippedIntroDuration, media))
+    return clockMapping.inputChartTime(mediaTime: media,
+      minimumMediaTime: skippedIntroDuration)
   }
 
   init(
@@ -820,6 +824,12 @@ final class GameplayModel {
           let mediaTime = eventClock?.mediaTime(at: midpoint) {
           recorder.record(.clockDifference,
             seconds: clockMapping.chartTime(mediaTime: mediaTime) - currentTime)
+          // A scheduled player start can anchor the moving timebase in the
+          // future. Keep its raw extrapolation visible, but separately compare
+          // the same seek-floor clamp actually used for input timestamps.
+          recorder.record(.inputClockDifference,
+            seconds: clockMapping.inputChartTime(mediaTime: mediaTime,
+              minimumMediaTime: skippedIntroDuration) - currentTime)
         }
       }
       let runtimeStart = timingRecorder.map { _ in CACurrentMediaTime() }

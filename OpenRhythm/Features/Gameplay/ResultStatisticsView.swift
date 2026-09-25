@@ -10,7 +10,7 @@ struct PlaybackTimingSection: View {
         ForEach(PlaybackTimingMetric.allCases, id: \.self) { metric in
           if let value = report.metrics[metric.rawValue] {
             VStack(alignment: .leading) {
-              Text(metric.rawValue)
+              Text(metric.title)
               Text(value.text).font(.caption).foregroundStyle(.secondary)
             }
           }

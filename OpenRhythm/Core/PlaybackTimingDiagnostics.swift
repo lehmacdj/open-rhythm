@@ -10,7 +10,12 @@ enum PlaybackTimingMetric: String, Codable, CaseIterable, Sendable {
   case deadline = "Presentation minus display target"
   case clockRead = "Clock sampling duration"
   case clockDifference = "Event clock minus player clock"
+  case inputClockDifference = "Input clock minus player clock"
   case touchDelivery = "OS touch timestamp to delivery"
+
+  var title: String {
+    self == .clockDifference ? "Unclamped event clock minus player clock" : rawValue
+  }
 }
 
 enum PlaybackTimingCounter: String, Sendable {
@@ -58,7 +63,7 @@ struct PlaybackTimingReport: Codable, Equatable, Sendable {
     var lines = ["OpenRhythm playback timing diagnostics", Self.scope]
     for metric in PlaybackTimingMetric.allCases {
       if let value = metrics[metric.rawValue] {
-        lines.append("\(metric.rawValue): \(value.text)")
+        lines.append("\(metric.title): \(value.text)")
       }
     }
     for key in counters.keys.sorted() {

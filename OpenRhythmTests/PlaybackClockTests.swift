@@ -1,9 +1,180 @@
 import XCTest
 import CoreMedia
 import AVFoundation
+import UIKit
 @testable import OpenRhythm
 
 final class PlaybackClockTests: XCTestCase {
+  func testScheduledAudioStartClampsInputWithoutHidingRawClockDifference() {
+    for speed in [0.5, 1.0, 2.0] {
+      let mapping = BGMClockMapping(offset: 0.25, speed: speed)
+      for floor in [0.0, 1.5] {
+        let rawMedia = floor - 0.1 * speed
+        let current = mapping.chartTime(mediaTime: floor)
+        XCTAssertEqual(mapping.chartTime(mediaTime: rawMedia) - current,
+          -0.1, accuracy: 1e-12)
+        XCTAssertEqual(mapping.inputChartTime(mediaTime: rawMedia,
+          minimumMediaTime: floor), current, accuracy: 1e-12)
+        XCTAssertEqual(mapping.inputChartTime(mediaTime: floor + 0.1 * speed,
+          minimumMediaTime: floor) - current, 0.1, accuracy: 1e-12)
+      }
+    }
+  }
+
+  @MainActor
+  func testLivePlayerAndInputClocksAgreeAcrossSpeedsAndRestarts() async throws {
+    try await checkLiveClocks(nativePlayfield: false)
+  }
+
+  @MainActor
+  func testLivePlayfieldCombinesPlayerClockDisplayLinkAndPresentation() async throws {
+    try await checkLiveClocks(nativePlayfield: true)
+  }
+
+  @MainActor
+  private func checkLiveClocks(nativePlayfield: Bool) async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("live-clock-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let audio = directory.appendingPathComponent("clock.caf")
+    let format = try XCTUnwrap(AVAudioFormat(
+      standardFormatWithSampleRate: 48000, channels: 1))
+    let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+      frameCapacity: 48000 * 4))
+    buffer.frameLength = buffer.frameCapacity
+    // Quiet generated tone, above the intro analyzer's silence threshold.
+    // No downloaded audio, external service, or user library is involved.
+    for frame in 0..<Int(buffer.frameLength) {
+      buffer.floatChannelData![0][frame] = Float(
+        sin(Double(frame) * 2 * .pi * 440 / 48000) * 0.0002)
+    }
+    do {
+      let file = try AVAudioFile(forWriting: audio, settings: format.settings)
+      try file.write(from: buffer)
+    }
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let presentation = RuntimePresentation(resources: [
+      "configuration": Data(#"""
+        {"options":[{"name":"#SPEED","type":"slider","def":1,
+          "min":0.5,"max":2,"step":0.5}]}
+        """#.utf8)])
+    let resource = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "live-clock-\(UUID())", source: nil,
+      version: 1, rating: 1, title: LocalizedText("Live clock fixture"),
+      artists: LocalizedText("Generated"), author: "Fixture", tags: [],
+      cover: resource, bgm: resource, data: resource)
+    let model = GameplayModel(resultStore: ResultStore(rootURL: directory))
+    model.prepare(bundle: RuntimeBundle(engine: engine,
+      level: LevelData(bgmOffset: 0.25, entities: []), bgmURL: audio,
+      isOffline: true, presentation: presentation), level: level,
+      server: ServerDescriptor(id: "live-clock", name: "Fixture",
+        baseURL: URL(string: "https://example.com")!), title: "Live clock fixture")
+    let original = model.settings
+    defer { model.stop(); model.settings = original }
+    model.settings = GameplayPreferences(recordTimingDiagnostics: true)
+    let size = CGSize(width: 800, height: 400)
+    var window: UIWindow?
+    var priorKeyWindow: UIWindow?
+    if nativePlayfield {
+      let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+        .compactMap { $0 as? UIWindowScene }.first)
+      priorKeyWindow = scene.windows.first(where: \.isKeyWindow)
+      let nativeWindow = UIWindow(windowScene: scene)
+      let controller = UIViewController()
+      nativeWindow.rootViewController = controller
+      let playfield = EnginePlayfieldView(frame:
+        CGRect(x: 0, y: 0, width: 300, height: 500))
+      playfield.model = model
+      playfield.prepareAssets()
+      controller.view.addSubview(playfield)
+      nativeWindow.makeKeyAndVisible()
+      window = nativeWindow
+    }
+    defer { window?.isHidden = true; priorKeyWindow?.makeKey() }
+    let idleDisabled = UIApplication.shared.isIdleTimerDisabled
+    UIApplication.shared.isIdleTimerDisabled = true
+    defer { UIApplication.shared.isIdleTimerDisabled = idleDisabled }
+    for speed in [0.5, 1.0, 2.0, 1.0] {
+      model.settings.engineOptions["#SPEED"] = speed
+      if model.phase == .ready { model.start() } else { model.restart() }
+      let initial = BGMClockMapping(offset: 0.25, speed: speed).initialChartTime
+      XCTAssertEqual(model.currentTime, initial, accuracy: 1e-9,
+        "Verify the requested speed before both clock paths can agree at a wrong rate")
+      let deadline = CACurrentMediaTime() + 8
+      while model.phase == .playing,
+        model.isStartingPlayback || model.currentTime < initial + 0.1 {
+        if !nativePlayfield { model.engineFrame(size: size, touches: []) }
+        guard CACurrentMediaTime() < deadline else {
+          XCTFail("Local audio did not advance at \(speed)×: \(model.phase)")
+          return
+        }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      XCTAssertEqual(model.phase, .playing)
+      XCTAssertEqual(model.skippedIntroDuration, 0, accuracy: 0.001)
+      let runtime = try XCTUnwrap(model.engineRuntime)
+      XCTAssertEqual(runtime.memory.value(block: 2002, index: 0), speed)
+      XCTAssertEqual(runtime.host.timeline.bpm(at: 0), 60 * speed)
+      var differences = [Double]()
+      var frameSamples = Set<Double>()
+      let start = CACurrentMediaTime()
+      let chartStart = model.playbackTime
+      let frameChartStart = model.currentTime
+      for _ in 0..<40 {
+        let before = CACurrentMediaTime()
+        if !nativePlayfield { model.engineFrame(size: size, touches: []) }
+        let after = CACurrentMediaTime()
+        let frame = try XCTUnwrap(model.frameTiming)
+        frameSamples.insert(frame.sampleHostTime)
+        let eventTime = model.inputTime(at: frame.sampleHostTime)
+        differences.append(eventTime - model.currentTime)
+        if !nativePlayfield {
+          XCTAssertGreaterThanOrEqual(frame.sampleHostTime, before)
+        }
+        XCTAssertLessThanOrEqual(frame.sampleHostTime, after)
+        // Delayed delivery must retain the earlier event's media mapping.
+        let oldTime = model.inputTime(at: before)
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertEqual(model.inputTime(at: before), oldTime, accuracy: 0.001)
+      }
+      let elapsed = CACurrentMediaTime() - start
+      XCTAssertEqual(model.playbackTime - chartStart, elapsed, accuracy: 0.025,
+        "Chart seconds track wall seconds even at \(speed)× music speed")
+      if nativePlayfield {
+        XCTAssertGreaterThan(frameSamples.count, 2,
+          "Repeatedly reading one stale frame must not pass")
+        XCTAssertEqual(model.currentTime - frameChartStart, elapsed, accuracy: 0.075,
+          "Display-driven runtime must keep advancing during observation")
+      }
+      let mean = differences.reduce(0, +) / Double(differences.count)
+      let maximum = differences.map(abs).max() ?? 0
+      XCTAssertEqual(mean, 0, accuracy: 0.002)
+      XCTAssertLessThan(maximum, 0.005)
+      let report = try XCTUnwrap(model.timingRecorder?.snapshot())
+      XCTAssertGreaterThan(report.metrics[
+        PlaybackTimingMetric.clockDifference.rawValue]?.count ?? 0, 0,
+        "Must exercise the real player timebase, not a fallback clock")
+      if nativePlayfield {
+        XCTAssertGreaterThan(report.counters[
+          PlaybackTimingCounter.submitted.rawValue] ?? 0, 0)
+        #if !targetEnvironment(simulator)
+        XCTAssertGreaterThan(report.metrics[
+          PlaybackTimingMetric.presentation.rawValue]?.count ?? 0, 0)
+        XCTAssertGreaterThan(report.metrics[
+          PlaybackTimingMetric.deadline.rawValue]?.count ?? 0, 0)
+        #endif
+        print(report.text)
+      }
+      print("Live clocks (native playfield: \(nativePlayfield)) \(speed)×: mean difference \(mean * 1000) ms, "
+        + "max absolute \(maximum * 1000) ms, \(differences.count) samples")
+    }
+  }
+
   func testPreparedMusicLeaseCleansUpAndSilenceUsesItsExactBytes() throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)

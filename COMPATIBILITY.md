@@ -517,3 +517,48 @@ has no music, engine workload or display-link pacing: its values must not be
 used as gameplay latency or a calibration offset. A final device build passed.
 Enabled/disabled overhead, startup timing and live gameplay/audio alignment
 remain to be measured before drawing synchronization conclusions.
+
+### Live player/event clock regression
+
+`testLivePlayerAndInputClocksAgreeAcrossSpeedsAndRestarts` creates a quiet
+four-second CAF in a unique temporary directory, without fetching assets. It
+prepares the actual GameplayModel and AVPlayer, advances the engine after intro
+preparation, and compares player-derived frame time with the event-clock mapping
+at the frame sample's host timestamp. Four short runs cover 0.5×, 1×, 2× and 1×
+after restart, with 40 samples each; later delivery must preserve the mapping
+of each earlier event timestamp. The test independently checks initial chart
+time, runtime speed option and BPM, so both clocks cannot silently agree at an
+incorrect default 1×. This assertion was prompted by independent review.
+
+The final tests pass on iPhone 17 Pro/iOS 26.5 simulator and thyme5. The first
+phone attempt was cancelled while waiting for unlock; the user's subsequent
+unlock allowed actual device execution. The manually advanced test's maximum
+observed absolute input/player-clock difference was 0.0201 ms across the four
+short phone runs. This is a software-clock check, not acoustic or physical-touch
+alignment. Startup's first 100 ms and network buffering remain separate checks.
+
+`testLivePlayfieldCombinesPlayerClockDisplayLinkAndPresentation` uses the same
+generated audio with the actual EnginePlayfieldView, CADisplayLink and Metal
+layer in a temporary native window. The empty engine isolates infrastructure;
+it does not represent a full chart. The 01:37 phone run's mean sample-to-present
+age was 33.76–34.12 ms across the four rates/restarts; presentation minus display
+target averaged 16.27–16.73 ms. This exposes an additional-refresh presentation
+lead to investigate, not permission to apply a guessed offset. The route was
+Speaker with iOS-reported output latency 15.35 ms and buffer duration 21.33 ms;
+neither is a measured acoustic output delay for this play.
+
+Scheduled audio startup exposed negative raw timebase extrapolation before its
+future anchor. The actual input path already clamps to the completed seek's
+media position. Diagnostics now retain the raw metric (with its existing stored
+key) under an explicitly unclamped title and add a separate effective input-clock
+comparison using exactly that same clamp. Effective input/player differences
+remained near zero, even when raw startup differences reached approximately
+−114 ms. The clamp was extracted unchanged and regression-tested at positive
+seek floors, negative raw values and all three speeds. No gameplay timing
+behavior, calibration or judgment windows changed. Three focused tests passed
+on both simulator and device; the final device build passed without warnings.
+Independent review also prompted rejecting repeated reads of a stale frame:
+the native test now requires distinct frame timestamps and continued runtime
+advancement during observation. All 17 clock/diagnostics tests pass together on
+simulator; the strengthened native-playfield and persisted-label tests pass
+again on thyme5. No full-suite rerun is claimed for this follow-up.

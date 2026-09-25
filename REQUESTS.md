@@ -39,6 +39,18 @@ Status of the live-play follow-ups; offline probes do not certify live sync:
   drawable timestamps; simulator reports them unavailable. This validates the
   instrumentation path only: the probe has no music or engine workload and
   does not supply a gameplay correction. Final device build passes.
+  A generated-local-audio regression now exercises GameplayModel's real
+  AVPlayer/timebase path at 0.5×, 1×, 2× and 1× after restart. It verifies the
+  selected speed independently, real-time chart advancement and delayed reads
+  of historical event timestamps. The strengthened test passes in simulator
+  and on thyme5. A companion test runs the actual playfield, display link and
+  Metal alongside the generated audio; it also passes on both destinations.
+  These probes revealed a roughly one-refresh presentation delay beyond the
+  display-link target even with an empty engine, while effective input/player
+  clocks agreed. Raw timebase extrapolation during scheduled audio startup is
+  now labeled separately from the seek-clamped input clock. This is a concrete
+  rendering investigation lead, not an acoustic correction or dense-chart
+  performance sign-off; no gameplay timing offset was changed.
 - Add persistent manual timing overrides in Gameplay Settings so the player
   can compensate for observed bias. Define adjustment direction and units
   clearly, provide a neutral default/reset, and distinguish visual alignment

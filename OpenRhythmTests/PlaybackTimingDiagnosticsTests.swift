@@ -2,6 +2,18 @@ import XCTest
 @testable import OpenRhythm
 
 final class PlaybackTimingDiagnosticsTests: XCTestCase {
+  func testRawAndEffectiveClockMetricsKeepDistinctLabelsAndStoredKeys() throws {
+    let recorder = PlaybackTimingRecorder()
+    recorder.record(.clockDifference, seconds: -0.1)
+    recorder.record(.inputClockDifference, seconds: 0)
+    let report = recorder.snapshot()
+    let decoded = try JSONDecoder().decode(PlaybackTimingReport.self,
+      from: JSONEncoder().encode(report))
+    XCTAssertEqual(decoded.metrics["Event clock minus player clock"]?.meanMS, -100)
+    XCTAssertEqual(decoded.metrics["Input clock minus player clock"]?.meanMS, 0)
+    XCTAssertTrue(decoded.text.contains("Unclamped event clock minus player clock"))
+  }
+
   func testSignedQuantilesAndNonfiniteSamples() throws {
     var empty = PlaybackTimingAccumulator()
     for invalid in [Double.nan, .infinity, -.infinity, .greatestFiniteMagnitude] {
