@@ -5,6 +5,7 @@ enum RuntimeBundleError: LocalizedError {
   case missingResource(String)
   case unsupportedEngineVersion(Int)
   case invalidResourceURL(String)
+  case unsupportedPresentationValue(field: String, value: String)
 
   var errorDescription: String? {
     switch self {
@@ -16,6 +17,8 @@ enum RuntimeBundleError: LocalizedError {
       "Engine version \(version) is not supported."
     case .invalidResourceURL(let name):
       "The \(name) resource must use an HTTP or HTTPS URL."
+    case .unsupportedPresentationValue(let field, let value):
+      "The engine uses an unsupported \(field) value: \(value)."
     }
   }
 }

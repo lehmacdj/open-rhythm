@@ -840,6 +840,68 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticleEasingValidationCoversEveryPropertyAndOptionalDefault() throws {
+    let engine = try RuntimeNodeBuilder().engine(archetypes: [])
+    let selected = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[{"id":9,"name":"fixture"}]},
+       "archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let texture = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2))
+      .pngData { context in
+        UIColor.white.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      }
+    func presentation(property name: String, ease: String?,
+      unusedBadEffect: Bool = false) throws -> RuntimePresentation {
+      var particle: [String: Any] = ["sprite": 0, "color": "#fff",
+        "start": 0, "duration": 1]
+      for key in ["x", "y", "w", "h", "r", "a"] {
+        var property: [String: Any] = ["from": ["c": 1], "to": ["c": 2]]
+        if key == name { property["ease"] = ease }
+        particle[key] = property
+      }
+      var effects: [[String: Any]] = [["name": "fixture", "transform": [:],
+        "groups": [["count": 1, "particles": [particle]]]]]
+      if unusedBadEffect {
+        var unused = particle
+        unused["x"] = ["ease": "outFuture"]
+        effects.append(["name": "unused", "transform": [:],
+          "groups": [["count": 1, "particles": [unused]]]])
+      }
+      let data: [String: Any] = ["width": 2, "height": 2, "interpolation": false,
+        "sprites": [["x": 0, "y": 0, "w": 2, "h": 2]],
+        "effects": effects]
+      return RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8), "particleTexture": texture,
+        "particleData": try JSONSerialization.data(withJSONObject: data)])
+    }
+    for key in ["x", "y", "w", "h", "r", "a"] {
+      let bad = try presentation(property: key, ease: "outFuture")
+      XCTAssertThrowsError(try EnginePresentationAssets(engine: selected,
+        presentation: bad)) { error in
+        guard case RuntimeBundleError.unsupportedPresentationValue(
+          let field, let value) = error else {
+          return XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(field, "particle fixture \(key) easing")
+        XCTAssertEqual(value, "outFuture")
+      }
+      XCTAssertNoThrow(try EnginePresentationAssets(engine: engine,
+        presentation: bad), "Unused resource families must remain optional")
+    }
+    for ease in [nil] + EngineEasing.supportedNames.sorted().map(Optional.some) {
+      XCTAssertNoThrow(try EnginePresentationAssets(engine: selected,
+        presentation: presentation(property: "x", ease: ease)))
+    }
+    XCTAssertNoThrow(try EnginePresentationAssets(engine: selected,
+      presentation: presentation(property: "x", ease: nil, unusedBadEffect: true)),
+      "An unused effect must not reject the selected valid effect in the same resource")
+    let omitted = ParticleData.Property(from: ["c": 1], to: ["c": 3], ease: nil)
+    XCTAssertEqual(omitted.value(at: 0.25, variables: ["c": 1]), 1.5)
+  }
+
+  @MainActor
   func testParticleRandomCachingPreservesAnimatedAndMovedSprites() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
       {"skin":{"sprites":[]},"effect":{"clips":[]},

@@ -11,6 +11,29 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Presentation preparation now rejects unknown primary/secondary metrics,
+  judgment-error styles/placements and UI/selected-particle easing names with
+  a human-readable error identifying the field and value. This replaces silent
+  missing HUD elements, fallback timing labels/positions, and linear animation
+  substitutions. The accepted lists follow [Engine Configuration UI](
+  https://wiki.sonolus.com/engine-specs/resources/engine-configuration-ui) and
+  [Particle Data Effect](
+  https://wiki.sonolus.com/particle-specs/resources/particle-data-effect),
+  including all 38 easing names. Regressions cover each UI enum, all four UI
+  animation channels, all six particle properties and preparation failure before
+  gameplay starts. Both unused resource families and unused bad effects beside
+  a valid selected effect remain ignored. Omitted optional particle easing
+  retains the existing linear behavior; the public schema marks it optional
+  but does not explicitly establish its default, so this is preserved client
+  policy rather than independently proven native parity. Independent review
+  found no implementation issue and suggested the same-resource unused-effect
+  regression, which was added. Six focused simulator tests passed.
+  The September 25 04:02 simulator suite passed all 260 tests, including six
+  cached-chart probes, with no failures or skips
+  (`RunAllTests/CAAA8DB9-CEC2-4909-8998-34C35BA81FC4.txt`). After the observer's
+  300-second timeout, the same run supplied its complete summary and
+  `TEST FINISHED` marker. The 04:08 normal simulator build passed. No physical
+  testing or music-server requests were used.
 - Engine [option categories](
   https://wiki.sonolus.com/engine-specs/resources/engine-configuration-option-category)
   now determine settings section titles and order. Options retain their original
@@ -488,8 +511,10 @@ execute; the successful rerun and final suite have separate result bundles.
   automatic BGM compensation but do not state the convention. Current tests
   establish the client's explicit wall-clock convention and internal timeline
   consistency, not parity with an independently observed native reference.
-- Optional/missing resources, host-function callback legality,
-  remaining memory defaults, and unknown enum values. Memory-block callback
+- Optional/missing resource defaults and host-function callback legality.
+  Specified initial play-memory defaults and the known presentation enum lists
+  now have dedicated conformance checks above. Underdocumented defaults still
+  need independent evidence rather than being inferred from those tests. Memory-block callback
   read/write permissions are now enforced separately from those open checks.
   AddLifeScheduled's explicit preprocessing-only rule is now enforced; no
   undocumented callback exclusions are inferred for other host functions.
@@ -503,8 +528,8 @@ execute; the successful rerun and final suite have separate result bundles.
   [Option-category definitions](
   https://wiki.sonolus.com/engine-specs/resources/engine-configuration-option-category)
   are now decoded and used to group settings without reordering the runtime's
-  option-memory indices; see the conformance entry above. Other resource and
-  unknown-enum checks remain open.
+  option-memory indices; see the conformance entry above. Unknown presentation
+  enums now fail explicitly; other resource/default checks remain open.
 - Runtime metadata lists a play-mode `skip` slot. The public Python framework
   describes it as a time skip in the current frame, but the play block docs
   omit its seek/resimulation behavior. It remains zero: intro fast-forward

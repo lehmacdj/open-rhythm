@@ -133,6 +133,7 @@ struct EngineConfiguration: Decodable {
           to = try values.decode(Double.self, forKey: .to)
           duration = try values.decode(Double.self, forKey: .duration)
           ease = try values.decode(String.self, forKey: .ease)
+          try EngineEasing.validate(ease, field: "UI animation easing")
           guard from.isFinite, to.isFinite, abs(from) <= 1024, abs(to) <= 1024,
             duration.isFinite, (0...3600).contains(duration) else {
             throw DecodingError.dataCorruptedError(forKey: .duration, in: values,
@@ -171,6 +172,29 @@ struct EngineConfiguration: Decodable {
     let judgmentErrorStyle: String?
     let judgmentErrorPlacement: String?
     let judgmentErrorMin: Double?
+
+    func validate() throws {
+      let metrics: Set<String> = ["arcade", "arcadePercentage", "accuracy",
+        "accuracyPercentage", "life", "time", "perfect", "perfectPercentage",
+        "greatGoodMiss", "greatGoodMissPercentage", "miss", "missPercentage",
+        "errorHeatmap"]
+      let styles: Set<String> = ["none", "late", "early", "plus", "minus",
+        "arrowUp", "arrowDown", "arrowLeft", "arrowRight", "triangleUp",
+        "triangleDown", "triangleLeft", "triangleRight"]
+      let placements: Set<String> = ["left", "right", "leftRight", "top",
+        "bottom", "topBottom", "center"]
+      for (field, value, supported) in [
+        ("primary metric", primaryMetric, metrics),
+        ("secondary metric", secondaryMetric, metrics),
+        ("judgment error style", judgmentErrorStyle, styles),
+        ("judgment error placement", judgmentErrorPlacement, placements)
+      ] {
+        if let value, !supported.contains(value) {
+          throw RuntimeBundleError.unsupportedPresentationValue(
+            field: field, value: value)
+        }
+      }
+    }
 
     var runtimeValues: [Double] {
       [menuVisibility, judgmentVisibility, comboVisibility,
@@ -534,6 +558,18 @@ enum EngineGeometry {
 }
 
 enum EngineEasing {
+  static let supportedNames = Set(["linear", "none"] +
+    ["in", "out", "inOut", "outIn"].flatMap { mode in
+      ["Sine", "Quad", "Cubic", "Quart", "Quint", "Expo", "Circ", "Back",
+        "Elastic"].map { mode + $0 }
+    })
+
+  static func validate(_ name: String?, field: String) throws {
+    if let name, !supportedNames.contains(name) {
+      throw RuntimeBundleError.unsupportedPresentationValue(field: field, value: name)
+    }
+  }
+
   static func value(_ name: String, _ time: Double, clamped: Bool = true) -> Double {
     let t = clamped ? min(1, max(0, time)) : time
     if name == "none" { return 0 }
@@ -635,6 +671,7 @@ final class EnginePresentationAssets {
     background = presentation.resources.keys.contains(where: { $0.hasPrefix("background") })
       ? try EngineBackgroundAssets(presentation: presentation) : nil
     try configuration.validateOptions()
+    try configuration.ui?.validate()
     options = configuration.options.map(\.def)
     ui = configuration.ui
     noteSpeedIndex = configuration.options.firstIndex(where: \.usesNoteSpeedControl)
@@ -692,6 +729,16 @@ final class EnginePresentationAssets {
         (0...1024).contains($0.count) && $0.particles.count <= 1024
       }), effect.groups.reduce(0, { $0 + $1.count * $1.particles.count }) <= 4096
       else { throw EngineInterpreterError.operationLimitExceeded }
+      for group in effect.groups {
+        for particle in group.particles {
+          for (name, property) in [("x", particle.x), ("y", particle.y),
+            ("w", particle.w), ("h", particle.h), ("r", particle.r),
+            ("a", particle.a)] {
+            try EngineEasing.validate(property.ease,
+              field: "particle \(definition.name) \(name) easing")
+          }
+        }
+      }
       effects[definition.id] = effect
     }
     particles = effects

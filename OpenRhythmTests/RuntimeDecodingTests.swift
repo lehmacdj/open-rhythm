@@ -1120,6 +1120,89 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(config.ui?.secondaryMetric, "life")
   }
 
+  @MainActor
+  func testPresentationEnumsValidateBeforeGameplayCanStart() throws {
+    let metrics = ["arcade", "arcadePercentage", "accuracy", "accuracyPercentage",
+      "life", "time", "perfect", "perfectPercentage", "greatGoodMiss",
+      "greatGoodMissPercentage", "miss", "missPercentage", "errorHeatmap"]
+    let fields = [
+      ("primaryMetric", metrics), ("secondaryMetric", metrics),
+      ("judgmentErrorStyle", ["none", "late", "early", "plus", "minus",
+        "arrowUp", "arrowDown", "arrowLeft", "arrowRight", "triangleUp",
+        "triangleDown", "triangleLeft", "triangleRight"]),
+      ("judgmentErrorPlacement", ["left", "right", "leftRight", "top", "bottom",
+        "topBottom", "center"])
+    ]
+    for (field, values) in fields {
+      for value in values {
+        let config = try JSONDecoder().decode(EngineConfiguration.self,
+          from: JSONSerialization.data(withJSONObject: [
+            "options": [], "ui": [field: value]]))
+        XCTAssertNoThrow(try config.ui?.validate(), "\(field): \(value)")
+      }
+      let data = try JSONSerialization.data(withJSONObject: [
+        "options": [], "ui": [field: "FutureValue"]])
+      let config = try JSONDecoder().decode(EngineConfiguration.self, from: data)
+      XCTAssertThrowsError(try config.ui?.validate()) { error in
+        guard case RuntimeBundleError.unsupportedPresentationValue(
+          let label, let value) = error else {
+          return XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertFalse(label.isEmpty)
+        XCTAssertEqual(value, "FutureValue")
+      }
+      let model = try gameplayModel(presentation:
+        RuntimePresentation(resources: ["configuration": data]))
+      guard case .failed(let message) = model.phase else {
+        return XCTFail("Unknown \(field) must fail preparation, not enter Ready")
+      }
+      XCTAssertTrue(message.contains("FutureValue"))
+      XCTAssertTrue(message.contains("unsupported"))
+      model.start()
+      XCTAssertEqual(model.phase, .failed(message))
+      XCTAssertNil(model.engineRuntime)
+    }
+    let omitted = try JSONDecoder().decode(EngineConfiguration.self,
+      from: Data(#"{"options":[],"ui":{}}"#.utf8))
+    XCTAssertNoThrow(try omitted.ui?.validate())
+  }
+
+  func testUIEasingValidationCoversAllDocumentedCurvesAndAnimationSlots() throws {
+    let documented = ["linear", "none"] + ["in", "out", "inOut", "outIn"].flatMap { mode in
+      ["Sine", "Quad", "Cubic", "Quart", "Quint", "Expo", "Circ", "Back", "Elastic"]
+        .map { mode + $0 }
+    }
+    XCTAssertEqual(EngineEasing.supportedNames, Set(documented))
+    for name in documented {
+      let tween = try JSONDecoder().decode(EngineConfiguration.UI.Animation.Tween.self,
+        from: JSONSerialization.data(withJSONObject: [
+          "from": 0, "to": 1, "duration": 1, "ease": name]))
+      XCTAssertTrue(tween.value(at: 0.37).isFinite, name)
+      XCTAssertEqual(tween.value(at: 1), 1, name)
+    }
+    for animation in ["judgmentAnimation", "comboAnimation"] {
+      for component in ["scale", "alpha"] {
+        let valid: [String: Any] = ["from": 0, "to": 1,
+          "duration": 1, "ease": "linear"]
+        var bad = valid
+        bad["ease"] = "inFuture"
+        var components = ["scale": valid, "alpha": valid]
+        components[component] = bad
+        let data = try JSONSerialization.data(withJSONObject: [
+          "options": [], "ui": [animation: components]])
+        XCTAssertThrowsError(try JSONDecoder().decode(EngineConfiguration.self,
+          from: data)) { error in
+          guard case RuntimeBundleError.unsupportedPresentationValue(
+            let field, let value) = error else {
+            return XCTFail("Unexpected error: \(error)")
+          }
+          XCTAssertEqual(field, "UI animation easing")
+          XCTAssertEqual(value, "inFuture")
+        }
+      }
+    }
+  }
+
   func testOversizedEngineAnimationsAreRejectedWithoutDurationTraps() {
     for (from, duration) in [("1", "1e300"), ("1e300", "0.3"), ("1", "-1")] {
       let json = """

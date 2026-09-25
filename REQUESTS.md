@@ -32,6 +32,18 @@ suite passed all 254 tests, including six cached-chart probes, with no failures
 or skips. The 03:33 normal simulator build passes. No device testing was used;
 the broader API-coverage gate remains open.
 
+Presentation-value follow-up: unknown UI metrics, judgment-error styles and
+placements, and UI/selected-particle easing names now fail during preparation
+with a field/value diagnostic instead of silently changing presentation. The
+documented enum lists and all 38 easing names are accepted; unused particle
+families/effects remain ignored. Independent review found no implementation
+issue and suggested an additional unused-effect regression, which was added.
+Omitted particle easing still uses the existing linear behavior; its native
+default remains underdocumented and is not certified by these tests.
+The September 25 04:02 simulator suite passed all 260 tests with no failures
+or skips; the 04:08 normal simulator build passes. Physical checks remain
+deferred under the API-coverage gate.
+
 Option-category follow-up: engine-provided section titles/order now organize
 settings without changing Level Option memory indices. Dedicated note-speed
 and score-mode preferences remain compatible, and resetting either also clears
