@@ -32,6 +32,17 @@ suite passed all 254 tests, including six cached-chart probes, with no failures
 or skips. The 03:33 normal simulator build passes. No device testing was used;
 the broader API-coverage gate remains open.
 
+Option-category follow-up: engine-provided section titles/order now organize
+settings without changing Level Option memory indices. Dedicated note-speed
+and score-mode preferences remain compatible, and resetting either also clears
+legacy generic overrides. Older uncategorized configurations retain their
+layout but now resolve those overrides consistently with playback. Invalid
+category references fail rather than silently hiding controls. Five focused
+tests and the categorized iPhone preview passed inspection; independent review
+found the legacy override inconsistency, which was fixed and re-reviewed.
+The September 25 03:51 simulator suite passed all 257 tests with no failures or
+skips; the 03:56 normal simulator build passes. Physical testing stays deferred.
+
 Initial-memory follow-up: an engine-independent regression checks complete
 defined play-memory blocks, samples their defaults from inside preprocessing,
 and verifies restoration after mutation/restart for two entities. Independent
@@ -481,10 +492,10 @@ model level, checking that future judgments and spawned entities do not leak.
    must have usable HTTP(S) locators; absent ROM remains supported. Both online
    and offline playback perform unsupported-function preflight. Downloads may
    still archive an unsupported engine, but cannot play it through basic lanes.
-   Engine option categories are another confirmed gap: the public
-   `optionCategories` names/titles are not yet decoded or used to group the
-   settings controls. Add grouping while preserving runtime option indices
-   and the user's per-engine persistence policy.
+   Engine option categories are now decoded and rendered in their declared
+   order, with runtime option indices and per-engine persistence unchanged.
+   Dedicated note-speed/score preferences work inside those categories, and
+   legacy controls now resolve/reset generic saved overrides consistently.
    Skin mode selection is now
    honored, but exact native rendering parity is not claimed. Unsupported
    functions are surfaced before music rather than assumed harmless. See the

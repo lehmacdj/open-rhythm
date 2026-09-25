@@ -4,6 +4,17 @@ typealias EngineExpression = [String: Double]
 typealias EngineQuadTransform = [String: EngineExpression]
 
 struct EngineConfiguration: Decodable {
+  struct OptionCategory: Decodable {
+    let name: String
+    let title: String
+  }
+
+  struct OptionGroup: Identifiable {
+    let id: String
+    let title: String
+    let optionIndices: [Int]
+  }
+
   struct Option: Decodable {
     let def: Double
     let name: String?
@@ -43,6 +54,22 @@ struct EngineConfiguration: Decodable {
     }
     var usesScoreModeControl: Bool {
       name == "Score Mode" && controlType == "select"
+    }
+
+    func preferredValue(in preferences: GameplayPreferences) -> Double? {
+      if usesNoteSpeedControl, let value = preferences.noteSpeed { return value }
+      if usesScoreModeControl, let value = preferences.scoreMode {
+        return Double(value)
+      }
+      return name.flatMap { preferences.engineOptions[$0] }
+    }
+
+    func setPreferredValue(_ value: Double?, in preferences: inout GameplayPreferences) {
+      if usesNoteSpeedControl { preferences.noteSpeed = value }
+      else if usesScoreModeControl { preferences.scoreMode = value.flatMap(Int.init(exactly:)) }
+      else if let name { preferences.engineOptions[name] = value }
+      // Reset also clears legacy generic overrides of dedicated controls.
+      if value == nil, let name { preferences.engineOptions[name] = nil }
     }
 
     func value(_ preferred: Double?) -> Double {
@@ -153,8 +180,44 @@ struct EngineConfiguration: Decodable {
   }
   let options: [Option]
   let ui: UI?
+  var optionCategories: [OptionCategory]? = nil
+
+  /// Presentation order is independent of the runtime option-memory indices.
+  var optionGroups: [OptionGroup] {
+    if let optionCategories {
+      return optionCategories.compactMap { category in
+        let indices = options.indices.filter {
+          options[$0].name != nil && options[$0].category == category.name
+        }
+        guard !indices.isEmpty else { return nil }
+        return OptionGroup(id: category.name, title: Option.label(category.title),
+          optionIndices: indices)
+      }
+    }
+    // Older configurations have no categories. Keep their dedicated speed
+    // and score-mode controls and the existing per-option sections.
+    return options.indices.compactMap { index in
+      let option = options[index]
+      guard option.name != nil, !option.usesNoteSpeedControl,
+        !option.usesScoreModeControl else { return nil }
+      return OptionGroup(id: String(index), title: option.displayName,
+        optionIndices: [index])
+    }
+  }
 
   func validateOptions() throws {
+    if let optionCategories {
+      let names = Set(optionCategories.map(\.name))
+      guard names.count == optionCategories.count else {
+        throw EngineInterpreterError.invalidArguments("duplicate engine option category")
+      }
+      for option in options {
+        guard let category = option.category, names.contains(category) else {
+          throw EngineInterpreterError.invalidArguments(
+            "category for engine option: \(option.displayName)")
+        }
+      }
+    }
     var names = Set<String>()
     for option in options {
       if let name = option.name, !names.insert(name).inserted {
@@ -182,15 +245,7 @@ struct EngineConfiguration: Decodable {
   }
 
   func runtimeOptions(preferences: GameplayPreferences) -> [Double] {
-    options.map { option in
-      if option.usesNoteSpeedControl, let speed = preferences.noteSpeed {
-        return option.value(speed)
-      }
-      if option.usesScoreModeControl, let score = preferences.scoreMode {
-        return option.value(Double(score))
-      }
-      return option.value(option.name.flatMap { preferences.engineOptions[$0] })
-    }
+    options.map { $0.value($0.preferredValue(in: preferences)) }
   }
 
   func playbackSpeed(preferences: GameplayPreferences) -> Double {

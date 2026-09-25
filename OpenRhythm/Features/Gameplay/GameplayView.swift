@@ -39,6 +39,7 @@ struct GameplayView: View {
         noteSpeed: model.presentationAssets?.noteSpeedOption,
         scoreMode: model.presentationAssets?.scoreModeOption,
         options: model.presentationAssets?.configuration.options ?? [],
+        optionCategories: model.presentationAssets?.configuration.optionCategories,
         forcedSkinRenderMode: model.presentationAssets?.forcedSkinRenderMode)
     }
     .task {
@@ -368,6 +369,7 @@ private struct GameplaySettingsPanel: View {
   let noteSpeed: EngineConfiguration.Option?
   let scoreMode: EngineConfiguration.Option?
   let options: [EngineConfiguration.Option]
+  var optionCategories: [EngineConfiguration.OptionCategory]? = nil
   var forcedSkinRenderMode: EngineSkinRenderMode? = nil
   @Environment(\.dismiss) private var dismiss
 
@@ -375,15 +377,17 @@ private struct GameplaySettingsPanel: View {
     NavigationStack {
       Form {
         Section("Score Display") {
-          if let option = scoreMode, let values = option.values {
+          if optionCategories == nil, let option = scoreMode, let values = option.values {
             Picker("Engine Score Mode", selection: Binding(
-              get: { option.selectedIndex(settings.scoreMode) ?? 0 },
-              set: { settings.scoreMode = $0 })) {
+              get: { Int(option.value(option.preferredValue(in: settings))) },
+              set: { option.setPreferredValue(Double($0), in: &settings) })) {
               ForEach(values.indices, id: \.self) { index in
                 Text(values[index].displayValue()).tag(index)
               }
             }
-            Button("Use Engine Default Score Mode") { settings.scoreMode = nil }
+            Button("Use Engine Default Score Mode") {
+              option.setPreferredValue(nil, in: &settings)
+            }
           }
           Picker("Direction", selection: $settings.scoreDisplay) {
             ForEach(ScoreDisplayMode.allCases) { Text($0.title).tag($0) }
@@ -442,54 +446,69 @@ private struct GameplaySettingsPanel: View {
             }
           }
         }
-        Section("Note Speed") {
-          if let noteSpeed, let range = noteSpeed.sliderRange {
-            let value = noteSpeed.clamped(settings.noteSpeed ?? noteSpeed.def)
-            LabeledContent("Speed", value: value.formatted(.number.precision(.fractionLength(1))))
-            Slider(value: Binding(get: { value }, set: { settings.noteSpeed = $0 }),
-              in: range, step: (noteSpeed.step ?? 0.1) > 0 ? (noteSpeed.step ?? 0.1) : 0.1)
-              .accessibilityLabel("Note Speed")
-            Button("Use Engine Default") { settings.noteSpeed = nil }
-          } else {
-            Text("This engine does not expose a note-speed control.")
-              .foregroundStyle(.secondary)
-          }
-        }
-        ForEach(options.indices, id: \.self) { index in
-          let option = options[index]
-          if let name = option.name,
-            !option.usesNoteSpeedControl, !option.usesScoreModeControl {
-            Section(option.displayName) {
-              engineOption(option, name: name)
-              if let description = option.description, !description.isEmpty {
-                Text(EngineConfiguration.Option.label(description))
-                  .font(.footnote).foregroundStyle(.secondary)
+        if optionCategories == nil {
+          Section("Note Speed") {
+            if let noteSpeed, let range = noteSpeed.sliderRange {
+              let value = noteSpeed.value(noteSpeed.preferredValue(in: settings))
+              LabeledContent("Speed", value: value.formatted(.number.precision(.fractionLength(1))))
+              Slider(value: Binding(get: { value }, set: {
+                noteSpeed.setPreferredValue($0, in: &settings)
+              }),
+                in: range, step: (noteSpeed.step ?? 0.1) > 0 ? (noteSpeed.step ?? 0.1) : 0.1)
+                .accessibilityLabel("Note Speed")
+              Button("Use Engine Default") {
+                noteSpeed.setPreferredValue(nil, in: &settings)
               }
-              if option.standard == true {
-                Text("Changes gameplay; recorded with your result.")
-                  .font(.footnote).foregroundStyle(.secondary)
-              }
+            } else {
+              Text("This engine does not expose a note-speed control.")
+                .foregroundStyle(.secondary)
             }
           }
         }
+        EngineOptionSections(settings: $settings,
+          configuration: EngineConfiguration(options: options, ui: nil,
+            optionCategories: optionCategories))
       }
       .navigationTitle("Gameplay Settings")
       .toolbar { Button("Done") { dismiss() } }
     }
   }
+}
 
-  @ViewBuilder private func engineOption(_ option: EngineConfiguration.Option,
-    name: String) -> some View {
-    let value = option.value(settings.engineOptions[name])
+private struct EngineOptionSections: View {
+  @Binding var settings: GameplayPreferences
+  let configuration: EngineConfiguration
+
+  var body: some View {
+    ForEach(configuration.optionGroups) { group in
+      Section(group.title) {
+        ForEach(group.optionIndices, id: \.self) { index in
+          let option = configuration.options[index]
+          engineOption(option)
+          if let description = option.description, !description.isEmpty {
+            Text(EngineConfiguration.Option.label(description))
+              .font(.footnote).foregroundStyle(.secondary)
+          }
+          if option.standard == true {
+            Text("Changes gameplay; recorded with your result.")
+              .font(.footnote).foregroundStyle(.secondary)
+          }
+        }
+      }
+    }
+  }
+
+  @ViewBuilder private func engineOption(_ option: EngineConfiguration.Option) -> some View {
+    let value = option.value(option.preferredValue(in: settings))
     Group {
       switch option.controlType {
       case "toggle":
         Toggle(option.displayName, isOn: Binding(get: { value != 0 },
-          set: { settings.engineOptions[name] = $0 ? 1 : 0 }))
+          set: { option.setPreferredValue($0 ? 1 : 0, in: &settings) }))
       case "select":
         if let values = option.values {
           Picker(option.displayName, selection: Binding(get: { value },
-            set: { settings.engineOptions[name] = $0 })) {
+            set: { option.setPreferredValue($0, in: &settings) })) {
             ForEach(values.indices, id: \.self) { index in
               Text(option.valueLabel(Double(index))).tag(Double(index))
             }
@@ -499,7 +518,7 @@ private struct GameplaySettingsPanel: View {
         if let range = option.sliderRange {
           LabeledContent(option.displayName, value: option.valueLabel(value))
           Slider(value: Binding(get: { value },
-            set: { settings.engineOptions[name] = option.clamped($0) }), in: range)
+            set: { option.setPreferredValue(option.clamped($0), in: &settings) }), in: range)
             .accessibilityLabel(option.displayName)
         }
       default:
@@ -507,8 +526,11 @@ private struct GameplaySettingsPanel: View {
           .foregroundStyle(.secondary)
       }
       if option.controlType != nil {
-        Button("Use Engine Default") { settings.engineOptions[name] = nil }
-          .disabled(settings.engineOptions[name] == nil)
+        Button(configuration.optionCategories == nil ? "Use Engine Default"
+          : "Reset \(option.displayName)") {
+          option.setPreferredValue(nil, in: &settings)
+        }
+        .disabled(option.preferredValue(in: settings) == nil)
       }
     }
   }
@@ -755,6 +777,26 @@ private struct EngineAnchorLayout: Layout {
     Color.black
     JudgementLabel(feedback: JudgementFeedback(sequence: 1,
       judgement: .perfect, accuracy: -0.03, minimumError: 0.02), mode: .timing)
+  }
+}
+
+#Preview("Categorized Engine Options") {
+  let configuration = try! JSONDecoder().decode(EngineConfiguration.self,
+    from: Data(#"""
+    {"optionCategories":[{"name":"display","title":"Display"},
+    {"name":"play","title":"#GAMEPLAY"}],"options":[
+    {"name":"#NOTE_SPEED","category":"play","type":"slider","def":5,
+     "min":1,"max":12,"step":0.1},
+    {"name":"#MIRROR","category":"display","type":"toggle","def":0},
+    {"name":"Score Mode","category":"play","type":"select","def":1,
+     "values":["Flat","Combo"]}]}
+    """#.utf8))
+  NavigationStack {
+    Form {
+      EngineOptionSections(settings: .constant(GameplayPreferences()),
+        configuration: configuration)
+    }
+    .navigationTitle("Engine Options")
   }
 }
 

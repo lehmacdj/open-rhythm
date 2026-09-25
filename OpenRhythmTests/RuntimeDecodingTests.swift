@@ -572,6 +572,80 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(config.runtimeOptions(preferences: restored), [1, 0, 1, 1, 17, 5, 1])
   }
 
+  func testEngineOptionCategoriesPreserveRuntimeOrderAndDedicatedPreferences() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
+      {"optionCategories":[{"name":"display","title":"#DISPLAY"},
+      {"name":"play","title":"Play Options"},{"name":"empty","title":"Unused"}],
+      "options":[
+      {"name":"#NOTE_SPEED","category":"play","type":"slider","def":5,
+       "min":1,"max":12,"step":0.1},
+      {"name":"Score Mode","category":"display","type":"select","def":0,
+       "values":["Flat","Combo"]},
+      {"name":"#MIRROR","category":"play","type":"toggle","def":0},
+      {"name":"Future","category":"display","type":"future","def":7}]}
+      """#.utf8))
+    XCTAssertNoThrow(try config.validateOptions())
+    XCTAssertEqual(config.optionGroups.map(\.id), ["display", "play"])
+    XCTAssertEqual(config.optionGroups.map(\.title), ["Display", "Play Options"])
+    XCTAssertEqual(config.optionGroups.map(\.optionIndices), [[1,3], [0,2]])
+    var settings = GameplayPreferences(engineOptions: ["#NOTE_SPEED": 3,
+      "Score Mode": 1, "Future": 99])
+    XCTAssertEqual(config.runtimeOptions(preferences: settings), [3,1,0,7])
+    config.options[0].setPreferredValue(9, in: &settings)
+    config.options[1].setPreferredValue(0, in: &settings)
+    config.options[2].setPreferredValue(1, in: &settings)
+    XCTAssertEqual(settings.noteSpeed, 9)
+    XCTAssertEqual(settings.scoreMode, 0)
+    XCTAssertEqual(settings.engineOptions["#MIRROR"], 1)
+    let restored = try JSONDecoder().decode(GameplayPreferences.self,
+      from: JSONEncoder().encode(settings))
+    XCTAssertEqual(config.runtimeOptions(preferences: restored), [9,0,1,7],
+      "Category presentation must not reorder Level Option memory")
+    for option in config.options { option.setPreferredValue(nil, in: &settings) }
+    XCTAssertNil(settings.noteSpeed)
+    XCTAssertNil(settings.scoreMode)
+    XCTAssertTrue(settings.engineOptions.isEmpty,
+      "Reset must also clear legacy generic overrides of dedicated controls")
+    XCTAssertEqual(config.runtimeOptions(preferences: settings), [5,0,0,7])
+    var legacy = config
+    legacy.optionCategories = nil
+    XCTAssertNoThrow(try legacy.validateOptions())
+    XCTAssertEqual(legacy.optionGroups.map(\.optionIndices), [[2],[3]],
+      "Without categories, dedicated controls stay in their existing sections")
+    XCTAssertEqual(legacy.runtimeOptions(preferences: restored), [9,0,1,7])
+  }
+
+  func testMalformedOptionCategoriesFailBeforeControlsCanDisappear() throws {
+    let category = ["name": "play", "title": "Play"]
+    let valid: [String: Any] = ["name": "Mirror", "category": "play",
+      "type": "toggle", "def": 0]
+    for categories in [[category], [], [category, category]] {
+      for value: Any in ["play", "missing", NSNull()] {
+        var option = valid
+        option["category"] = value
+        let config = try JSONDecoder().decode(EngineConfiguration.self,
+          from: JSONSerialization.data(withJSONObject: [
+            "optionCategories": categories, "options": [option]]))
+        if categories.count == 1, value as? String == "play" {
+          XCTAssertNoThrow(try config.validateOptions())
+        } else {
+          XCTAssertThrowsError(try config.validateOptions()) { error in
+            XCTAssertTrue(error.localizedDescription.contains("category"))
+          }
+        }
+      }
+    }
+    let missing = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
+      {"optionCategories":[{"name":"play","title":"Play"}],
+       "options":[{"name":"Mirror","type":"toggle","def":0}]}
+      """#.utf8))
+    XCTAssertThrowsError(try missing.validateOptions())
+    let empty = try JSONDecoder().decode(EngineConfiguration.self,
+      from: Data(#"{"optionCategories":[],"options":[]}"#.utf8))
+    XCTAssertNoThrow(try empty.validateOptions())
+    XCTAssertTrue(empty.optionGroups.isEmpty)
+  }
+
   func testMalformedEngineOptionsCannotReachSliderOrPickerControls() throws {
     for option in [
       #"{"name":"bad","type":"slider","def":3,"min":0,"max":1,"step":0.1}"#,

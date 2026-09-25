@@ -11,6 +11,28 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Engine [option categories](
+  https://wiki.sonolus.com/engine-specs/resources/engine-configuration-option-category)
+  now determine settings section titles and order. Options retain their original
+  order within a category, and their original indices in Level Option memory;
+  empty categories do not create empty sections. Configurations with no category
+  definitions retain their existing layout. Duplicate category names and
+  missing/unknown memberships fail clearly instead of dropping controls. Note
+  speed and score-mode controls use the existing dedicated per-engine saved
+  preferences even when grouped by the engine, with the same engine defaults
+  and reset behavior. Independent review found that the legacy uncategorized
+  controls could hide generic saved overrides; those now share preference
+  resolution/reset with runtime and categorized controls. Follow-up review found
+  no further issue. Five focused regressions pass, covering interleaved indices,
+  category order, invalid metadata, persistence and resetting both dedicated
+  and legacy overrides. The categorized-options Xcode preview was inspected
+  at normal iPhone size; all controls and headers were readable and visible.
+  Verification: September 25 03:51 simulator suite, 257 passed, zero failures
+  or skips (`RunAllTests/486FB278-73E7-4437-B424-6E4A8CF86FA7.txt`), including all
+  six cached-chart probes. The 300-second observer timed out, but the same run
+  completed with a full summary and `TEST FINISHED` marker. The 03:56 normal
+  simulator build also passed. No physical checks or server-resource requests
+  were used.
 - Initial play-memory conformance now has a table-driven regression independent
   of the sampled engines. It checks complete runtime, level, archetype, ROM,
   entity and array blocks after construction, including identity transforms,
@@ -478,11 +500,11 @@ execute; the successful rerun and final suite have separate result bundles.
   engine playback. Missing explicit `UseItem` overrides and malformed declared
   ROM locators now fail clearly rather than silently selecting defaults.
   Remaining resource/default conformance is not closed by these checks.
-  In particular, [option-category definitions](
+  [Option-category definitions](
   https://wiki.sonolus.com/engine-specs/resources/engine-configuration-option-category)
-  supply a name and title, but EngineConfiguration does not yet decode them
-  and the settings panel ignores each option's category. This requires grouping
-  the controls without reordering the runtime's option-memory indices.
+  are now decoded and used to group settings without reordering the runtime's
+  option-memory indices; see the conformance entry above. Other resource and
+  unknown-enum checks remain open.
 - Runtime metadata lists a play-mode `skip` slot. The public Python framework
   describes it as a time skip in the current frame, but the play block docs
   omit its seek/resimulation behavior. It remains zero: intro fast-forward
