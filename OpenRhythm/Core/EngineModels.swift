@@ -146,7 +146,7 @@ struct EnginePlayData: Decodable, Sendable {
     let pure: Set<String> = Set([
       "Abs", "Add", "And", "Arccos", "Arcsin", "Arctan", "Arctan2",
       "Ceil", "Clamp", "Cos", "Cosh", "Degree", "Divide", "Equal",
-      "Floor", "Frac", "Greater", "GreaterOr", "If", "Lerp", "LerpClamped",
+      "Floor", "Frac", "Greater", "GreaterOr", "Lerp", "LerpClamped",
       "Less", "LessOr", "Log", "Max", "Min", "Mod", "Multiply", "Negate",
       "Not", "NotEqual", "Or", "Power", "Radian", "Rem", "Remap",
       "RemapClamped", "Round", "Sign", "Sin", "Sinh", "Subtract", "Tan",
@@ -154,6 +154,8 @@ struct EnginePlayData: Decodable, Sendable {
     ]).union(EngineInterpreter.easingFunctions)
     let drawing: Set<String> = ["Draw", "DrawCurvedB", "DrawCurvedT",
       "DrawCurvedL", "DrawCurvedR", "DrawCurvedBT", "DrawCurvedLR"]
+    let branching: Set<String> = ["If", "Switch", "SwitchWithDefault",
+      "SwitchInteger", "SwitchIntegerWithDefault"]
     // These blocks cannot change after preprocessing, including writes via
     // Entity Data's array alias. Only level-backed entities receive the flag.
     let fixedBlocks: Set<Double> = [2001, 2002, 3000, 4001]
@@ -173,10 +175,26 @@ struct EnginePlayData: Decodable, Sendable {
         if expanded {
           active.remove(index)
           let arguments = node.arguments.map { proofs[$0] ?? .unsafe }
-          if function == "Execute" || function == "Execute0" {
-            proofs[index] = arguments.contains(.unsafe) ? .unsafe
+          let combined: Proof = arguments.contains(.unsafe) ? .unsafe
               : arguments.contains(.drawing) ? .drawing : .constant
-          } else {
+          switch function {
+          case "Execute", "Execute0": proofs[index] = combined
+          case "If":
+            proofs[index] = arguments.count == 3 && arguments[0] == .constant
+              ? combined : .unsafe
+          case "Switch", "SwitchWithDefault":
+            let end = arguments.count - (function == "SwitchWithDefault" ? 1 : 0)
+            let fixedSelection = end >= 1 && (end - 1).isMultiple(of: 2)
+              && arguments[0] == .constant
+              && stride(from: 1, to: end, by: 2).allSatisfy {
+                arguments[$0] == .constant
+              }
+            proofs[index] = fixedSelection ? combined : .unsafe
+          case "SwitchInteger", "SwitchIntegerWithDefault":
+            let minimum = function == "SwitchIntegerWithDefault" ? 2 : 1
+            proofs[index] = arguments.count >= minimum && arguments[0] == .constant
+              ? combined : .unsafe
+          default:
             proofs[index] = arguments.allSatisfy { $0 == .constant }
               ? (drawing.contains(function) ? .drawing : .constant) : .unsafe
           }
@@ -202,7 +220,8 @@ struct EnginePlayData: Decodable, Sendable {
           && first.map(fixedBlocks.contains) == true
         let stageDraw = drawing.contains(function)
           && first.flatMap(Int.init(exactly:)).map(stageIDs.contains) == true
-        guard pure.contains(function) || fixedRead || stageDraw
+        guard pure.contains(function) || branching.contains(function)
+          || fixedRead || stageDraw
           || function == "Execute" || function == "Execute0" else {
           proofs[index] = .unsafe
           active.remove(index)

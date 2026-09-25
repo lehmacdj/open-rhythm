@@ -743,6 +743,25 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesFixedBranchSelectedStage() async throws {
+    for branch in ["If", "Switch", "SwitchWithDefault", "SwitchInteger",
+      "SwitchIntegerWithDefault"] {
+      try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+        earlyInput: true, preparedStage: true, preparedBranch: branch)
+    }
+  }
+
+  @MainActor
+  func testGameplayIntroFixedBranchStageStillPreservesVisibleChanges() async throws {
+    for branch in ["If", "Switch", "SwitchWithDefault", "SwitchInteger",
+      "SwitchIntegerWithDefault"] {
+      try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+        earlyInput: true, preparedStage: true, stageMovesAt: 0.25,
+        preparedBranch: branch)
+    }
+  }
+
+  @MainActor
   func testGameplayIntroRewindsWhenAnotherEntityMovesPreparedStage() async throws {
     try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
       earlyInput: true, preparedStage: true, stageMovesAt: 0.25)
@@ -753,7 +772,8 @@ final class EngineHostTests: XCTestCase {
     rewind: Bool = false, earlyInput: Bool = false,
     resolveAt: Double? = nil, debugAtResolution: Bool = false,
     resolvesFutureInput: Bool = true, lifeChangeAt: Double? = nil,
-    preparedStage: Bool = false, stageMovesAt: Double? = nil) async throws {
+    preparedStage: Bool = false, stageMovesAt: Double? = nil,
+    preparedBranch: String? = nil) async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -808,11 +828,24 @@ final class EngineHostTests: XCTestCase {
       let writes = quad.enumerated().map { index, value in
         b.call("Set", [b.value(2001), b.value(Double(index)), b.value(value)])
       }
+      var stage = b.call("Draw", [b.value(1)]
+        + coordinates + [b.value(-1), b.value(1)])
+      let selected = b.call("GreaterOr", [coordinates[0], b.value(-2)])
+      switch preparedBranch {
+      case "If": stage = b.call("If", [selected, stage, b.value(0)])
+      case "Switch": stage = b.call("Switch", [selected, b.value(1), stage])
+      case "SwitchWithDefault":
+        stage = b.call("SwitchWithDefault", [selected, b.value(0), b.value(0), stage])
+      case "SwitchInteger":
+        stage = b.call("SwitchInteger", [selected, b.value(0), stage])
+      case "SwitchIntegerWithDefault":
+        stage = b.call("SwitchIntegerWithDefault", [selected, b.value(0), stage])
+      default: break
+      }
       archetypes.append(["name": "Stage", "hasInput": false,
         "imports": [], "exports": [],
         "preprocess": ["index": b.call("Execute0", writes)],
-        "updateParallel": ["index": b.call("Draw", [b.value(1)]
-          + coordinates + [b.value(-1), b.value(1)])]])
+        "updateParallel": ["index": stage]])
       entities.append(LevelEntity(archetype: "Stage", name: nil, data: []))
     }
     if let stageMovesAt {
@@ -983,6 +1016,46 @@ final class EngineHostTests: XCTestCase {
       "Prepared random values remain fixed across restart")
   }
 
+  func testStaticIntroProofClassifiesFixedSelectionBranches() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1)
+    let fixed = b.call("Get", [b.value(2002), zero])
+    let mutable = b.call("Get", [b.value(1001), zero])
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, one])
+    let custom = b.call("Draw", [b.value(2)] + quad.map(b.value) + [zero, one])
+    func branches(_ selector: Int, _ value: Int) -> [Int] {
+      [b.call("If", [selector, value, zero]),
+       b.call("Switch", [selector, one, value]),
+       b.call("SwitchWithDefault", [selector, zero, zero, value]),
+       b.call("SwitchInteger", [selector, zero, value]),
+       b.call("SwitchIntegerWithDefault", [selector, zero, value])]
+    }
+    var valid = branches(fixed, draw)
+    let nested = b.call("If", [fixed, valid[1], zero])
+    valid.append(nested)
+    let random = b.call("Random", [zero, one])
+    let write = b.call("Set", [b.value(4000), zero, one])
+    let invalid = branches(mutable, draw) + branches(draw, draw)
+      + branches(fixed, custom) + branches(fixed, mutable)
+      + branches(fixed, random) + branches(fixed, write) + [
+        b.call("If", [nested, draw, zero]),
+        b.call("Draw", [one] + quad.map(b.value) + [zero, nested]),
+        b.call("Get", [b.value(2001), nested]),
+        b.call("If", [one, draw, random]),
+        b.call("SwitchWithDefault", [one, one, draw, write]),
+        b.call("SwitchInteger", [zero, draw, custom]),
+        b.call("Switch", [fixed, draw, draw]),
+        b.call("SwitchWithDefault", [fixed, draw, draw, zero]),
+        b.call("If", [fixed, draw]), b.call("Switch", [fixed, draw]),
+        b.call("SwitchWithDefault", [fixed]),
+        b.call("SwitchInteger", []), b.call("SwitchIntegerWithDefault", [fixed])]
+    let engine = try b.engine(archetypes: (valid + invalid).map {
+      ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
+        "updateParallel": ["index": $0]]
+    }, sprites: [["name": "#LANE", "id": 1], ["name": "READY", "id": 2]])
+    XCTAssertEqual(engine.staticIntroArchetypes, Set(valid.indices))
+  }
+
   func testStaticIntroProofRejectsMutableArgumentExpressionsAndCycles() throws {
     let b = RuntimeNodeBuilder()
     let one = b.value(1)
@@ -1052,7 +1125,7 @@ final class EngineHostTests: XCTestCase {
     let contaminated = b.call("Add", [draw, one])
     let nested = b.call("Draw", [one] + quad.map(b.value)
       + [b.value(0), contaminated])
-    let conditional = b.call("If", [one, draw, draw])
+    let conditional = b.call("If", [draw, draw, draw])
     let roots = [b.call("Execute", [draw, contaminated]),
       b.call("Execute", [contaminated, draw]), nested, conditional]
     func archetype(_ root: Int) -> [String: Any] {

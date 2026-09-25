@@ -11,6 +11,29 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Intro stage classification now accepts If and all four Switch variants when
+  the selector and case tests are fixed, side-effect-free expressions and every
+  alternative contains only fixed expressions or proven stage drawings. It
+  does not evaluate a selector and discard an unsafe unchosen branch. Mutable
+  reads, random values, writes, unknown graphics, drawing-as-selector/argument,
+  malformed arities, cycles and excessive analysis work remain unproven.
+  Fixed branches can nest without turning their drawing effects into pure
+  numeric expressions. The existing level-entity/lifecycle restrictions and
+  frame-to-frame visual guard remain unchanged. Two regressions failed before
+  the fix: the proof rejected every branch family, and model startup stopped
+  at zero rather than the first visible note at 0.5 seconds. They now pass;
+  model tests also preserve a later transform change for all five families.
+  Seven focused tests passed at 06:46–06:47; additional conservative branch
+  cases suggested by independent review passed at 06:48. Review found no
+  actionable issue. The full 06:48 simulator suite passed all 289 tests with
+  no failures or skips, including every cached-chart probe; the normal build
+  passed at 06:53. The observer timed out but the same run's final report and
+  TEST FINISHED marker confirmed completion without a restart.
+  This expands safe skipping, not optimal skipping of every
+  custom engine or physical presentation certification.
+  The cached SEKAI Stage/StaticStage archetypes have shouldSpawn, touch and
+  updateSequential callbacks, so they still fail the unchanged lifecycle
+  eligibility checks. This change does not establish faster SEKAI startup.
 - Particle preparation now crops only sprites referenced by selected engine
   effects, while keeping the resource's original sprite indices. Previously
   an invalid crop used by an unrelated effect could reject a valid selected
@@ -123,7 +146,7 @@ integration probes, including successful inputs and restart/buffering paths.
   shared graph nodes cannot smuggle a drawing operation into an argument proof.
   Traversal is iterative, memoized across archetypes, and limited to 100,000
   node/edge work units; cycles, mutable reads, streams, per-frame randomness,
-  dynamic block IDs and conditional drawing retain the intro.
+  dynamic block IDs and time-dependent conditional drawing retain the intro.
   The prepared-expression regression failed before the change and passes after
   it. Additional tests cover shared draws, curved geometry, randomized
   preprocessing and restart, Entity Data array-alias preparation, mixed proof
@@ -578,7 +601,7 @@ integration probes, including successful inputs and restart/buffering paths.
   present at media zero preserve the entire opening; unchanged alone is not
   evidence of disposable stage decoration. A narrow exception requires fixed
   standard-stage Draw/DrawCurved calls from persistent non-input entities without
-  spawn conditions or mutable play callbacks. Custom names, conditional draws,
+  spawn conditions or mutable play callbacks. Custom names, mutable conditional draws,
   ambiguous resource IDs and dynamic spawns cannot establish that exception.
   The prepared-expression extension and its bounds are described above.
   Changes/removal/reordering of initial decoration, background or visible HUD

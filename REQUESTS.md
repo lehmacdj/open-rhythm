@@ -33,6 +33,21 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Intro-branch follow-up: fixed option/prepared-data selectors can now choose
+stage drawings through If and all four Switch variants without unnecessarily
+retaining the silent intro. All alternatives must be proven safe; mutable
+selectors, drawing side effects in selector/case expressions and unknown or
+unsafe branches still preserve it. Model regressions failed at a zero-second
+start before the fix and now reach the first visible note at 0.5 seconds;
+later visible transform changes remain protected in all five branch families.
+Seven focused tests and the added nested/unreachable-unsafe branch cases pass.
+Independent review found no actionable issue. The full 06:48 simulator run
+passed all 289 tests with no failures or skips; its completed report confirmed
+success after the observer timeout. The 06:53 normal build passed. The
+stack-reference dependency and deferred physical batch are unchanged.
+The cached SEKAI stage archetypes have additional lifecycle/touch callbacks
+and remain outside this proof; no SEKAI-specific startup improvement is claimed.
+
 Stack evidence dependency: the public contracts still omit observable pointer
 initialization, addressing and frame layout. COMPATIBILITY.md now lists the
 specific independent evidence needed for all 14 stack functions, including
@@ -120,7 +135,8 @@ Static-stage follow-up: intro analysis now recognizes unconditional stage
 draws whose geometry uses fixed prepared Level Data, Level Option, Engine ROM,
 or Entity Data through Get and deterministic arithmetic/easing. Reused graph
 nodes and curved draws are supported. Mutable reads, randomness during drawing,
-conditional drawing, and dynamically spawned copies remain protected. Analysis
+time-dependent conditional drawing, and dynamically spawned copies remain
+protected. Fixed-selection branches are covered by the later follow-up above. Analysis
 is iterative and bounded; inconclusive graphs retain the intro. A model test
 now passes the prepared stage to the first visible note, while another confirms
 that a different entity moving the stage forces rewind and preserves that event.
