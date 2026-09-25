@@ -362,6 +362,160 @@ final class OfflineStoreTests: XCTestCase {
   }
 
   @MainActor
+  func testRefreshingCursorParentDiscardsOldPrefetchedDescendants() async throws {
+    let recorder = RequestRecorder()
+    var refreshed = false
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      let cursor = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+        .queryItems?.first { $0.name == "cursor" }?.value
+      switch cursor {
+      case nil: return Data(#"{"pageCount":-1,"cursor":"first","items":[]}"#.utf8)
+      case "first":
+        return Data((refreshed
+          ? #"{"pageCount":-1,"cursor":"new-tail","items":[]}"#
+          : #"{"pageCount":-1,"cursor":"old-tail","items":[]}"#).utf8)
+      case "old-tail", "new-tail":
+        return Data(#"{"pageCount":-1,"items":[]}"#.utf8)
+      default: throw SonolusClientError.invalidResponse
+      }
+    }
+    defer { StubURLProtocol.handler = nil }
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    await model.refresh()
+    await model.prefetchNextPages()
+    XCTAssertEqual(recorder.urls.count, 3)
+    refreshed = true
+    await model.loadNextPage(forceReload: true)
+    await model.loadNextPage()
+    XCTAssertNil(model.errorMessage)
+    XCTAssertEqual(model.loadedPageCount, 3)
+    XCTAssertFalse(model.hasMorePages)
+    XCTAssertEqual(URLComponents(url: try XCTUnwrap(recorder.urls.last),
+      resolvingAgainstBaseURL: false)?.queryItems?
+      .first { $0.name == "cursor" }?.value, "new-tail",
+      "A buffered ordinal page must not bypass its changed parent cursor")
+    XCTAssertEqual(recorder.urls.count, 5)
+  }
+
+  @MainActor
+  func testParentReloadRejectsInFlightNumberedDescendant() async throws {
+    let recorder = RequestRecorder()
+    let started = expectation(description: "Old descendant request started")
+    let resume = DispatchSemaphore(value: 0)
+    defer { resume.signal() }
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      if recorder.urls.count == 3 {
+        started.fulfill()
+        guard resume.wait(timeout: .now() + 5) == .success else {
+          throw URLError(.timedOut)
+        }
+        return Data(#"{"pageCount":99,"items":[]}"#.utf8)
+      }
+      return Data(#"{"pageCount":3,"items":[]}"#.utf8)
+    }
+    defer { StubURLProtocol.handler = nil }
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session))
+    await model.refresh()
+    let prefetch = Task { await model.prefetchNextPages() }
+    await fulfillment(of: [started], timeout: 5)
+    let reload = Task { await model.loadNextPage(forceReload: true) }
+    // Wait for the main-actor reload to invalidate the old request, without
+    // requiring URLSession to start another request on its protocol queue.
+    for _ in 0..<1_000 where !model.isLoading {
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    XCTAssertTrue(model.isLoading)
+    resume.signal()
+    await prefetch.value
+    await reload.value
+    await model.loadNextPage()
+    XCTAssertNil(model.errorMessage)
+    XCTAssertEqual(model.loadedPageCount, 3)
+    XCTAssertEqual(model.totalPageCount, 3)
+    XCTAssertFalse(model.hasMorePages)
+    XCTAssertEqual(recorder.urls.count, 5,
+      "The completed old descendant must not repopulate the invalidated buffer")
+  }
+
+  @MainActor
+  func testPaginationRetryBypassesCacheAndRefreshReplacesExpiredCursor() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = RequestRecorder()
+    var phase = 0
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      let cursor = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+        .queryItems?.first { $0.name == "cursor" }?.value
+      if cursor == nil {
+        return Data((phase == 2
+          ? #"{"pageCount":-1,"cursor":"fresh","items":[]}"#
+          : #"{"pageCount":-1,"cursor":"old","items":[]}"#).utf8)
+      }
+      if phase == 0 {
+        // Valid JSON is cached, but changing pagination mode is invalid.
+        return Data(#"{"pageCount":3,"items":[]}"#.utf8)
+      }
+      if phase == 2, cursor == "old" { throw URLError(.resourceUnavailable) }
+      return Data(#"{"pageCount":-1,"cursor":"expires","items":[]}"#.utf8)
+    }
+    defer { StubURLProtocol.handler = nil }
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel() }
+    let model = CatalogModel(server: ServerDescriptor.defaults[0],
+      client: SonolusClient(session: session,
+        cache: SonolusResponseCache(rootURL: root)))
+    await model.refresh()
+    await model.loadNextPage()
+    XCTAssertNotNil(model.errorMessage)
+    XCTAssertTrue(model.canRefreshAfterError)
+    XCTAssertEqual(recorder.urls.count, 2)
+    await model.prefetchNextPages()
+    await model.loadMoreIfNeeded(after: "missing")
+    XCTAssertEqual(recorder.urls.count, 2, "Errors must not trigger a crawl")
+    phase = 1
+    await model.retryPage()
+    XCTAssertNil(model.errorMessage)
+    XCTAssertEqual(model.loadedPageCount, 2)
+    XCTAssertEqual(recorder.urls.count, 3,
+      "Retry must replace a cached response rejected by pagination validation")
+
+    // Restart with a new server generation, then let its cursor expire.
+    await model.refresh(forceReload: true)
+    phase = 2
+    await model.loadNextPage()
+    XCTAssertNotNil(model.errorMessage)
+    XCTAssertEqual(model.loadedPageCount, 1)
+    let failedCount = recorder.urls.count
+    await model.prefetchNextPages()
+    XCTAssertEqual(recorder.urls.count, failedCount)
+    await model.refresh(forceReload: true)
+    XCTAssertNil(model.errorMessage)
+    XCTAssertFalse(model.canRefreshAfterError)
+    XCTAssertEqual(model.loadedPageCount, 1)
+    await model.loadNextPage()
+    XCTAssertNil(model.errorMessage)
+    XCTAssertEqual(URLComponents(url: try XCTUnwrap(recorder.urls.last),
+      resolvingAgainstBaseURL: false)?.queryItems?
+      .first { $0.name == "cursor" }?.value, "fresh")
+  }
+
+  @MainActor
   func testPaginationModeChangeDoesNotSilentlyAppendAnUnrelatedPage() async throws {
     StubURLProtocol.handler = { request in
       let hasCursor = request.url!.absoluteString.contains("cursor=")
@@ -609,6 +763,11 @@ final class OfflineStoreTests: XCTestCase {
     let model = CatalogModel(server: ServerDescriptor.defaults[0],
       client: SonolusClient(session: session))
     await model.refresh()
+    await model.prefetchNextPages()
+    XCTAssertEqual(recorder.urls.count, 2,
+      "A shrunken page count must stop the second speculative request")
+    XCTAssertEqual(model.loadedPageCount, 1,
+      "Speculation must not change the visible list extent")
     await model.loadNextPage()
     XCTAssertEqual(model.loadedPageCount, 2)
     XCTAssertEqual(model.totalPageCount, 1)
@@ -943,11 +1102,13 @@ final class OfflineStoreTests: XCTestCase {
       return Data("response".utf8)
     }
     async let first = cache.data(at: url, maximumAge: 600, fetch: fetch)
-    async let second = cache.data(at: url, maximumAge: 600, fetch: fetch)
+    async let second = cache.data(at: url, maximumAge: 600,
+      forceReload: true, fetch: fetch)
     let responses = try await [first, second]
     XCTAssertEqual(responses, [Data("response".utf8), Data("response".utf8)])
     var count = await counter.count
-    XCTAssertEqual(count, 1)
+    XCTAssertEqual(count, 1,
+      "A force reload still coalesces with an active same-URL network request")
     let reopened = SonolusResponseCache(rootURL: root)
     _ = try await reopened.data(at: url, maximumAge: 600, fetch: fetch)
     count = await counter.count

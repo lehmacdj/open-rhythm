@@ -716,8 +716,16 @@ execute; the successful rerun and final suite have separate result bundles.
   currently simulates successive frames, rather than jumping the runtime clock.
 - Tutorial/watch/preview modes are separate capability sets, not implied by
   play-mode support.
-- Expired cursors, changing remote ordering, and sparse filtered results
-  without unbounded crawls.
+- Pagination recovery now offers an explicit fresh-chain refresh after a cursor
+  fails, and Retry bypasses cached invalid pages. Refetching a parent invalidates
+  buffered descendants and their in-flight completions; request-cursor tags
+  prevent consuming a different chain's page at the same ordinal. Synthetic
+  regressions cover both cursor and numbered pages, shrinking page counts,
+  bounded sparse-result loading, and stable already-visible row order.
+  Force reload shares an existing same-URL network fetch but bypasses stored
+  responses. A changing server's numbered pages are not an atomic snapshot:
+  deduplication avoids duplicate rows, but only a server snapshot/cursor contract
+  can guarantee no omissions during concurrent remote insertions/removals.
 - Conservative visual provenance can preserve more intro silence than
   necessary, especially custom/dynamic stage producers. Input activation alone
   no longer stops simulation; an unseen resolved input restores the start.

@@ -55,10 +55,19 @@ struct CatalogView: View {
           } else if model.hasMorePages && (model.errorMessage != nil
             || model.visibleSongs.isEmpty || model.needsMoreMatches) {
             Button(model.errorMessage == nil ? "Search More Songs" : "Retry") {
-              Task { await model.loadNextPage() }
+              Task {
+                if model.errorMessage == nil { await model.loadNextPage() }
+                else { await model.retryPage() }
+              }
+            }
+          }
+          if !model.isLoading, model.canRefreshAfterError {
+            Button("Refresh Songs") {
+              Task { await model.refresh(forceReload: true) }
             }
           }
         }
+        .buttonStyle(.borderless)
         .frame(height: 32)
         .id("pagination-status")
       }

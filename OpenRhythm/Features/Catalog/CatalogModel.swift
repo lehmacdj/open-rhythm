@@ -12,7 +12,12 @@ final class CatalogModel {
   private var activeQuery = ""
   private var firstPageFetchedAt: Date?
   private var reloadPages = false
-  private var prefetchedPages = [Int: SonolusLevelList]()
+  private struct PrefetchedPage {
+    let requestCursor: String?
+    let response: SonolusLevelList
+  }
+  private var prefetchedPages = [Int: PrefetchedPage]()
+  private var prefetchRevision = 0
   private var pageCursors = [Int: String]()
   private var usesCursors = false
 
@@ -39,6 +44,7 @@ final class CatalogModel {
   private(set) var needsMoreMatches = false
 
   var hasMorePages: Bool { loadedPageCount < totalPageCount }
+  var canRefreshAfterError: Bool { errorMessage != nil && loadedPageCount > 0 }
   var showsPaginationStatus: Bool {
     if errorMessage != nil && !isLoading { return true }
     return loadedPageCount > 0 && (isLoading || (hasMorePages
@@ -74,6 +80,7 @@ final class CatalogModel {
     generation += 1
     activeQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
     reloadPages = forceReload
+    prefetchRevision += 1
     prefetchedPages.removeAll()
     pageCursors.removeAll()
     usesCursors = false
@@ -119,17 +126,22 @@ final class CatalogModel {
   func prefetchNextPages() async {
     // Empty searches may report zero pages even though page 0 was fetched.
     guard loadedPageCount > 0, hasMorePages,
-      normalizedQuery == activeQuery else { return }
+      normalizedQuery == activeQuery, errorMessage == nil else { return }
     let currentGeneration = generation
+    let currentRevision = prefetchRevision
     let query = activeQuery
     let start = loadedPageCount
     let count = usesCursors ? 2 : min(2, totalPageCount - start)
     var cursor = pageCursors[start]
+    var numberedEnd = totalPageCount
     for page in start..<(start + count) {
       guard !Task.isCancelled, generation == currentGeneration,
-        usesCursors ? cursor != nil : page < totalPageCount else { return }
-      if let buffered = prefetchedPages[page], isFresh(buffered.fetchedAt) {
-        cursor = buffered.cursor
+        prefetchRevision == currentRevision, errorMessage == nil,
+        usesCursors ? cursor != nil : page < numberedEnd else { return }
+      if let buffered = prefetchedPages[page], buffered.requestCursor == cursor,
+        isFresh(buffered.response.fetchedAt) {
+        cursor = buffered.response.cursor
+        if !usesCursors { numberedEnd = min(numberedEnd, buffered.response.pageCount) }
         continue
       }
       do {
@@ -138,13 +150,24 @@ final class CatalogModel {
         // A list append cancels its old prefetch task. Keep a completed
         // response in the same generation so forced refreshes don't fetch
         // that page twice when the replacement task starts.
-        guard generation == currentGeneration else { return }
+        guard generation == currentGeneration,
+          prefetchRevision == currentRevision, errorMessage == nil else { return }
         guard (response.pageCount < 0) == usesCursors else { return }
-        if page >= loadedPageCount { prefetchedPages[page] = response }
-        if usesCursors, response.cursor == cursor { return }
+        if page >= loadedPageCount {
+          prefetchedPages[page] = PrefetchedPage(requestCursor: cursor,
+            response: response)
+        }
+        if usesCursors, let next = response.cursor,
+          next == cursor || pageCursors.values.contains(next) { return }
+        if !usesCursors { numberedEnd = min(numberedEnd, response.pageCount) }
         cursor = response.cursor
       } catch { return } // A visible load reports errors and offers retry.
     }
+  }
+
+  func retryPage() async {
+    guard errorMessage != nil else { return }
+    await loadNextPage(forceReload: true)
   }
 
   func loadNextPage(forceReload: Bool = false) async {
@@ -163,10 +186,17 @@ final class CatalogModel {
     }
     do {
       let response: SonolusLevelList
-      if !forceReload, let buffered = prefetchedPages.removeValue(forKey: page),
-        isFresh(buffered.fetchedAt) {
-        response = buffered
+      let buffered = prefetchedPages.removeValue(forKey: page)
+      if !forceReload, let buffered,
+        buffered.requestCursor == pageCursors[page],
+        isFresh(buffered.response.fetchedAt) {
+        response = buffered.response
       } else {
+        // A refetched parent can change the cursor or numbered-page ordering.
+        // Discard its speculative descendants, including in-flight completions.
+        prefetchRevision += 1
+        prefetchedPages = prefetchedPages.filter { $0.key < page }
+        if forceReload || buffered != nil { reloadPages = true }
         response = try await client.levels(on: server, page: page,
           query: requestedQuery, cursor: pageCursors[page],
           forceReload: forceReload || reloadPages)

@@ -177,6 +177,8 @@ actor SonolusClient {
 
 /// Persistent public responses shared across all client instances. Identical
 /// in-flight requests are coalesced; repeated view loads need no network trip.
+/// A forced reload bypasses stored responses but still joins an active fetch
+/// for the same URL. It is not an atomic snapshot of a changing remote catalog.
 actor SonolusResponseCache {
   static let shared = SonolusResponseCache()
   private let rootURL: URL

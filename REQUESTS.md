@@ -25,6 +25,23 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
+Pagination-cache follow-up: prefetched pages now retain their request cursor.
+Refetching a parent discards speculative descendants and rejects late responses
+from the previous prefetch revision, including numbered pages. Prefetch stops
+when a response reduces the remote page count. A failed page's Retry bypasses
+stored data, and Refresh Songs explicitly starts a new chain if its cursor has
+expired. Errors do not trigger automatic prefetch/restart loops. Forced reloads
+still share an active network request for the same URL; they bypass stored
+responses, not the server's lack of a cross-page snapshot guarantee.
+Nine focused simulator tests passed at 05:38–05:39, covering these changes plus
+stable existing row order, bounded look-ahead, and stale-search suppression.
+These checks used local response fixtures, not song-server or device requests.
+Independent post-fix review found no remaining release-blocking issues. Recovery
+buttons have separate tap targets, and prefetch rechecks errors after suspension.
+The 05:40 full simulator suite passed all 280 tests with zero failures or skips;
+the 05:46 normal build passed. Xcode's observer timed out after five minutes,
+but the completed result report confirms every test passed; it was not rerun.
+
 Static-stage follow-up: intro analysis now recognizes unconditional stage
 draws whose geometry uses fixed prepared Level Data, Level Option, Engine ROM,
 or Entity Data through Get and deterministic arithmetic/easing. Reused graph
