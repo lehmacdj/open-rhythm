@@ -24,8 +24,8 @@ integration probes, including successful inputs and restart/buffering paths.
   sources and found no interval defect. Studio previews use modulo wall time;
   they do not prove native spawned-effect first-cycle or lifetime behavior.
   Existing one-shot parent expiry remains unchanged.
-  Additional source comparison found easing-curve differences (`none` at the
-  end point, Back/Elastic composition, and Expo midpoint); these remain to be
+  Additional source comparison found easing-curve differences (Back/Elastic
+  composition and Expo midpoint); these remain to be
   reconciled rather than treating the editor as a universal runtime oracle.
   Verification: September 25 04:16 simulator suite, all 261 tests passed with
   no failures or skips, including six cached-chart probes
@@ -33,6 +33,21 @@ integration probes, including successful inputs and restart/buffering paths.
   at 300 seconds; the same execution then supplied its full passing summary
   and `TEST FINISHED` marker. The 04:22 normal simulator build passed.
   No real-device tests or song-server requests were used.
+- Particle `none` easing now steps from its initial value to its final value
+  at phase 1, matching the pinned official Studio
+  [easing definition](https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/ease.ts).
+  The new regression failed before the fix and passes afterward. It checks
+  ascending/descending steps, just-before-end behavior, clamped phases,
+  omitted endpoints/easing, and direct versus cached endpoint evaluation.
+  Rendered Y coordinates also check the step across the looping/non-looping
+  interval matrix above. The 36 numerical engine easing functions do not
+  expose `none`; their implementation is unchanged. UI animation already
+  returned its final value at elapsed duration and remains consistent.
+  Independent review found no defect. Four focused simulator tests passed
+  at 04:24 (`RunSomeTests/9234154F-7F17-42B5-8BD0-663EB60B1A3E.txt`), including
+  numerical easing and UI animation regressions; the 04:25 normal build passes.
+  This is focused verification following the prior 261-test full-suite pass,
+  not a new full-suite run or physical check.
 - Presentation preparation now rejects unknown primary/secondary metrics,
   judgment-error styles/placements and UI/selected-particle easing names with
   a human-readable error identifying the field and value. This replaces silent

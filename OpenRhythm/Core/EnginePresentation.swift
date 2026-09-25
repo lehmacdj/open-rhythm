@@ -572,7 +572,7 @@ enum EngineEasing {
 
   static func value(_ name: String, _ time: Double, clamped: Bool = true) -> Double {
     let t = clamped ? min(1, max(0, time)) : time
-    if name == "none" { return 0 }
+    if name == "none" { return t == 1 ? 1 : 0 }
     if name == "linear" { return t }
     for mode in ["inOut", "outIn", "in", "out"] where name.hasPrefix(mode) {
       let curve = String(name.dropFirst(mode.count))

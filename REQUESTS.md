@@ -61,6 +61,13 @@ COMPATIBILITY.md. The September 25 04:16 simulator suite passed all 261 tests,
 with no failures or skips; the 04:22 normal build passed. Physical checks
 remain deferred.
 
+Particle easing follow-up: `none` now reaches the final value at its exact
+endpoint instead of holding the starting value forever. A failing-before-fix
+regression now passes, including rendered positions across loop boundaries.
+Four focused simulator checks and the 04:25 normal build pass; independent
+review found no defect. Numerical engine easing is unchanged; remaining curve
+differences stay open in COMPATIBILITY.md.
+
 Option-category follow-up: engine-provided section titles/order now organize
 settings without changing Level Option memory indices. Dedicated note-speed
 and score-mode preferences remain compatible, and resetting either also clears

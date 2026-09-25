@@ -902,6 +902,36 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticlePropertyDefaultsAndStepEndpoints() throws {
+    // The official Studio importer supplies zero coefficients for missing
+    // endpoints and linear easing. Its "none" curve steps at exactly 1.
+    let examples: [(String, [Double])] = [
+      (#"{}"#, [0, 0, 0, 0]),
+      (#"{"to":{"c":4}}"#, [0, 1, 3, 4]),
+      (#"{"from":{"c":4}}"#, [4, 3, 1, 0]),
+      (#"{"from":{},"to":{},"ease":"none"}"#, [0, 0, 0, 0]),
+      (#"{"from":{"c":2},"to":{"c":6},"ease":"none"}"#, [2, 2, 2, 6]),
+      (#"{"from":{"c":6},"to":{"c":2},"ease":"none"}"#, [6, 6, 6, 2])]
+    for (json, expected) in examples {
+      let property = try JSONDecoder().decode(ParticleData.Property.self,
+        from: Data(json.utf8))
+      for variables in [["c": 1.0], EngineGeometry.randomVariables(seed: 123)] {
+        let endpoints = property.endpoints(variables: variables)
+        for (phase, value) in zip([0.0, 0.25, 0.75, 1], expected) {
+          XCTAssertEqual(property.value(at: phase, variables: variables), value)
+          XCTAssertEqual(property.value(at: phase, endpoints: endpoints), value)
+        }
+      }
+    }
+    XCTAssertEqual(EngineEasing.value("none", 1.0.nextDown), 0)
+    XCTAssertEqual(EngineEasing.value("none", 1), 1)
+    // Presentation clamps phases; this does not change any engine math API.
+    XCTAssertEqual(EngineEasing.value("none", -0.5), 0)
+    XCTAssertEqual(EngineEasing.value("none", 1.5), 1)
+    XCTAssertFalse(EngineInterpreter.easingFunctions.contains("EaseNone"))
+  }
+
+  @MainActor
   func testParticleIntervalsWrapOnlyForLoopedEffects() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
       {"skin":{"sprites":[]},"effect":{"clips":[]},
@@ -916,7 +946,8 @@ final class EngineHostTests: XCTestCase {
     func assets(start: Double, duration: Double) throws -> EnginePresentationAssets {
       let particle: [String: Any] = [
         "sprite": 0, "color": "#fff", "start": start, "duration": duration,
-        "x": ["from": ["c": 0], "to": ["c": 1]], "y": [:], "r": [:],
+        "x": ["from": ["c": 0], "to": ["c": 1]],
+        "y": ["to": ["c": 0.5], "ease": "none"], "r": [:],
         "w": ["from": ["c": 0.2], "to": ["c": 0.2]],
         "h": ["from": ["c": 0.2], "to": ["c": 0.2]],
         "a": ["from": ["c": 1], "to": ["c": 0.5]]]
@@ -970,7 +1001,9 @@ final class EngineHostTests: XCTestCase {
             XCTAssertEqual(sprites.count, 1)
             let sprite = try XCTUnwrap(sprites.first)
             let centerX = sprite.points.map(\.x).reduce(0, +) / 4
+            let centerY = sprite.points.map(\.y).reduce(0, +) / 4
             XCTAssertEqual(centerX, phase, accuracy: 1e-12)
+            XCTAssertEqual(centerY, phase == 1 ? 0.5 : 0, accuracy: 1e-12)
             XCTAssertEqual(sprite.alpha, 1 - 0.5 * phase, accuracy: 1e-12)
           }
         }
