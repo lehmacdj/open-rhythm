@@ -43,11 +43,23 @@ with a field/value diagnostic instead of silently changing presentation. The
 documented enum lists and all 38 easing names are accepted; unused particle
 families/effects remain ignored. Independent review found no implementation
 issue and suggested an additional unused-effect regression, which was added.
-Omitted particle easing still uses the existing linear behavior; its native
-default remains underdocumented and is not certified by these tests.
+Omitted particle easing still uses the existing linear behavior. The public
+Studio importer independently confirms linear easing and zero expression
+defaults; proprietary native parity is not certified by these tests.
 The September 25 04:02 simulator suite passed all 260 tests with no failures
 or skips; the 04:08 normal simulator build passes. Physical checks remain
 deferred under the API-coverage gate.
+
+Particle interval follow-up: looped subparticles now continue across the
+effect's cycle boundary instead of disappearing early, and their exact end
+point remains visible while the parent effect is alive. Three focused
+simulator tests pass, including animated geometry/alpha and all cache modes.
+Independent review verified the official public Studio reference and found no
+interval defect. This is editor-renderer conformance, not native first-spawn
+or lifetime proof. Further easing discrepancies are recorded in
+COMPATIBILITY.md. The September 25 04:16 simulator suite passed all 261 tests,
+with no failures or skips; the 04:22 normal build passed. Physical checks
+remain deferred.
 
 Option-category follow-up: engine-provided section titles/order now organize
 settings without changing Level Option memory indices. Dedicated note-speed

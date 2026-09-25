@@ -11,6 +11,28 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Particle subintervals now retain their animated tail across a loop boundary
+  and include their exact end point while the parent effect remains alive.
+  The independent reference is the official public Studio
+  [renderer](https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/particle-renderer.ts)
+  and [state construction](https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/particle-state.ts),
+  not captured output from the proprietary client. Synthetic tests cover gaps,
+  first-cycle wrapped tails, exact interval endpoints, repeated cycles, an
+  offset spawn time and non-unit effect duration, non-looped parent expiry,
+  animated position/alpha, and all four random/property cache combinations.
+  Three focused simulator tests pass. Independent review verified the pinned
+  sources and found no interval defect. Studio previews use modulo wall time;
+  they do not prove native spawned-effect first-cycle or lifetime behavior.
+  Existing one-shot parent expiry remains unchanged.
+  Additional source comparison found easing-curve differences (`none` at the
+  end point, Back/Elastic composition, and Expo midpoint); these remain to be
+  reconciled rather than treating the editor as a universal runtime oracle.
+  Verification: September 25 04:16 simulator suite, all 261 tests passed with
+  no failures or skips, including six cached-chart probes
+  (`RunAllTests/172F14CB-4321-4EDD-A543-BFE46A109EC5.txt`). The observer timed out
+  at 300 seconds; the same execution then supplied its full passing summary
+  and `TEST FINISHED` marker. The 04:22 normal simulator build passed.
+  No real-device tests or song-server requests were used.
 - Presentation preparation now rejects unknown primary/secondary metrics,
   judgment-error styles/placements and UI/selected-particle easing names with
   a human-readable error identifying the field and value. This replaces silent
@@ -23,9 +45,12 @@ integration probes, including successful inputs and restart/buffering paths.
   animation channels, all six particle properties and preparation failure before
   gameplay starts. Both unused resource families and unused bad effects beside
   a valid selected effect remain ignored. Omitted optional particle easing
-  retains the existing linear behavior; the public schema marks it optional
-  but does not explicitly establish its default, so this is preserved client
-  policy rather than independently proven native parity. Independent review
+  retains the existing linear behavior. The public schema marks it optional
+  without defining a default, but Studio's pinned
+  [particle importer](https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/particle.ts)
+  supplies linear easing and zero expression coefficients for omitted values
+  in all six properties. This independently supports the existing defaults,
+  without establishing proprietary native-client parity. Independent review
   found no implementation issue and suggested the same-resource unused-effect
   regression, which was added. Six focused simulator tests passed.
   The September 25 04:02 simulator suite passed all 260 tests, including six

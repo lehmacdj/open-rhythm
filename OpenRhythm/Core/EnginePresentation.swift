@@ -989,11 +989,15 @@ enum EngineRenderer {
             cached: cacheParticleRandomVariables
           )
           for (particleIndex, particle) in group.particles.enumerated() {
-            guard particle.duration > 0, progress >= particle.start,
-              progress < particle.start + particle.duration,
+            // A subparticle can straddle the parent effect's cycle boundary.
+            // Keep its tail in the same animation interval after wrapping.
+            let particleProgress = instance.isLooped && progress < particle.start
+              ? progress + 1 : progress
+            guard particle.duration > 0, particleProgress >= particle.start,
+              particleProgress <= particle.start + particle.duration,
               assets.particleImages.indices.contains(particle.sprite)
             else { continue }
-            let time = (progress - particle.start) / particle.duration
+            let time = (particleProgress - particle.start) / particle.duration
             let properties = cacheParticleProperties
               ? assets.particleProperties(particle, key: .init(seed: groupSeed,
                 effect: instance.effectID, group: groupIndex, particle: particleIndex),

@@ -902,6 +902,83 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticleIntervalsWrapOnlyForLoopedEffects() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[{"id":9,"name":"fixture"}]},
+       "archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let texture = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2))
+      .pngData { context in
+        UIColor.white.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      }
+    func assets(start: Double, duration: Double) throws -> EnginePresentationAssets {
+      let particle: [String: Any] = [
+        "sprite": 0, "color": "#fff", "start": start, "duration": duration,
+        "x": ["from": ["c": 0], "to": ["c": 1]], "y": [:], "r": [:],
+        "w": ["from": ["c": 0.2], "to": ["c": 0.2]],
+        "h": ["from": ["c": 0.2], "to": ["c": 0.2]],
+        "a": ["from": ["c": 1], "to": ["c": 0.5]]]
+      let data: [String: Any] = [
+        "width": 2, "height": 2, "interpolation": false,
+        "sprites": [["x": 0, "y": 0, "w": 2, "h": 2]],
+        "effects": [["name": "fixture", "transform": [
+          "x1": ["x1": 1], "y1": ["y1": 1],
+          "x2": ["x2": 1], "y2": ["y2": 1],
+          "x3": ["x3": 1], "y3": ["y3": 1],
+          "x4": ["x4": 1], "y4": ["y4": 1]],
+          "groups": [["count": 1, "particles": [particle]]]]]]
+      return try EnginePresentationAssets(engine: engine,
+        presentation: RuntimePresentation(resources: [
+          "configuration": Data(#"{"options":[]}"#.utf8),
+          "particleData": try JSONSerialization.data(withJSONObject: data),
+          "particleTexture": texture]))
+    }
+    // Expected phase values come from the public Studio interval contract,
+    // not from the renderer under test. Binary fractions avoid fuzzy endpoints.
+    let crossing: [(Double, Double?)] = [
+      (0, 0.5), (0.125, 0.75), (0.25, 1), (0.375, nil),
+      (0.625, nil), (0.75, 0), (0.875, 0.25),
+      (1, 0.5), (1.125, 0.75), (1.25, 1), (1.375, nil), (2, 0.5)]
+    let straight: [(Double, Double?)] = [
+      (0, nil), (0.125, nil), (0.25, 0), (0.375, 0.5),
+      (0.5, 1), (0.625, nil), (1, nil), (1.375, 0.5)]
+    for (start, duration, samples) in [
+      (0.75, 0.5, crossing), (0.25, 0.25, straight)
+    ] {
+      let presentation = try assets(start: start, duration: duration)
+      for looped in [false, true] {
+        let host = makeHost()
+        try host.beginFrame(at: 10)
+        _ = try host.call(function: "SpawnParticleEffect",
+          arguments: [9] + quad + [2, looped ? 1 : 0])
+        for (progress, loopPhase) in samples {
+          try host.beginFrame(at: 10 + 2 * progress)
+          let phase: Double? = looped ? loopPhase
+            : (progress >= start && progress <= start + duration && progress < 1
+              ? (progress - start) / duration : nil)
+          for mode in 0..<4 {
+            let sprites = EngineRenderer.sprites(host: host, assets: presentation,
+              cacheParticleRandomVariables: mode & 1 != 0,
+              cacheParticleProperties: mode & 2 != 0)
+            guard let phase else {
+              XCTAssertTrue(sprites.isEmpty,
+                "loop=\(looped), progress=\(progress), cache=\(mode)")
+              continue
+            }
+            XCTAssertEqual(sprites.count, 1)
+            let sprite = try XCTUnwrap(sprites.first)
+            let centerX = sprite.points.map(\.x).reduce(0, +) / 4
+            XCTAssertEqual(centerX, phase, accuracy: 1e-12)
+            XCTAssertEqual(sprite.alpha, 1 - 0.5 * phase, accuracy: 1e-12)
+          }
+        }
+      }
+    }
+  }
+
+  @MainActor
   func testParticleRandomCachingPreservesAnimatedAndMovedSprites() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
       {"skin":{"sprites":[]},"effect":{"clips":[]},
