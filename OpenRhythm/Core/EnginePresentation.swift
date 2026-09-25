@@ -345,6 +345,28 @@ struct ParticleData: Decodable {
     let h: Property
     let r: Property
     let a: Property
+
+    func validate(effectName: String, spriteCount: Int) throws {
+      guard (0..<spriteCount).contains(sprite) else {
+        throw EngineInterpreterError.invalidArguments(
+          "particle \(effectName) sprite index")
+      }
+      // These are normalized units, not clamp bounds. The public Studio
+      // renderer retains extended intervals; real hold effects start above 1.
+      guard start.isFinite, duration.isFinite, (start + duration).isFinite else {
+        throw EngineInterpreterError.invalidArguments(
+          "particle \(effectName) start or duration")
+      }
+      do { _ = try EngineHTMLColor(color, allowsAlpha: false) } catch {
+        throw EngineInterpreterError.invalidArguments(
+          "particle \(effectName) color (expected #RGB or #RRGGBB)")
+      }
+      for (name, property) in [("x", x), ("y", y), ("w", w),
+        ("h", h), ("r", r), ("a", a)] {
+        try EngineEasing.validate(property.ease,
+          field: "particle \(effectName) \(name) easing")
+      }
+    }
   }
   struct Property: Decodable {
     struct Endpoints {
@@ -762,12 +784,8 @@ final class EnginePresentationAssets {
       else { throw EngineInterpreterError.operationLimitExceeded }
       for group in effect.groups {
         for particle in group.particles {
-          for (name, property) in [("x", particle.x), ("y", particle.y),
-            ("w", particle.w), ("h", particle.h), ("r", particle.r),
-            ("a", particle.a)] {
-            try EngineEasing.validate(property.ease,
-              field: "particle \(definition.name) \(name) easing")
-          }
+          try particle.validate(effectName: definition.name,
+            spriteCount: particleImages.count)
         }
       }
       effects[definition.id] = effect

@@ -1098,6 +1098,68 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticleResourceValidationPreservesDocumentedBoundaries() throws {
+    let selected = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[{"id":9,"name":"fixture"}]},
+       "archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let unused = try RuntimeNodeBuilder().engine(archetypes: [])
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let texture = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2),
+      format: format).pngData { context in
+        UIColor.white.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      }
+    func presentation(_ overrides: [String: Any], unusedBadEffect: Bool = false)
+      throws -> RuntimePresentation {
+      var particle: [String: Any] = ["sprite": 0, "color": "#fff",
+        "start": 0, "duration": 1]
+      for key in ["x", "y", "w", "h", "r", "a"] { particle[key] = [:] as [String: Any] }
+      particle.merge(overrides) { _, new in new }
+      var effects: [[String: Any]] = [["name": "fixture", "transform": [:],
+        "groups": [["count": 1, "particles": [particle]]]]]
+      if unusedBadEffect {
+        var invalid = particle
+        invalid["color"] = "not a color"
+        invalid["sprite"] = 42
+        effects.append(["name": "unused", "transform": [:],
+          "groups": [["count": 1, "particles": [invalid]]]])
+      }
+      let data: [String: Any] = ["width": 2, "height": 2, "interpolation": false,
+        "sprites": [["x": 0, "y": 0, "w": 2, "h": 2]], "effects": effects]
+      return RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8), "particleTexture": texture,
+        "particleData": try JSONSerialization.data(withJSONObject: data)])
+    }
+    let invalid: [[String: Any]] = [
+      ["color": "fff"], ["color": "#ff"], ["color": "#ffff"],
+      ["color": "#ffffffff"], ["color": "#ggg"], ["color": "#１２３"],
+      ["sprite": -1], ["sprite": 1], ["start": 1e308, "duration": 1e308]]
+    for fields in invalid {
+      let resource = try presentation(fields)
+      XCTAssertThrowsError(try EnginePresentationAssets(engine: selected,
+        presentation: resource), "Invalid selected particle: \(fields)") { error in
+        XCTAssertTrue(error.localizedDescription.localizedCaseInsensitiveContains("particle"),
+          "Errors should identify the resource that needs repair: \(error)")
+      }
+      XCTAssertNoThrow(try EnginePresentationAssets(engine: unused,
+        presentation: resource), "An unused particle family must remain optional")
+    }
+    for color in ["#000", "#fF0", "#123abc", "#ABCDEF"] {
+      for start in [-0.25, 0.0, 0.75, 1.0, 1.125] {
+        for duration in [-0.5, 0.0, 0.5, 1.0, 2.0] {
+          XCTAssertNoThrow(try EnginePresentationAssets(engine: selected,
+            presentation: presentation(["color": color, "start": start,
+              "duration": duration], unusedBadEffect: true)),
+            "Extended intervals are not clamped; unused effects stay ignored")
+        }
+      }
+    }
+  }
+
+  @MainActor
   func testParticleEasingValidationCoversEveryPropertyAndOptionalDefault() throws {
     let engine = try RuntimeNodeBuilder().engine(archetypes: [])
     let selected = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
@@ -1354,8 +1416,19 @@ final class EngineHostTests: XCTestCase {
     let straight: [(Double, Double?)] = [
       (0, nil), (0.125, nil), (0.25, 0), (0.375, 0.5),
       (0.5, 1), (0.625, nil), (1, nil), (1.375, 0.5)]
+    let extended: [(Double, Double?)] = [
+      (0, nil), (0.125, 0), (0.25, 0.25), (0.375, 0.5),
+      (0.625, 1), (0.75, nil), (1, nil), (1.125, 0), (1.625, 1)]
+    let negativeStart: [(Double, Double?)] = [
+      (0, 0.5), (0.125, 0.75), (0.25, 1), (0.375, nil),
+      (1, 0.5), (1.25, 1)]
+    let longDuration: [(Double, Double?)] = [
+      (0, 0.5), (0.125, 7.0 / 12), (0.25, 0), (0.5, 1.0 / 6),
+      (0.75, 1.0 / 3), (0.875, 5.0 / 12), (1, 0.5), (1.25, 0)]
     for (start, duration, samples) in [
-      (0.75, 0.5, crossing), (0.25, 0.25, straight)
+      (0.75, 0.5, crossing), (0.25, 0.25, straight),
+      (1.125, 0.5, extended), (-0.25, 0.5, negativeStart),
+      (0.25, 1.5, longDuration)
     ] {
       let presentation = try assets(start: start, duration: duration)
       for looped in [false, true] {

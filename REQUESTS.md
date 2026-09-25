@@ -25,6 +25,21 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
+Particle resource follow-up: selected effects no longer silently substitute a
+color or disappear when their color or sprite reference is malformed. Resource
+validation reports the affected field before gameplay, while retaining finite
+extended intervals. An initial `0...1` timing restriction rejected four cached
+SEKAI probes and was removed: its hold effects use starts above one, supported
+by the public Studio renderer. Synthetic tests now preserve those intervals,
+including negative starts, across loop modes and all four cache modes. Five
+focused simulator tests pass on the revision; independent review found no blocker.
+The 05:56 full simulator suite passed all 281 tests, including the six cached
+charts, with no failures or skips. The added long-duration rendering case and
+normal build passed at 06:02. The timed-out observer did not require restarting
+the full run; its completed report supplied the results.
+No physical-device or song-server requests were used. This does not establish
+that phone hit effects look correct; that check remains in the deferred batch.
+
 Pagination-cache follow-up: prefetched pages now retain their request cursor.
 Refetching a parent discards speculative descendants and rejects late responses
 from the previous prefetch revision, including numbered pages. Prefetch stops

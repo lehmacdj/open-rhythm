@@ -11,6 +11,43 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Selected particle definitions now validate resource fields before gameplay:
+  RGB HTML colors, existing sprite indices, and finite start/duration/end.
+  The [particle effect contract](
+  https://wiki.sonolus.com/particle-specs/resources/particle-data-effect)
+  permits short and full RGB hex colors; alpha remains a separate property.
+  Previously malformed colors could silently become white or another color,
+  and invalid sprite references could silently disappear while the
+  effect remained available through HasParticleEffect. Errors now identify
+  the selected particle effect and offending field. Zero duration, start at
+  one, negative starts, and start/duration greater than one are not rejected.
+  Semantic errors in unselected effects or unused presentation families remain ignored;
+  structurally malformed JSON can still fail decoding. A failing-before-fix
+  regression covers nine invalid cases and 100 finite boundary combinations.
+  Existing easing/default, loop-boundary, and tint regressions also pass in
+  the September 25 05:55 five-test simulator run. Final independent review
+  found no blocker. This is resource
+  conformance, not evidence of physical hit-effect correctness.
+  The first full run rejected four cached SEKAI integrations: its hold effects
+  use starts as late as `1.4`. Treating the docs' normalized `0...1` description
+  as a hard range was an overrestriction, also missed in initial review.
+  The public Studio [state construction](
+  https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/particle-state.ts)
+  and [renderer](
+  https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/particle-renderer.ts)
+  retain extended intervals unchanged. The restriction was removed, and
+  synthetic tests now verify a start at `1.125` and a negative start through
+  loop/nonloop rendering and all four cache modes. Normalized units must not
+  automatically become validation bounds; check executable reference behavior
+  as well as prose before rejecting previously supported resource values.
+  Rejecting a nonfinite computed end is host numerical-safety policy, not
+  evidence of reference/native resource validation behavior.
+  Verification: the 05:56 full simulator suite passed all 281 tests, including
+  the six cached-chart integrations, with zero failures or skips
+  (`RunAllTests/1E4B9CA8-E947-4F3E-8E69-C42108E6C851.txt`). After the observer
+  timed out, the same completed run supplied its full result report. An added
+  duration-1.5 rendering case passed separately at 06:02, and the normal build
+  passed at 06:02. No physical-device or song-server requests were used.
 - Static intro-stage proof includes expressions over prepared immutable data,
   not just literal arguments. The public [Level Data](
   https://wiki.sonolus.com/engine-specs/play-blocks/level-data),
