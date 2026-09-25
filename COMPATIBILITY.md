@@ -11,6 +11,25 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Public function-name coverage is pinned to the official
+  [runtime metadata](
+  https://github.com/Sonolus/runtime-metadata/blob/8da7fab2580701fdff82e10224f428db05add4bc/Runtime/Functions.json).
+  Its main revision was checked on September 25: 191 names, comprising 175
+  implemented dispatch entries, 14 unresolved stack functions, and two
+  functions belonging only to non-play modes. A new independent inventory
+  regression checks every name against the production registry, a reachable
+  touch callback's preflight, and actual interpreter/host dispatch. Each
+  supported entry must execute without error using declared argument counts,
+  valid memory addresses and initialized resources/handles. Invalid arguments
+  fail the test rather than hiding an absent operation-specific branch behind
+  shared arity validation. Break executes inside Block. This guards against
+  another delayed PlayLooped-style missing function without a sampled chart.
+  The strengthened September 25 06:15 simulator regression and normal build
+  passed. These are successful-call smoke probes, not exhaustive argument or
+  return-value/side-effect conformance. The touch callback is a preflight root;
+  direct execution has no callback context and does not prove callback legality
+  or native semantic parity. The explicit missing stack set
+  must not be removed from the test without implementation and behavioral proof.
 - Selected particle definitions now validate resource fields before gameplay:
   RGB HTML colors, existing sprite indices, and finite start/duration/end.
   The [particle effect contract](
@@ -717,7 +736,15 @@ execute; the successful rerun and final suite have separate result bundles.
 
 ## Remaining checks, including engines we have not sampled
 
-- Stack layout/control semantics and native rendering parity. Debug functions
+- Fourteen play-capable stack entry points remain unimplemented: StackEnter,
+  StackGet, StackGetFrame, StackGetFramePointer, StackGetPointer, StackGrow,
+  StackInit, StackLeave, StackPop, StackPush, StackSet, StackSetFrame,
+  StackSetFramePointer, and StackSetPointer. Preflight rejects them before
+  playback. Closure requires independently established pointer/frame layout,
+  Temporary Memory aliasing and enter/leave semantics, followed by execution
+  tests for nested frames and pointer mutation. Metadata supplies signatures
+  and side-effect classifications, not that ABI; registration alone cannot
+  close this gap. Native rendering parity also remains open. Debug functions
   are now supported as described above; their underdocumented policy choices
   must not be mistaken for independently observed native behavior.
   Paint (tutorial only) and

@@ -25,6 +25,29 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
+The eventual device batch must cover the accumulated requests together:
+audio/display alignment and timing controls; close/coincident multitouch,
+flicks and holds; hit-effect rendering; dense and curved-hold performance
+(including “shake it!” Hard 18); intro preservation; and repeated starts,
+restarts and audio interruptions. Record the tested build and results for
+each check. A user-requested early device check is an exception for that
+specific issue, not permission to resume the rest of the device queue.
+
+API inventory follow-up: a pinned official function list now checks all 191
+names through registration, reachable touch-path preflight, and dispatch.
+175 entries execute valid smoke calls, 14 stack functions remain unimplemented,
+and Paint/Print belong to non-play modes. The strengthened 06:15 simulator
+regression and normal build passed. Argument errors now fail the probe rather
+than masking missing implementation branches. This is not comprehensive
+semantic or callback conformance; the 14 missing stack functions still keep
+the API gate open. Their exact names
+and required evidence are now listed in COMPATIBILITY.md rather than only
+described as a general stack-compatibility concern.
+Independent post-fix review found no blocker and mechanically matched all
+191 argument counts to the pinned metadata, including repeated groups and
+optional draw depths. Debug, stream and control-flow smoke cases can take
+early-return paths; behavioral tests remain separate.
+
 Particle resource follow-up: selected effects no longer silently substitute a
 color or disappear when their color or sprite reference is malformed. Resource
 validation reports the affected field before gameplay, while retaining finite

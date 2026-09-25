@@ -5,6 +5,165 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testPublicFunctionInventoryMatchesDispatchAndPreflight() throws {
+    // Independent name inventory from Sonolus/runtime-metadata, revision
+    // 8da7fab2580701fdff82e10224f428db05add4bc, Runtime/Functions.json.
+    // Keep unresolved functions explicit. This is dispatch coverage, not a
+    // substitute for each function's behavioral conformance tests.
+    let names = """
+      Abs Add AddLifeScheduled And Arccos Arcsin Arctan Arctan2 BeatToBPM
+      BeatToStartingBeat BeatToStartingTime BeatToTime Block Break Ceil Clamp
+      Copy Cos Cosh DebugLog DebugPause DecrementPost DecrementPostPointed
+      DecrementPostShifted DecrementPre DecrementPrePointed DecrementPreShifted
+      Degree DestroyParticleEffect Divide DoWhile Draw DrawCurvedB DrawCurvedBT
+      DrawCurvedL DrawCurvedLR DrawCurvedR DrawCurvedT EaseInBack EaseInCirc
+      EaseInCubic EaseInElastic EaseInExpo EaseInOutBack EaseInOutCirc
+      EaseInOutCubic EaseInOutElastic EaseInOutExpo EaseInOutQuad EaseInOutQuart
+      EaseInOutQuint EaseInOutSine EaseInQuad EaseInQuart EaseInQuint EaseInSine
+      EaseOutBack EaseOutCirc EaseOutCubic EaseOutElastic EaseOutExpo
+      EaseOutInBack EaseOutInCirc EaseOutInCubic EaseOutInElastic EaseOutInExpo
+      EaseOutInQuad EaseOutInQuart EaseOutInQuint EaseOutInSine EaseOutQuad
+      EaseOutQuart EaseOutQuint EaseOutSine Equal Execute Execute0 ExportValue
+      Floor Frac Get GetPointed GetShifted Greater GreaterOr HasEffectClip
+      HasParticleEffect HasSkinSprite If IncrementPost IncrementPostPointed
+      IncrementPostShifted IncrementPre IncrementPrePointed IncrementPreShifted
+      Judge JudgeSimple JumpLoop Lerp LerpClamped Less LessOr Log Max Min Mod
+      MoveParticleEffect Multiply Negate Not NotEqual Or Paint Play PlayLooped
+      PlayLoopedScheduled PlayScheduled Power Print Radian Random RandomInteger
+      Rem Remap RemapClamped Round Set SetAdd SetAddPointed SetAddShifted
+      SetDivide SetDividePointed SetDivideShifted SetMod SetModPointed
+      SetModShifted SetMultiply SetMultiplyPointed SetMultiplyShifted SetPointed
+      SetPower SetPowerPointed SetPowerShifted SetRem SetRemPointed SetRemShifted
+      SetShifted SetSubtract SetSubtractPointed SetSubtractShifted Sign Sin Sinh
+      Spawn SpawnParticleEffect StackEnter StackGet StackGetFrame
+      StackGetFramePointer StackGetPointer StackGrow StackInit StackLeave
+      StackPop StackPush StackSet StackSetFrame StackSetFramePointer
+      StackSetPointer StopLooped StopLoopedScheduled StreamGetNextKey
+      StreamGetPreviousKey StreamGetValue StreamHas StreamSet Subtract Switch
+      SwitchInteger SwitchIntegerWithDefault SwitchWithDefault Tan Tanh
+      TimeToScaledTime TimeToStartingScaledTime TimeToStartingTime TimeToTimeScale
+      Trunc Unlerp UnlerpClamped While
+      """.split(whereSeparator: \.isWhitespace).map(String.init)
+    let inventory = Set(names)
+    XCTAssertEqual(names.count, 191)
+    XCTAssertEqual(inventory.count, names.count, "No duplicated inventory names")
+    let stack: Set<String> = ["StackEnter", "StackGet", "StackGetFrame",
+      "StackGetFramePointer", "StackGetPointer", "StackGrow", "StackInit",
+      "StackLeave", "StackPop", "StackPush", "StackSet", "StackSetFrame",
+      "StackSetFramePointer", "StackSetPointer"]
+    let nonPlay: Set<String> = ["Paint", "Print"]
+    let unavailable = stack.union(nonPlay)
+    let supported = EngineInterpreter.supportedFunctions
+      .union(CommandEngineRuntimeHost.supportedFunctions)
+    XCTAssertEqual(supported, inventory.subtracting(unavailable),
+      "A registration change requires reconciling the public API audit")
+    XCTAssertEqual(supported.count, 175)
+    // Declared parameter counts from the same independent metadata, including
+    // optional draw depths and repeated judgment windows. Variadics use their
+    // minimum count. Names not listed here take one argument.
+    let arityGroups: [Int: String] = [
+      0: "DebugPause StackGetFramePointer StackGetPointer StackInit StackLeave StackPop",
+      2: """
+        AddLifeScheduled Arctan2 Break DecrementPost DecrementPre DoWhile Equal
+        ExportValue Get Greater GreaterOr IncrementPost IncrementPre Less
+        LessOr Max Min NotEqual Play PlayLoopedScheduled Random RandomInteger
+        StackSet StackSetFrame StopLoopedScheduled StreamGetNextKey
+        StreamGetPreviousKey StreamGetValue StreamHas SwitchIntegerWithDefault
+        SwitchWithDefault While
+        """,
+      3: """
+        Clamp DecrementPostPointed DecrementPrePointed GetPointed If
+        IncrementPostPointed IncrementPrePointed Lerp LerpClamped PlayScheduled
+        Set SetAdd SetDivide SetMod SetMultiply SetPower SetRem SetSubtract
+        StreamSet Unlerp UnlerpClamped
+        """,
+      4: """
+        DecrementPostShifted DecrementPreShifted GetShifted IncrementPostShifted
+        IncrementPreShifted SetAddPointed SetDividePointed SetModPointed
+        SetMultiplyPointed SetPointed SetPowerPointed SetRemPointed
+        SetSubtractPointed
+        """,
+      5: """
+        Copy JudgeSimple Remap RemapClamped SetAddShifted SetDivideShifted
+        SetModShifted SetMultiplyShifted SetPowerShifted SetRemShifted SetShifted
+        SetSubtractShifted
+        """,
+      7: "Paint", 8: "Judge", 9: "MoveParticleEffect",
+      11: "SpawnParticleEffect", 14: "Draw Print",
+      17: "DrawCurvedB DrawCurvedL DrawCurvedR DrawCurvedT",
+      19: "DrawCurvedBT DrawCurvedLR"
+    ]
+    var arities: [String: Int] = [:]
+    for (count, group) in arityGroups {
+      for name in group.split(whereSeparator: \.isWhitespace).map(String.init) {
+        XCTAssertTrue(inventory.contains(name), name)
+        XCTAssertNil(arities.updateValue(count, forKey: name), name)
+      }
+    }
+    for name in names {
+      let builder = RuntimeNodeBuilder()
+      let host = makeHost()
+      host.selectEntity(index: 0, exportCount: 1)
+      host.memory.set(block: 2000, index: 0, value: 2000)
+      host.memory.set(block: 2000, index: 1, value: 8)
+      host.memory.set(block: 2000, index: 8, value: 2)
+      var arguments = Array(repeating: 0.0, count: arities[name] ?? 1)
+      if name.hasPrefix("Get") || name.hasPrefix("Set")
+        || name.hasPrefix("Increment") || name.hasPrefix("Decrement") {
+        arguments[0] = 2000
+        arguments[1] = name.hasSuffix("Pointed") ? 0 : 8
+        if name.hasPrefix("Set") { arguments[arguments.count - 1] = 1 }
+      } else if name.hasPrefix("Draw") {
+        arguments[0] = 7
+        arguments.replaceSubrange(1...8, with: quad)
+        arguments[10] = 1
+        if name != "Draw" { arguments[11] = 1 }
+      } else if name.hasPrefix("Play") {
+        arguments[0] = 8
+      } else {
+        switch name {
+        case "Break": arguments = [1, 42]
+        case "Copy": arguments = [2000, 8, 2000, 9, 1]
+        case "Random", "RandomInteger": arguments = [0, 1]
+        case "Unlerp", "UnlerpClamped": arguments = [0, 1, 0.5]
+        case "Remap", "RemapClamped": arguments = [0, 1, 0, 1, 0.5]
+        case "HasSkinSprite": arguments = [7]
+        case "HasEffectClip": arguments = [8]
+        case "HasParticleEffect": arguments = [9]
+        case "SpawnParticleEffect": arguments = [9] + quad + [1, 0]
+        case "MoveParticleEffect", "DestroyParticleEffect":
+          arguments[0] = try host.call(function: "SpawnParticleEffect",
+            arguments: [9] + quad + [1, 0])
+          if name == "MoveParticleEffect" {
+            arguments.replaceSubrange(1...8, with: quad)
+          }
+        case "StopLooped", "StopLoopedScheduled":
+          arguments[0] = try host.call(function: "PlayLooped", arguments: [8])
+        default: break
+        }
+      }
+      let call = builder.call(name, arguments.map { builder.value($0) })
+      let root = name == "Break" ? builder.call("Block", [call]) : call
+      let engine = try builder.engine(archetypes: [["name": "Probe",
+        "hasInput": true, "imports": [], "exports": [],
+        "touch": ["index": root]]])
+      XCTAssertEqual(try engine.unsupportedFunctions(),
+        unavailable.contains(name) ? [name] : [], name)
+      // The touch root checks reachability, not callback legality. Standalone
+      // execution intentionally has no callback context (e.g. life scheduling
+      // is preprocessing-only). Callback rules have dedicated runtime tests.
+      let interpreter = EngineInterpreter(nodes: engine.nodes,
+        memory: host.memory, host: host)
+      do {
+        _ = try interpreter.execute(nodeAt: root)
+        XCTAssertFalse(unavailable.contains(name), name)
+      } catch EngineInterpreterError.unsupportedFunction(let missing) {
+        XCTAssertTrue(unavailable.contains(name), "Registered but missing: \(name)")
+        XCTAssertEqual(missing, name)
+      } catch { XCTFail("Unexpected dispatch error for \(name): \(error)") }
+    }
+  }
+
   func testPlayMemoryInitialValuesPrecedeCallbacksAndSurviveRestart() throws {
     // Expected values come from the public play-block tables, not a sampled
     // engine's initialization code. Check full defined blocks, including zeros.
