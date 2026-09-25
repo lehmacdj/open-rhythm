@@ -6,6 +6,7 @@ enum EngineInterpreterError: LocalizedError {
   case unsupportedFunction(String)
   case operationLimitExceeded
   case invalidMemoryAccess(block: Int, callback: String, write: Bool)
+  case invalidFunctionCallback(function: String, callback: String)
 
   var errorDescription: String? {
     switch self {
@@ -20,6 +21,8 @@ enum EngineInterpreterError: LocalizedError {
     case .invalidMemoryAccess(let block, let callback, let write):
       "The engine cannot \(write ? "write" : "read") memory block \(block) "
         + "during \(callback)."
+    case .invalidFunctionCallback(let function, let callback):
+      "The engine cannot call \(function) during \(callback)."
     }
   }
 }

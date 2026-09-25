@@ -11,6 +11,23 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- [AddLifeScheduled](
+  https://wiki.sonolus.com/engine-specs/functions/add-life-scheduled) now rejects
+  calls outside preprocessing, with an error naming both function and callback.
+  Runtime regressions cover all eight callback contexts, including spawn-order
+  preparation and termination, and verify rejection before any life event is
+  queued. Valid preprocessing events apply once at their chart time and replay
+  correctly after restart. Schedules are sorted lazily once and consumed with
+  a cursor, replacing a sort on every insertion and full-array scans on every
+  frame. Equal-time order, partially consumed snapshots and host-side appends
+  are tested. This is an algorithmic reduction, not a measured gameplay FPS
+  improvement. The two focused simulator tests pass and independent review
+  found no actionable issue. The September 25 03:12 simulator suite passed all
+  250 tests, including six cached-chart checks, with no failures or skips
+  (`RunAllTests/5C0AA9BE-37A6-402B-B043-9FDBB734FFE5.txt`). The observation tool
+  timed out at 300 seconds; the same run then provided its complete summary and
+  `TEST FINISHED` console marker. The 03:18 normal simulator build also passes.
+  No device tests or music-server requests were used.
 - [DebugLog](https://wiki.sonolus.com/engine-specs/functions/debug-log) and
   [DebugPause](https://wiki.sonolus.com/engine-specs/functions/debug-pause)
   accept one and zero arguments respectively and return zero. A persistent
@@ -407,6 +424,14 @@ execute; the successful rerun and final suite have separate result bundles.
 - Optional/missing resources, host-function callback legality,
   remaining memory defaults, and unknown enum values. Memory-block callback
   read/write permissions are now enforced separately from those open checks.
+  AddLifeScheduled's explicit preprocessing-only rule is now enforced; no
+  undocumented callback exclusions are inferred for other host functions.
+  Resource review found that a completely absent presentation bundle selects
+  the basic lane fallback and bypasses engine callbacks/preflight. The public
+  [EngineItem](https://wiki.sonolus.com/custom-server-specs/misc/engine-item)
+  requires configuration, and this silent downgrade needs to be removed from
+  server playback. Missing explicit `UseItem` overrides and malformed optional
+  ROM locators also need to fail clearly rather than silently selecting defaults.
 - Runtime metadata lists a play-mode `skip` slot. The public Python framework
   describes it as a time skip in the current frame, but the play block docs
   omit its seek/resimulation behavior. It remains zero: intro fast-forward

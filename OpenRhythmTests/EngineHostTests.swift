@@ -5,6 +5,85 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testScheduledLifeRejectsEveryNonPreprocessingCallback() throws {
+    for callback in EngineMemory.Callback.allCases {
+      let builder = RuntimeNodeBuilder()
+      let add = builder.call("AddLifeScheduled", [
+        builder.value(-10), builder.value(2)])
+      var archetype: [String: Any] = ["name": "Probe", "hasInput": false,
+        "imports": [], "exports": [], callback.rawValue: ["index": add]]
+      if callback == .terminate {
+        archetype["updateSequential"] = ["index": builder.call("Set", [
+          builder.value(4004), builder.value(0), builder.value(1)])]
+      }
+      let engine = try builder.engine(archetypes: [archetype])
+      func prepare() throws -> EnginePlayRuntime {
+        try EnginePlayRuntime(engine: engine,
+          level: LevelData(bgmOffset: 0, entities: [
+            LevelEntity(archetype: "Probe", name: nil, data: [])]),
+          options: [], aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [],
+          particleEffectIDs: [])
+      }
+      func check(_ error: Error) {
+        guard case EngineInterpreterError.invalidFunctionCallback(
+          let name, let phase) = error else {
+          return XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(name, "AddLifeScheduled")
+        XCTAssertEqual(phase, callback.rawValue)
+        XCTAssertTrue(error.localizedDescription.contains(callback.rawValue))
+      }
+      if callback == .spawnOrder {
+        XCTAssertThrowsError(try prepare(), "Only preprocessing may schedule life",
+          check)
+        continue
+      }
+      let runtime = try prepare()
+      let point = EnginePoint(x: 0, y: 0)
+      let touch = EngineTouch(id: 1, started: true, ended: false, time: 0,
+        startTime: 0, position: point, startPosition: point, delta: point)
+      if callback == .preprocess {
+        for _ in 0..<2 {
+          try runtime.update(at: 0)
+          XCTAssertEqual(runtime.life.value, 1000)
+          try runtime.update(at: 2)
+          XCTAssertEqual(runtime.life.value, 990)
+          try runtime.update(at: 3)
+          XCTAssertEqual(runtime.life.value, 990)
+          runtime.restart()
+        }
+      } else {
+        XCTAssertThrowsError(try runtime.update(at: 0, touches: [touch]),
+          "Only preprocessing may schedule life", check)
+        XCTAssertTrue(runtime.host.takeScheduledLife(at: 10).isEmpty,
+          "Rejected calls must not enqueue a life change")
+      }
+      XCTAssertNil(runtime.memory.callback)
+    }
+  }
+
+  func testLifeScheduleOrdersEqualTimesAndRestoresConsumedCursor() throws {
+    let host = makeHost()
+    for (amount, time) in [(3.0, 3.0), (1, 1), (2, 1), (-5, 2)] {
+      _ = try host.call(function: "AddLifeScheduled", arguments: [amount, time])
+    }
+    let prepared = host.makeRestorePoint()
+    for _ in 0..<2 {
+      XCTAssertTrue(host.takeScheduledLife(at: 0).isEmpty)
+      XCTAssertEqual(host.takeScheduledLife(at: 1), [1, 2])
+      let partial = host.makeRestorePoint()
+      XCTAssertEqual(host.takeScheduledLife(at: 3), [-5, 3])
+      XCTAssertTrue(host.takeScheduledLife(at: 4).isEmpty)
+      partial()
+      XCTAssertEqual(host.takeScheduledLife(at: 3), [-5, 3])
+      prepared()
+    }
+    _ = host.takeScheduledLife(at: 1)
+    _ = try host.call(function: "AddLifeScheduled", arguments: [8, 2])
+    XCTAssertEqual(host.takeScheduledLife(at: 3), [-5, 8, 3],
+      "Host bookkeeping must not replay consumed events when appending")
+  }
+
   func testDebugFunctionsGateSideEffectsBoundLogsAndRestorePreprocessing() throws {
     let host = makeHost()
     XCTAssertEqual(try host.call(function: "DebugLog", arguments: [3]), 0)

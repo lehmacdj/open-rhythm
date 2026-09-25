@@ -43,6 +43,16 @@ and then incorrectly restart on resume. That case is fixed and regression
 tested; final review found no further actionable issue. Physical checks stay
 deferred under the API-coverage gate above.
 
+Callback follow-up: AddLifeScheduled's preprocessing-only contract is enforced
+through all eight real runtime callback contexts. Its queue now sorts once and
+advances a cursor instead of repeatedly sorting/scanning. Equal-time ordering,
+restart and partial-snapshot regressions pass; independent review found no
+actionable issue. The September 25 03:12 simulator suite passed all 250 tests
+(no failures or skips), including the six cached-chart checks; the final normal
+build passes. The resource audit
+also found a silent basic-lane fallback when the whole presentation bundle is
+missing; removing that engine bypass is the next concrete resource gap.
+
 ## Live-play follow-up — September 25, 2026
 
 Status of the live-play follow-ups; offline probes do not certify live sync:
@@ -442,7 +452,10 @@ model level, checking that future judgments and spawned entities do not leak.
    spawned-entity restrictions. Declared block lengths are implemented, with
    zero reads for missing/out-of-range addresses as required by Get; the
    initial overrestriction on missing-block reads has been corrected.
-   Host-function callback legality remains a separate open check.
+   AddLifeScheduled's preprocessing-only rule is now enforced; remaining
+   host-function and resource conformance stay open. A missing server engine
+   presentation bundle must not silently bypass its callbacks via the basic
+   lane fallback; this newly identified path is not fixed yet.
    Skin mode selection is now
    honored, but exact native rendering parity is not claimed. Unsupported
    functions are surfaced before music rather than assumed harmless. See the

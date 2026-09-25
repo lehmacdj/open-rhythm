@@ -121,6 +121,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private var nextLoopID = 1
   private var spawns = [EngineSpawnCommand]()
   private var scheduledLife = [(time: Double, amount: Double)]()
+  private var scheduledLifeIndex = 0
+  private var lifeScheduleSorted = true
   private var streams = [Int: EngineStream]()
   private var streamEntryCount = 0
   private let streamEntryLimit: Int
@@ -144,7 +146,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   /// the previous play. Memory is checkpointed separately by the runtime.
   func makeRestorePoint() -> () -> Void {
     { [time, draws, particles, exports, audio, loopAudio, loopStops,
-      nextLoopID, spawns, scheduledLife, streams, streamEntryCount,
+      nextLoopID, spawns, scheduledLife, scheduledLifeIndex, lifeScheduleSorted,
+      streams, streamEntryCount,
       nextParticleID, entityIndex, staticIntroDrawing, exportCount,
       drawSegmentCount, debugLog, debugLogSequence, debugPauseRequested] in
       self.time = time
@@ -157,6 +160,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       self.nextLoopID = nextLoopID
       self.spawns = spawns
       self.scheduledLife = scheduledLife
+      self.scheduledLifeIndex = scheduledLifeIndex
+      self.lifeScheduleSorted = lifeScheduleSorted
       self.streams = streams
       self.streamEntryCount = streamEntryCount
       self.nextParticleID = nextParticleID
@@ -233,9 +238,16 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   }
 
   func takeScheduledLife(at time: Double) -> [Double] {
-    let due = scheduledLife.filter { $0.time <= time }.map(\.amount)
-    scheduledLife.removeAll { $0.time <= time }
-    return due
+    if !lifeScheduleSorted {
+      scheduledLife.sort { $0.time < $1.time }
+      lifeScheduleSorted = true
+    }
+    let start = scheduledLifeIndex
+    while scheduledLifeIndex < scheduledLife.count,
+      scheduledLife[scheduledLifeIndex].time <= time {
+      scheduledLifeIndex += 1
+    }
+    return scheduledLife[start..<scheduledLifeIndex].map(\.amount)
   }
 
   /// Drain before executing this frame's callbacks: Spawn is deferred until
@@ -276,10 +288,20 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       default: return timeScale.scaledTime(at: a[0])
       }
     case "AddLifeScheduled":
+      if let callback = memory.callback, callback != .preprocess {
+        throw EngineInterpreterError.invalidFunctionCallback(
+          function: function, callback: callback.rawValue)
+      }
       try validate(a, count: 2, function: function)
+      // Live callbacks cannot add events. Standalone host callers may append
+      // after consuming events, so compact only on that uncommon write path.
+      if scheduledLifeIndex > 0 {
+        scheduledLife.removeFirst(scheduledLifeIndex)
+        scheduledLifeIndex = 0
+      }
       try checkLimit(scheduledLife.count)
       scheduledLife.append((time: a[1], amount: a[0]))
-      scheduledLife.sort { $0.time < $1.time }
+      lifeScheduleSorted = false
       return 0
     case "BeatToStartingBeat", "BeatToStartingTime":
       try validate(a, count: 1, function: function)
