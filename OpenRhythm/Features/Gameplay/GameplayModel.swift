@@ -144,6 +144,10 @@ final class GameplayModel {
   private var musicHasEnded = false
   @ObservationIgnored private var timingHeatmap = EngineErrorHeatmap()
   private(set) var errorHeatmap = EngineErrorHeatmap().snapshot
+  @ObservationIgnored private(set) var timingRecorder: PlaybackTimingRecorder?
+  @ObservationIgnored private(set) var frameTiming: PlaybackFrameTiming?
+  private(set) var playbackTiming: PlaybackTimingReport?
+  private var timingRouteObserver: NSObjectProtocol?
 
   func engineMetric(_ name: String) -> (text: String, fraction: Double)? {
     func metric(_ value: Double, _ maximum: Double, percentage: Bool = false)
@@ -389,6 +393,9 @@ final class GameplayModel {
     }
     playbackSpeed = speed
     playInputOffset = settings.inputOffsetSeconds
+    timingRecorder = settings.recordTimingDiagnostics ? PlaybackTimingRecorder() : nil
+    playbackTiming = nil
+    frameTiming = nil
     player.defaultRate = Float(speed)
     if let bundle = runtimeBundle {
       let timeline = BPMTimeline(level: bundle.level, speed: speed)
@@ -558,6 +565,13 @@ final class GameplayModel {
     guard phase == .playing, isStartingPlayback, audioSeekCompleted,
       presentationAssets == nil || engineRuntime != nil else { return }
     do {
+      if let recorder = timingRecorder {
+        Self.recordAudioRoute(recorder)
+        timingRouteObserver = NotificationCenter.default.addObserver(
+          forName: AVAudioSession.routeChangeNotification,
+          object: AVAudioSession.sharedInstance(), queue: nil
+        ) { _ in Self.recordAudioRoute(recorder) }
+      }
       try engineAudio?.start()
       if engineRuntime != nil { engineHaptics.start() }
       if let timebase = player?.currentItem?.timebase {
@@ -630,6 +644,11 @@ final class GameplayModel {
   }
 
   func stop(deactivateAudio: Bool = true) {
+    frameTiming = nil
+    if let timingRouteObserver {
+      NotificationCenter.default.removeObserver(timingRouteObserver)
+      self.timingRouteObserver = nil
+    }
     playbackGeneration += 1
     isStartingPlayback = false
     audioSeekCompleted = false
@@ -733,6 +752,7 @@ final class GameplayModel {
 
   func engineFrame(size: CGSize, touches: [EngineTouch],
     safeAreaInsets: UIEdgeInsets = .zero) {
+    frameTiming = nil
     guard phase == .playing,
       size.width > 0, size.height > 0,
       let bundle = runtimeBundle, let assets = presentationAssets else { return }
@@ -788,8 +808,26 @@ final class GameplayModel {
         return
       }
       guard let runtime = engineRuntime else { return }
+      let sampleStart = timingRecorder.map { _ in CACurrentMediaTime() }
       currentTime = playbackTime
+      if let recorder = timingRecorder, let sampleStart {
+        let sampleEnd = CACurrentMediaTime()
+        let midpoint = sampleStart + (sampleEnd - sampleStart) / 2
+        recorder.record(.clockRead, seconds: sampleEnd - sampleStart)
+        frameTiming = PlaybackFrameTiming(recorder: recorder,
+          sampleHostTime: midpoint)
+        if tailStart == nil, player?.timeControlStatus == .playing,
+          let mediaTime = eventClock?.mediaTime(at: midpoint) {
+          recorder.record(.clockDifference,
+            seconds: clockMapping.chartTime(mediaTime: mediaTime) - currentTime)
+        }
+      }
+      let runtimeStart = timingRecorder.map { _ in CACurrentMediaTime() }
       try runtime.update(at: currentTime, touches: touches)
+      if let runtimeStart {
+        timingRecorder?.record(.runtime,
+          seconds: CACurrentMediaTime() - runtimeStart)
+      }
       engineScore = runtime.arcadeScore?.snapshot
       engineLife = runtime.life
       ingestJudgments(from: runtime)
@@ -833,6 +871,7 @@ final class GameplayModel {
     guard complete else { return }
     stop()
     phase = .finished
+    playbackTiming = timingRecorder?.snapshot()
     saveResult()
   }
 
@@ -906,7 +945,8 @@ final class GameplayModel {
       level: level, server: resultServer, engineScore: engineScore?.earned,
       scoreMode: scoreModeName, finalLife: engineLife?.value,
       maximumLife: engineLife?.maximum, failed: engineLife?.failed,
-      modifiedOptions: modifiedOptions, accuracyScore: accuracyScore
+      modifiedOptions: modifiedOptions, accuracyScore: accuracyScore,
+      playbackTiming: playbackTiming
     )
     resultSaveTask = Task {
       do {
@@ -921,6 +961,13 @@ final class GameplayModel {
     guard let option = presentationAssets?.scoreModeOption,
       let values = option.values else { return nil }
     return option.selectedIndex(settings.scoreMode).map { values[$0].displayValue() }
+  }
+
+  private nonisolated static func recordAudioRoute(_ recorder: PlaybackTimingRecorder) {
+    let session = AVAudioSession.sharedInstance()
+    recorder.audio(route: session.currentRoute.outputs.map { $0.portType.rawValue }
+      .sorted().joined(separator: ", "), outputLatency: session.outputLatency,
+      bufferDuration: session.ioBufferDuration)
   }
 
   private nonisolated static func setAudioSession(active: Bool) async {

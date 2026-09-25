@@ -76,25 +76,62 @@ final class EngineMetalRenderer {
   }
 
   func draw(host: CommandEngineRuntimeHost, assets: EnginePresentationAssets,
-    size: CGSize
+    size: CGSize, timing: PlaybackFrameTiming? = nil
   ) throws {
-    guard size.width > 0, size.height > 0,
-      inFlight.wait(timeout: .now()) == .success else { return }
+    guard size.width > 0, size.height > 0 else { return }
+    guard inFlight.wait(timeout: .now()) == .success else {
+      timing?.recorder.increment(.queueFull)
+      return
+    }
+    let drawableStart = timing.map { _ in CACurrentMediaTime() }
     guard let drawable = layer.nextDrawable(), let buffer = queue.makeCommandBuffer()
     else {
+      timing?.recorder.increment(.noDrawable)
       inFlight.signal()
       return
     }
+    if let drawableStart {
+      timing?.recorder.record(.drawableWait,
+        seconds: CACurrentMediaTime() - drawableStart)
+    }
     do {
-      try encode(EngineRenderer.sprites(host: host, assets: assets),
+      let spriteStart = timing.map { _ in CACurrentMediaTime() }
+      let sprites = EngineRenderer.sprites(host: host, assets: assets)
+      if let spriteStart {
+        timing?.recorder.record(.sprites,
+          seconds: CACurrentMediaTime() - spriteStart)
+      }
+      let encodingStart = timing.map { _ in CACurrentMediaTime() }
+      try encode(sprites,
         size: size, target: drawable.texture, commandBuffer: buffer,
         transparent: true)
+      if let encodingStart {
+        timing?.recorder.record(.encoding,
+          seconds: CACurrentMediaTime() - encodingStart)
+      }
     } catch {
       inFlight.signal()
       throw error
     }
     let semaphore = inFlight
-    buffer.addCompletedHandler { _ in semaphore.signal() }
+    buffer.addCompletedHandler { completed in
+      semaphore.signal()
+      if let timing, completed.gpuStartTime > 0,
+        completed.gpuEndTime >= completed.gpuStartTime {
+        timing.recorder.record(.gpu,
+          seconds: completed.gpuEndTime - completed.gpuStartTime)
+      }
+    }
+    if let timing {
+      #if targetEnvironment(simulator)
+      // The simulator SDK does not expose drawable presentation timestamps.
+      // Do not substitute GPU completion or callback delivery for presentation.
+      timing.recorder.increment(.unavailable)
+      #else
+      drawable.addPresentedHandler { timing.presented(at: $0.presentedTime) }
+      #endif
+    }
+    timing?.recorder.increment(.submitted)
     buffer.present(drawable)
     buffer.commit()
   }

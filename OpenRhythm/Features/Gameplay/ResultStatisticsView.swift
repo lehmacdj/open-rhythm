@@ -1,6 +1,42 @@
 import SwiftUI
 import Charts
 
+struct PlaybackTimingSection: View {
+  let report: PlaybackTimingReport?
+
+  var body: some View {
+    if let report {
+      Section("Playback Diagnostics") {
+        ForEach(PlaybackTimingMetric.allCases, id: \.self) { metric in
+          if let value = report.metrics[metric.rawValue] {
+            VStack(alignment: .leading) {
+              Text(metric.rawValue)
+              Text(value.text).font(.caption).foregroundStyle(.secondary)
+            }
+          }
+        }
+        ForEach(report.counters.keys.sorted(), id: \.self) { key in
+          LabeledContent(key, value: report.counters[key, default: 0].formatted())
+        }
+        if let route = report.audioRoute {
+          LabeledContent("Latest Output Type", value: route)
+        }
+        if let latency = report.outputLatencyMS {
+          LabeledContent("Reported Output Latency",
+            value: String(format: "%.2f ms", latency))
+        }
+        if let duration = report.ioBufferDurationMS {
+          LabeledContent("Reported I/O Buffer",
+            value: String(format: "%.2f ms", duration))
+        }
+        Text(PlaybackTimingReport.scope)
+          .font(.caption).foregroundStyle(.secondary)
+        ShareLink("Share Timing Diagnostics", item: report.text)
+      }
+    }
+  }
+}
+
 /// Shared by the just-completed play and saved result details.
 struct ResultStatisticsSections: View {
   let samples: [NoteTiming]?
@@ -192,6 +228,20 @@ struct TimingHistogram: View {
   NavigationStack {
     Form { ResultStatisticsSections(samples: samples, duration: 110) }
       .navigationTitle("Timing Analysis")
+  }
+}
+
+#Preview("Playback Diagnostics") {
+  let recorder = PlaybackTimingRecorder()
+  let _ = recorder.record(.presentation, seconds: 0.022)
+  let _ = recorder.record(.deadline, seconds: 0.006)
+  let _ = recorder.audio(route: "Speaker", outputLatency: 0.01,
+    bufferDuration: 0.005)
+  let _ = recorder.increment(.submitted)
+  let _ = recorder.increment(.presented)
+  NavigationStack {
+    Form { PlaybackTimingSection(report: recorder.snapshot()) }
+      .navigationTitle("Result")
   }
 }
 

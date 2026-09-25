@@ -2429,6 +2429,58 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testMetalPresentationDiagnosticsUseNativeDrawableDelivery() async throws {
+    guard let device = MTLCreateSystemDefaultDevice() else {
+      throw XCTSkip("Metal is unavailable on this test device")
+    }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }.first)
+    let priorKeyWindow = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    let controller = UIViewController()
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true; priorKeyWindow?.makeKey() }
+    let renderer = try EngineMetalRenderer(device: device)
+    controller.view.layer.addSublayer(renderer.layer)
+    let size = CGSize(width: 100, height: 100)
+    renderer.resize(to: size, scale: 1)
+    let engine = try RuntimeNodeBuilder().engine(archetypes: [])
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8)]))
+    let recorder = PlaybackTimingRecorder()
+    let host = makeHost()
+    for _ in 0..<12 {
+      try renderer.draw(host: host, assets: assets, size: size,
+        timing: PlaybackFrameTiming(recorder: recorder,
+          sampleHostTime: CACurrentMediaTime()))
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #if !targetEnvironment(simulator)
+    let deadline = CACurrentMediaTime() + 2
+    while recorder.snapshot().metrics[PlaybackTimingMetric.presentation.rawValue] == nil,
+      CACurrentMediaTime() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #endif
+    let report = recorder.snapshot()
+    XCTAssertGreaterThan(report.counters[PlaybackTimingCounter.submitted.rawValue] ?? 0, 0)
+    XCTAssertGreaterThan(report.metrics[PlaybackTimingMetric.encoding.rawValue]?.count ?? 0, 0)
+    #if targetEnvironment(simulator)
+    XCTAssertNil(report.metrics[PlaybackTimingMetric.presentation.rawValue])
+    XCTAssertEqual(report.counters[PlaybackTimingCounter.unavailable.rawValue],
+      report.counters[PlaybackTimingCounter.submitted.rawValue])
+    #else
+    let presentation = try XCTUnwrap(report.metrics[
+      PlaybackTimingMetric.presentation.rawValue])
+    XCTAssertGreaterThan(presentation.count, 0)
+    XCTAssertGreaterThanOrEqual(presentation.minimumMS, 0)
+    #endif
+    print(report.text)
+  }
+
+  @MainActor
   func testMetalRendersUprightSpritesAndSeamlessTranslucentConnectors() throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
       throw XCTSkip("Metal is unavailable on this test device")

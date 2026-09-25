@@ -2,6 +2,22 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testPlaybackDiagnosticsSurviveHistoryAndAreAbsentFromLegacyPlays() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = PlaybackTimingRecorder()
+    recorder.record(.presentation, seconds: 0.016)
+    var play = result(levelID: "diagnostics", perfect: 1)
+    play.playbackTiming = recorder.snapshot()
+    try await ResultStore(rootURL: root).record(play)
+    let reopened = try await ResultStore(rootURL: root).allResults()
+    XCTAssertEqual(reopened.first?.playbackTiming, play.playbackTiming)
+    let legacy = try JSONEncoder().encode(result(levelID: "legacy", perfect: 1))
+    XCTAssertNil(try JSONDecoder().decode(PlayResult.self,
+      from: legacy).playbackTiming)
+  }
+
   func testHeatmapKeepsZeroCenteredAndMirrorsSignedInputs() {
     var early = EngineErrorHeatmap()
     var late = EngineErrorHeatmap()

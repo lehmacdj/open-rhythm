@@ -289,6 +289,7 @@ struct ResultDetailView: View {
       } else {
         ResultStatisticsSections(samples: timingSamples, duration: result.duration)
       }
+      PlaybackTimingSection(report: result.playbackTiming)
     }
     .navigationTitle("Result")
     .navigationBarTitleDisplayMode(.inline)

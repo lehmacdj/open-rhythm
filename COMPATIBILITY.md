@@ -478,3 +478,42 @@ vertices. Mean/p95 mesh generation was 0.408/0.716 ms versus 0.170/0.286 ms.
 The fixture declared lightweight and retained that mode despite a Standard
 user preference. These simulator measurements isolate geometry work; they do
 not measure phone frame pacing, GPU completion or successful-hit load.
+# Opt-in playback timing diagnostics — September 25, 2026
+
+Gameplay Settings can record local timing summaries alongside a play. The
+recorder uses fixed-size signed quarter-millisecond quantile buckets, with
+underflow/overflow intervals; means and extrema retain original values. This
+is instrumentation storage, not the unbinned result timing distribution.
+All samples contribute throughout a play, and callback state belongs to that
+play alone. Result snapshots are immutable; late callbacks cannot mutate saved
+history or a restarted play. No identifiers for individual audio devices are
+retained, only output port types and iOS-reported latency/buffer duration.
+
+Metal uses actual drawable presentation timestamps on device. The simulator
+SDK does not expose this API, so it records unavailability instead of inventing
+presentation time from GPU completion. The clock sample is timestamped around
+the player read; the read span is separately reported. The event/player clock
+comparison is restricted to advancing audio, excludes the post-audio tail,
+and uses chart-time seconds so playback speed does not rescale the difference.
+The other frame metrics include buffering/tail frames after intro preparation.
+Reports are not acoustic calibration and do not prove live synchronization.
+
+Independent review found and prompted correction of two measurement biases:
+contact-loop processing no longer inflates later fingers' delivery age, and
+sprite-recorder overhead no longer appears as Metal encoding duration. Builds
+for simulator and thyme5 succeed. Thirty-eight focused tests pass, plus two
+reruns after adding final result-snapshot coverage; these cover signed bounds,
+nonfinite samples, whole-play retention, concurrent callbacks, restart/setting
+isolation, result persistence, clocks and existing result plots. A native
+diagnostics preview verifies wrapping, counters, route/latency and share control.
+The full 221-test regression run then passed without failures or skips. The
+new native-window renderer probe, added during that run, was not included in
+its compiled test bundle; it passed separately on simulator and thyme5.
+The physical iPhone 16 Pro/iOS 27 probe submitted 12 empty 100×100 Metal frames:
+11 had actual presentation timestamps, one was unavailable. Sample-to-present
+mean was 23.59 ms, range 17.84–30.82 ms. The simulator correctly reported all
+12 presentation timestamps unavailable. This 0.31-second callback-path probe
+has no music, engine workload or display-link pacing: its values must not be
+used as gameplay latency or a calibration offset. A final device build passed.
+Enabled/disabled overhead, startup timing and live gameplay/audio alignment
+remain to be measured before drawing synchronization conclusions.

@@ -1490,13 +1490,42 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
+  func testTimingDiagnosticsSnapshotSettingAndIsolateRestarts() throws {
+    let model = try gameplayModel()
+    let original = model.settings
+    defer { model.stop(); model.settings = original }
+    model.settings.recordTimingDiagnostics = false
+    model.start()
+    XCTAssertNil(model.timingRecorder)
+    model.settings.recordTimingDiagnostics = true
+    XCTAssertNil(model.timingRecorder, "Setting applies to the next play")
+    model.restart()
+    let first = try XCTUnwrap(model.timingRecorder)
+    first.record(.runtime, seconds: 0.001)
+    model.restart()
+    let second = try XCTUnwrap(model.timingRecorder)
+    XCTAssertFalse(first === second)
+    XCTAssertTrue(second.snapshot().metrics.isEmpty)
+    XCTAssertNil(model.playbackTiming)
+    model.settings.recordTimingDiagnostics = false
+    XCTAssertTrue(model.timingRecorder === second)
+    model.restart()
+    XCTAssertNil(model.timingRecorder)
+  }
+
+  @MainActor
   func testGameplayCompletesAndSavesAfterAudioEnds() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = ResultStore(rootURL: root)
     let model = try gameplayModel(resultStore: store)
+    let original = model.settings
+    defer { model.stop(); model.settings = original }
+    model.settings.recordTimingDiagnostics = true
     model.start()
+    let recorder = try XCTUnwrap(model.timingRecorder)
+    recorder.record(.runtime, seconds: 0.004)
     model.update(mediaTime: 0.95)
     model.press(lane: 0)
     model.release(lane: 0)
@@ -1513,6 +1542,13 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(results.count, 1)
     XCTAssertEqual(results.first?.score, 200_000)
     XCTAssertEqual(results.first?.miss, 4)
+    XCTAssertEqual(results.first?.playbackTiming, model.playbackTiming)
+    XCTAssertEqual(model.playbackTiming?.metrics[
+      PlaybackTimingMetric.runtime.rawValue]?.count, 1)
+    recorder.record(.runtime, seconds: 0.008)
+    XCTAssertEqual(model.playbackTiming?.metrics[
+      PlaybackTimingMetric.runtime.rawValue]?.count, 1,
+      "Late callbacks must not mutate the frozen result")
     let savedTimings = try await store.noteTimings(for: XCTUnwrap(results.first))
     XCTAssertEqual(savedTimings?.count, 5)
     XCTAssertEqual(savedTimings?.filter {

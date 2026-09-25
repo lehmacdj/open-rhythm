@@ -22,6 +22,23 @@ Status of the live-play follow-ups; offline probes do not certify live sync:
   Measure sample-to-present age and audio-route/output latency together before
   changing display prediction or applying audio compensation. Touch timestamps
   already use the player's timebase rather than delayed event delivery time.
+  Opt-in per-engine Record Playback Timing now records engine/sprite/encoding
+  work, drawable wait/GPU execution, chart sample-to-presentation age, display
+  deadline difference, clock-read duration, event/player clock difference and
+  OS-touch delivery age. It saves a bounded whole-play summary with results,
+  including output port type and iOS-reported output latency/buffer duration;
+  result details expose the report and a user-operated share action. Disabled
+  by default, local only, no automatic offset changes. Recording starts after
+  intro preparation; actual presentation timestamps require a device, because
+  the simulator SDK omits that API. Startup correlation, acoustic alignment,
+  live device measurements and calibration remain open. Independent review
+  corrected per-contact delivery-age inflation and diagnostics overhead being
+  attributed to Metal encoding; output port-type changes are labeled precisely.
+  The 221-test regression run passed; a newly added native-window callback
+  probe passed separately on simulator and thyme5. The device delivered actual
+  drawable timestamps; simulator reports them unavailable. This validates the
+  instrumentation path only: the probe has no music or engine workload and
+  does not supply a gameplay correction. Final device build passes.
 - Add persistent manual timing overrides in Gameplay Settings so the player
   can compensate for observed bias. Define adjustment direction and units
   clearly, provide a neutral default/reset, and distinguish visual alignment
@@ -354,6 +371,10 @@ model level, checking that future judgments and spawned entities do not leak.
 4. Full-chart no-touch runtime integration now passes on the physical device
    for four cached charts. Interactive playback, audio and display integration
    beyond those probes still need verification.
+5. Manual visual/audio alignment calibration remains separate from the
+   implemented input-judgment adjustment. Use measured clock/display/audio
+   behavior to define its direction and avoid double-applying engine offsets;
+   opt-in diagnostics alone do not finish this request.
 
 ## Deliberately not added / superseded requests
 

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0349A42F30663AA7009BC642 /* PlaybackTimingDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0349A42E30663AA7009BC642 /* PlaybackTimingDiagnostics.swift */; };
+		0349A43130663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */; };
 		A00000000000000000000001 /* OpenRhythmApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OpenRhythmApp.swift */; };
 		A00000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* ContentView.swift */; };
 		A00000000000000000000003 /* ServerDescriptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* ServerDescriptor.swift */; };
@@ -62,6 +64,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0349A42E30663AA7009BC642 /* PlaybackTimingDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackTimingDiagnostics.swift; sourceTree = "<group>"; };
+		0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackTimingDiagnosticsTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000001 /* OpenRhythmApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenRhythmApp.swift; sourceTree = "<group>"; };
 		A10000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A10000000000000000000003 /* ServerDescriptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDescriptor.swift; sourceTree = "<group>"; };
@@ -184,6 +188,7 @@
 				A10000000000000000000020 /* PlaybackEventClock.swift */,
 				A10000000000000000000021 /* EngineSoftwareRenderer.swift */,
 				A10000000000000000000022 /* EngineBackground.swift */,
+				0349A42E30663AA7009BC642 /* PlaybackTimingDiagnostics.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -218,6 +223,7 @@
 				B10000000000000000000005 /* RuntimeDecodingTests.swift */,
 				B10000000000000000000007 /* EngineHostTests.swift */,
 				B10000000000000000000006 /* ResultStoreTests.swift */,
+				0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */,
 			);
 			path = OpenRhythmTests;
 			sourceTree = "<group>";
@@ -357,6 +363,7 @@
 				A00000000000000000000007 /* Catalog.swift in Sources */,
 				A00000000000000000000008 /* SonolusClient.swift in Sources */,
 				A00000000000000000000009 /* CatalogModel.swift in Sources */,
+				0349A42F30663AA7009BC642 /* PlaybackTimingDiagnostics.swift in Sources */,
 				A0000000000000000000000A /* CatalogView.swift in Sources */,
 				A0000000000000000000000B /* SongDetailView.swift in Sources */,
 				A0000000000000000000000C /* OfflineStore.swift in Sources */,
@@ -389,6 +396,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B00000000000000000000001 /* LocalizedTextTests.swift in Sources */,
+				0349A43130663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift in Sources */,
 				B00000000000000000000002 /* CatalogTests.swift in Sources */,
 				B00000000000000000000008 /* PlaybackClockTests.swift in Sources */,
 				B00000000000000000000004 /* OfflineStoreTests.swift in Sources */,

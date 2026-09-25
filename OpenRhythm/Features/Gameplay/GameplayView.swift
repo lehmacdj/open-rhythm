@@ -250,6 +250,7 @@ struct GameplayView: View {
       ModifiedEngineOptionsSection(options: model.modifiedOptions)
       ResultStatisticsSections(samples: model.noteTimings,
         duration: model.currentTime)
+      PlaybackTimingSection(report: model.playbackTiming)
       Section {
         Button("Done") {
           Task {
@@ -380,6 +381,11 @@ private struct GameplaySettingsPanel: View {
           Text("Negative values compensate for early inputs; positive values compensate for late inputs. This does not change music timing or judgment-window sizes.")
             .font(.footnote).foregroundStyle(.secondary)
           Button("Reset Input Timing") { settings.inputOffsetMilliseconds = 0 }
+        }
+        Section("Diagnostics") {
+          Toggle("Record Playback Timing", isOn: $settings.recordTimingDiagnostics)
+          Text("Save clock and rendering measurements with your next play’s result. Stored locally; nothing is uploaded. Recording adds some overhead and does not adjust timing.")
+            .font(.footnote).foregroundStyle(.secondary)
         }
         Section("Graphics") {
           if let forcedSkinRenderMode {
@@ -906,7 +912,10 @@ private final class EnginePlayfieldView: UIView {
     if let metal, let runtime = model.engineRuntime,
       let assets = model.presentationAssets {
       do {
-        try metal.draw(host: runtime.host, assets: assets, size: bounds.size)
+        var timing = model.frameTiming
+        timing?.targetHostTime = displayLink?.targetTimestamp
+        try metal.draw(host: runtime.host, assets: assets, size: bounds.size,
+          timing: timing)
       } catch {
         // Keep a functioning software path if this device cannot render Metal.
         metal.layer.removeFromSuperlayer()
@@ -920,10 +929,15 @@ private final class EnginePlayfieldView: UIView {
   }
 
   private func receive(_ touches: Set<UITouch>, started: Bool, ended: Bool) {
+    let deliveryTime = model?.timingRecorder.map { _ in CACurrentMediaTime() }
     guard bounds.height > 0, let model else { return }
     touchPool.beginPlayback(generation: model.playbackGeneration)
     guard model.phase == .playing, !model.isStartingPlayback else { return }
     for touch in touches {
+      if let deliveryTime {
+        model.timingRecorder?.record(.touchDelivery,
+          seconds: deliveryTime - touch.timestamp)
+      }
       let key = ObjectIdentifier(touch)
       let point = touch.location(in: self)
       let position = EnginePoint(
@@ -963,6 +977,7 @@ private final class EngineSoftwareSurfaceView: UIView {
       let assets = model?.presentationAssets,
       let context = UIGraphicsGetCurrentContext() else { return }
     do {
+      model?.frameTiming?.recorder.increment(.software)
       try EngineRenderer.draw(host: runtime.host, assets: assets,
         context: context, size: bounds.size)
     } catch {
