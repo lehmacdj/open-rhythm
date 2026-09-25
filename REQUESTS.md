@@ -8,12 +8,17 @@ phone audio alignment, touch handling, or frame pacing is correct.
 
 Per the user's latest direction, postpone real-device testing until Sonolus
 API coverage is complete, then perform the outstanding physical checks in one
-large batch. Do not request phone unlocks or run incremental device checks
-before that gate unless the user explicitly asks for a specific device issue
-to be investigated sooner. The previous pending unlock request is superseded.
+large batch. Do not request phone unlocks, install or launch development builds
+on physical devices, or run incremental device checks before that gate unless
+the user explicitly asks for a specific device issue to be investigated sooner.
+The previous pending unlock request is superseded; a connected or unlocked
+phone alone does not reopen device testing.
 
 Prioritize the API contract checklist, implementation gaps and synthetic
 conformance tests, using simulator tests and builds while that work proceeds.
+The gate is closure of the API contract gaps tracked in COMPATIBILITY.md, not
+merely passing the sampled engines or the current test suite. Collect remaining
+physical checks into the batch as implementation proceeds.
 Keep the physical checks below open and label them deferred, not passed or
 blocked on an immediate phone unlock. Existing device evidence remains useful
 but does not substitute for the eventual batch. The stable-build push
