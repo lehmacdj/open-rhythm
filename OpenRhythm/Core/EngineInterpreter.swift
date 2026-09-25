@@ -48,9 +48,48 @@ final class EngineMemory {
   private var entityBlocks = [Int: [Int: [Int: Double]]]()
   private var entityKey: Int?
   private var entityIndex: Int?
+  // Indexed by public block ID: ~80 KB, shared by preparation snapshots.
+  // Avoid another hash lookup in every interpreted memory read/write.
+  private var lengths: [Int]?
 
-  private func validate(block: Int, write: Bool) throws {
-    guard let callback else { return }
+  /// Install the play-mode layout after loading ROM and before preprocessing.
+  /// Standalone memory tests can omit a layout; production runtimes cannot.
+  func configurePlayBlocks(entityCount: Int, optionCount: Int,
+    bucketCount: Int, archetypeCount: Int) throws {
+    guard [entityCount, optionCount, bucketCount, archetypeCount].allSatisfy({
+      $0 >= 0 && $0 <= Int.max / 32
+    }) else { throw EngineInterpreterError.invalidArguments("memory layout") }
+    let declared = [
+      1000: 9, 1001: 5, 1002: 0, 1003: 16, 1004: 16, 1005: 8,
+      1006: 80, 1007: 10, 2000: 4096, 2001: 4096,
+      2002: optionCount, 2003: bucketCount * 6, 2004: 12, 2005: 8,
+      3000: rom.count, 4000: 64, 4001: 32, 4002: 32, 4003: 3,
+      4004: 1, 4005: 5, 4006: 1, 4007: 4,
+      4101: entityCount * 32, 4102: entityCount * 32,
+      4103: entityCount * 3, 4106: entityCount, 4107: entityCount * 4,
+      5000: archetypeCount * 4, 5001: archetypeCount, 10000: 4096
+    ]
+    var table = [Int](repeating: 0, count: 10001)
+    for (block, count) in declared { table[block] = count }
+    lengths = table
+  }
+
+  func setTouchCount(_ count: Int) throws {
+    guard count >= 0, count <= Int.max / 15 else {
+      throw EngineInterpreterError.invalidArguments("touch count")
+    }
+    if lengths != nil { lengths?[1002] = count * 15 }
+    set(block: 1001, index: 3, value: Double(count))
+  }
+
+  private func contains(block: Int, index: Int) -> Bool {
+    guard index >= 0 else { return false }
+    guard let lengths else { return true }
+    return lengths.indices.contains(block) && index < lengths[block]
+  }
+
+  private func validate(block: Int, write: Bool) throws -> Bool {
+    guard let callback else { return true }
     let writable: Bool
     switch block {
     case 1000, 1006, 1007, 2001, 2003...2005, 4001, 4006, 4007,
@@ -64,6 +103,9 @@ final class EngineMemory {
     case 1001, 1002, 2002, 3000, 4003, 4103:
       writable = false
     default:
+      // Get explicitly returns zero for a nonexistent block. Keep invalid
+      // writes separate from that defined read behavior.
+      if !write { return false }
       throw EngineInterpreterError.invalidMemoryAccess(
         block: block, callback: callback.rawValue, write: write)
     }
@@ -71,36 +113,40 @@ final class EngineMemory {
     // infer additional restrictions from a spawned entity's lack of input.
     let unavailable = entityIndex == nil
       && ((4001...4003).contains(block) || block == 4005)
+    if unavailable && !write { return false }
     guard !unavailable, !write || writable else {
       throw EngineInterpreterError.invalidMemoryAccess(
         block: block, callback: callback.rawValue, write: write)
     }
+    return true
   }
 
   func read(block: Int, index: Int) throws -> Double {
-    try validate(block: block, write: false)
+    guard try validate(block: block, write: false) else { return 0 }
     return value(block: block, index: index)
   }
 
   @discardableResult
   func write(block: Int, index: Int, value: Double) throws -> Double {
-    try validate(block: block, write: true)
+    _ = try validate(block: block, write: true)
     return set(block: block, index: index, value: value)
   }
 
   /// A copy-on-write snapshot of preparation, including engine-owned data.
   /// The returned closure belongs to the runtime, not to this memory object.
   func makeRestorePoint() -> () -> Void {
-    { [rom, blocks, entityBlocks, entityKey, entityIndex] in
+    { [rom, blocks, entityBlocks, entityKey, entityIndex, lengths] in
       self.rom = rom
       self.blocks = blocks
       self.entityBlocks = entityBlocks
       self.entityKey = entityKey
       self.entityIndex = entityIndex
+      self.lengths = lengths
     }
   }
 
   func loadROM(_ data: Data?) throws {
+    defer { if lengths != nil { lengths?[3000] = rom.count } }
     guard let data else { rom = []; return }
     let decoded = try data.starts(with: [0x1f, 0x8b])
       ? GzipDecoder.decompress(data, maximumSize: 16 * 1024 * 1024) : data
@@ -141,7 +187,7 @@ final class EngineMemory {
   }
 
   func value(block: Int, index: Int) -> Double {
-    guard index >= 0 else { return 0 }
+    guard contains(block: block, index: index) else { return 0 }
     if block == 3000 { return rom.indices.contains(index) ? rom[index] : 0 }
     if let (array, offset) = arrayAddress(block: block, index: index) {
       return blocks[array]?[offset] ?? 0
@@ -154,7 +200,7 @@ final class EngineMemory {
 
   @discardableResult
   func set(block: Int, index: Int, value: Double) -> Double {
-    guard index >= 0, block != 3000 else { return value }
+    guard contains(block: block, index: index), block != 3000 else { return value }
     if let (array, offset) = arrayAddress(block: block, index: index) {
       blocks[array, default: [:]][offset] = value
       return value
@@ -628,15 +674,15 @@ final class EngineInterpreter {
   ) throws -> Double {
     switch operation {
     case .`get`:
-      let address = try memoryAddress(arguments, function: function)
-      return try memory.read(block: address.block, index: address.index)
+      try require(arguments, count: 2, function: function)
+      let block = try evaluate(arguments[0])
+      let index = try evaluate(arguments[1])
+      return try readMemory(block: block, index: index)
     case .`getShifted`:
       try require(arguments, count: 4, function: function)
       let values = try values(arguments)
-      return try memory.read(
-        block: try integer(values[0], function: function),
-        index: try integer(values[1] + values[2] * values[3], function: function)
-      )
+      return try readMemory(block: values[0],
+        index: values[1] + values[2] * values[3])
     case .`incrementPost`, .`decrementPost`, .`incrementPre`, .`decrementPre`:
       let address = try memoryAddress(arguments, function: function)
       let before = try memory.read(block: address.block, index: address.index)
@@ -823,6 +869,12 @@ final class EngineInterpreter {
     // Pointed addressing dereferences the pointer before evaluating offset;
     // offset expressions may themselves mutate the pointer's storage.
     let a = try values(Array(arguments.prefix(suffix == "Pointed" ? 2 : addressCount)))
+    if base == "Get", suffix == "Pointed" {
+      let targetBlock = try readMemory(block: a[0], index: a[1])
+      let pointerIndex = try readMemory(block: a[0], index: a[1] + 1)
+      let offset = try evaluate(arguments[2])
+      return try readMemory(block: targetBlock, index: pointerIndex + offset)
+    }
     var block = try integer(a[0], function: function)
     var index = try integer(a[1], function: function)
     if suffix == "Shifted" {
@@ -859,6 +911,15 @@ final class EngineInterpreter {
     default: throw EngineInterpreterError.unsupportedFunction(function)
     }
     return try memory.write(block: block, index: index, value: value)
+  }
+
+  private func readMemory(block: Double, index: Double) throws -> Double {
+    // Get has a defined zero result outside memory, even when an address
+    // cannot be represented by a machine Int. Evaluate operands before this
+    // check so their side effects are not lost.
+    guard let block = Int(exactly: block.rounded(.towardZero)),
+      let index = Int(exactly: index.rounded(.towardZero)) else { return 0 }
+    return try memory.read(block: block, index: index)
   }
 
   private func unary(

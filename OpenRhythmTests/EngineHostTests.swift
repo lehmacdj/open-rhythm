@@ -5,6 +5,34 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testRuntimeTouchBoundsShrinkAndRestoreOnRestart() throws {
+    let b = RuntimeNodeBuilder()
+    let secondID = b.call("Get", [b.value(1002), b.value(15)])
+    let capture = b.call("Set", [b.value(4000), b.value(0), secondID])
+    let engine = try b.engine(archetypes: [["name": "Probe", "hasInput": false,
+      "imports": [], "exports": [], "updateSequential": ["index": capture]]])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Probe", name: nil, data: [])]), options: [],
+      aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [])
+    let point = EnginePoint(x: 0, y: 0)
+    func touch(_ id: Int) -> EngineTouch {
+      EngineTouch(id: id, started: true, ended: false, time: 0, startTime: 0,
+        position: point, startPosition: point, delta: point)
+    }
+    for _ in 0..<2 {
+      XCTAssertEqual(runtime.memory.value(block: 1002, index: 15), 0)
+      try runtime.update(at: 0, touches: [touch(10), touch(20)])
+      XCTAssertEqual(runtime.memory.value(block: 4000, index: 0), 20)
+      try runtime.update(at: 1, touches: [touch(10)])
+      XCTAssertEqual(runtime.memory.value(block: 4000, index: 0), 0)
+      XCTAssertEqual(runtime.memory.value(block: 1002, index: 15), 0)
+      try runtime.update(at: 2)
+      XCTAssertEqual(runtime.memory.value(block: 1002, index: 0), 0)
+      runtime.restart()
+    }
+  }
+
   func testRuntimeEstablishesAndClearsEveryMemoryCallbackContext() throws {
     for phase in EngineMemory.Callback.allCases {
       let b = RuntimeNodeBuilder()
@@ -2388,11 +2416,11 @@ final class EngineHostTests: XCTestCase {
     memory.selectEntity(key: 0, index: 0)
     XCTAssertEqual(memory.value(block: 4000, index: 0), 10)
     XCTAssertEqual(memory.value(block: 4002, index: 2), 30)
-    let invalid = EngineInterpreter(nodes: [
+    let missingBlock = EngineInterpreter(nodes: [
       EngineDataNode(value: .infinity), EngineDataNode(value: 0),
       EngineDataNode(function: "Get", arguments: [0, 1])
     ])
-    XCTAssertThrowsError(try invalid.execute(nodeAt: 2))
+    XCTAssertEqual(try missingBlock.execute(nodeAt: 2), 0)
     let cycle = EngineInterpreter(nodes: [
       EngineDataNode(function: "Abs", arguments: [0])
     ])

@@ -298,6 +298,9 @@ final class EnginePlayRuntime {
     }
     memory = EngineMemory()
     try memory.loadROM(rom)
+    try memory.configurePlayBlocks(entityCount: level.entities.count,
+      optionCount: options.count, bucketCount: engine.buckets.count,
+      archetypeCount: engine.archetypes.count)
     host = CommandEngineRuntimeHost(
       memory: memory, level: level, skinSpriteIDs: skinSpriteIDs,
       effectClipIDs: effectClipIDs, particleEffectIDs: particleEffectIDs,
@@ -460,6 +463,7 @@ final class EnginePlayRuntime {
     judgments.removeAll(keepingCapacity: true)
     let delta = max(0, time - previousTime)
     previousTime = time
+    try memory.setTouchCount(touches.count)
     for (index, value) in [time, delta, host.timeScale.scaledTime(at: time),
       Double(touches.count)]
       .enumerated() {

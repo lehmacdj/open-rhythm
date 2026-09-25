@@ -15,11 +15,12 @@ integration probes, including successful inputs and restart/buffering paths.
   reads and writes validate the public block access table, including direct,
   shifted, pointed, compound, increment/decrement, and Copy paths. Read-only
   blocks cannot be overwritten, and shared writes are restricted to their
-  documented phases. Spawned entities cannot access Entity Data, Shared
-  Memory, Info or Input; they can still read original entities through arrays.
-  Host initialization uses a separate unchecked path, and callback context is
-  cleared even when execution throws. This does not yet enforce block lengths
-  or callback-specific availability of host functions.
+  documented phases. Spawned entities have no Entity Data, Shared Memory,
+  Info or Input; reads of those absent blocks return zero, while writes are
+  rejected. They can still read original entities through arrays. Host
+  initialization bypasses callback permissions, but respects block bounds.
+  Callback context is cleared even when execution throws. Callback-specific
+  availability of host functions remains a separate open check.
   Sources: [play-block access tables](
   https://wiki.sonolus.com/engine-specs/play-blocks/overview) and
   [Spawn restrictions](https://wiki.sonolus.com/engine-specs/functions/spawn).
@@ -34,6 +35,41 @@ integration probes, including successful inputs and restart/buffering paths.
   simulator build also passes. Independent review found no actionable defects
   and verified that the fixtures preserve their intent. No physical checks
   were run; these results do not certify live audio/display alignment.
+- Memory block lengths follow the declared fixed layouts and the loaded
+  level's entity, option, bucket, archetype and ROM counts. The touch-array
+  length follows each frame's contact count, so contacts from an older larger
+  frame cannot leak through an out-of-range read. Restart restores the layout
+  with the prepared state. Out-of-range writes cannot allocate extra slots or
+  spill into the next entity's view. As an explicit defensive policy,
+  out-of-range writes to existing writable blocks are ignored while returning
+  their computed value; native invalid-write behavior is not claimed.
+  The [Get contract](https://wiki.sonolus.com/engine-specs/functions/get)
+  requires zero for missing blocks and out-of-range reads; this also applies
+  through [GetPointed](https://wiki.sonolus.com/engine-specs/functions/get-pointed).
+  Reads beyond machine-Int range return zero after evaluating their operands,
+  rather than throwing during conversion. RuntimeUpdate retains the metadata's
+  fifth `skip` slot, which stays zero; the wiki page's omission and broader
+  skip semantics remain documented below.
+  This corrects an overrestriction in the first permission-check change:
+  reviewing block access tables without cross-checking the function's defined
+  fallback had incorrectly made absent-block Get throw. Future conformance
+  reviews must check both layers, not independently treat permission tables
+  as the whole observable contract.
+  Independent review additionally caught machine-integer conversion failures
+  for large numeric addresses; those are covered at interpreter level, not
+  only by direct memory-object tests. The final bounds table is indexed rather
+  than hashed on every read. Its saved/live copies use roughly 160 KB per
+  active runtime after the first frame. Scalar Get evaluation avoids a new
+  temporary argument-array allocation. These are implementation costs and
+  safeguards, not a measured claim of improved physical frame pacing.
+  Final verification: the September 25 02:39 simulator run completed despite
+  the tool's 300-second response timeout. Its saved report contains 240 passes
+  and one obsolete assertion expecting an infinite block ID's Get to throw.
+  After changing that assertion to expect zero, the 02:46 five-test rerun
+  passed, including the one-MiB interpreter stack and touch-shrink regressions.
+  All 241 tests therefore have passing evidence across the final runs, not a
+  claimed single 241-pass run. The normal simulator build passes. All six
+  cached-chart probes passed; no server requests or physical tests were used.
 - Fractional ratings through decoding, filtering, persistence, and display;
   fractional callback orders; icon-only tags and omitted bucket units.
 - Quick keyword search and opaque cursor traversal, including two-page
@@ -333,7 +369,7 @@ execute; the successful rerun and final suite have separate result bundles.
   automatic BGM compensation but do not state the convention. Current tests
   establish the client's explicit wall-clock convention and internal timeline
   consistency, not parity with an independently observed native reference.
-- Optional/missing resources, block lengths, host-function callback legality,
+- Optional/missing resources, host-function callback legality,
   remaining memory defaults, and unknown enum values. Memory-block callback
   read/write permissions are now enforced separately from those open checks.
 - Runtime metadata lists a play-mode `skip` slot. The public Python framework

@@ -725,7 +725,7 @@ final class RuntimeDecodingTests: XCTestCase {
     }
     XCTAssertThrowsError(try evaluate("Copy", [2000, 0, 2001, 0, 100], limit: 20))
     XCTAssertThrowsError(try evaluate("Copy", [2000, 0, 2001, 0, -1]))
-    XCTAssertThrowsError(try evaluate("GetPointed", [2000, .infinity, 0]))
+    XCTAssertEqual(try evaluate("GetPointed", [2000, .infinity, 0]), 0)
   }
 
   func testPlayMemoryCallbackAccessMatrix() throws {
@@ -754,8 +754,118 @@ final class RuntimeDecodingTests: XCTestCase {
           XCTAssertEqual(memory.value(block: block, index: 0), 0)
         }
       }
-      XCTAssertThrowsError(try memory.read(block: 9999, index: 0))
+      XCTAssertEqual(try memory.read(block: 9999, index: 0), 0)
       XCTAssertThrowsError(try memory.write(block: 9999, index: 0, value: 1))
+    }
+  }
+
+  func testPlayBlockBoundsDoNotCreateExtraStorage() throws {
+    let memory = EngineMemory()
+    try memory.configurePlayBlocks(entityCount: 3, optionCount: 2,
+      bucketCount: 4, archetypeCount: 5)
+    memory.selectEntity(key: 2, index: 2)
+    let counts = [1000: 9, 1001: 5, 1003: 16, 1004: 16, 1005: 8,
+      1006: 80, 1007: 10, 2000: 4096, 2001: 4096, 2002: 2, 2003: 24,
+      2004: 12, 2005: 8, 4000: 64, 4001: 32, 4002: 32, 4003: 3,
+      4004: 1, 4005: 5, 4006: 1, 4007: 4,
+      4101: 96, 4102: 96, 4103: 9, 4106: 3, 4107: 12,
+      5000: 20, 5001: 5, 10000: 4096]
+    for (block, count) in counts {
+      // Seed through the host path, including otherwise read-only blocks.
+      memory.set(block: block, index: count - 1, value: 37)
+      memory.set(block: block, index: count, value: 99)
+      memory.set(block: block, index: -1, value: 99)
+      memory.set(block: block, index: Int.max, value: 99)
+      XCTAssertEqual(memory.value(block: block, index: count - 1), 37)
+      XCTAssertEqual(memory.value(block: block, index: count), 0, "\(block)")
+      XCTAssertEqual(memory.value(block: block, index: -1), 0)
+      XCTAssertEqual(memory.value(block: block, index: Int.max), 0)
+    }
+    memory.set(block: 9999, index: 0, value: 99)
+    XCTAssertEqual(memory.value(block: 9999, index: 0), 0)
+    XCTAssertThrowsError(try memory.configurePlayBlocks(entityCount: -1,
+      optionCount: 0, bucketCount: 0, archetypeCount: 0))
+    XCTAssertThrowsError(try memory.configurePlayBlocks(entityCount: Int.max,
+      optionCount: 0, bucketCount: 0, archetypeCount: 0))
+  }
+
+  func testBoundedGetVariantsAndCopyZeroPadMissingAddresses() throws {
+    for optimized in [false, true] {
+      let memory = EngineMemory()
+      try memory.loadROM(Data([0, 0, 128, 63])) // Float32 1
+      try memory.configurePlayBlocks(entityCount: 1, optionCount: 0,
+        bucketCount: 0, archetypeCount: 1)
+      memory.selectEntity(key: 0, index: 0)
+      memory.callback = .preprocess
+      memory.set(block: 4000, index: 63, value: 12)
+      memory.set(block: 4000, index: 0, value: 4000)
+      memory.set(block: 4000, index: 1, value: 63)
+      let cases: [(String, [Double], Double)] = [
+        ("Get", [4000, 63], 12), ("Get", [4000, 64], 0),
+        ("Get", [4000, -1], 0), ("Get", [9999, 0], 0),
+        ("Get", [3000, 0], 1), ("Get", [3000, 1], 0),
+        ("Get", [2002, 0], 0), ("Get", [2003, 0], 0),
+        ("GetShifted", [4000, 62, 1, 1], 12),
+        ("GetShifted", [4000, 62, 1, 2], 0),
+        ("GetPointed", [4000, 0, 0], 12),
+        ("GetPointed", [4000, 0, 1], 0),
+        ("GetPointed", [9999, 0, 0], 0),
+        ("Get", [4000, 1e20], 0), ("Get", [4000, -1e20], 0),
+        ("Get", [1e20, 0], 0), ("Get", [4000, .infinity], 0),
+        ("GetShifted", [4000, 0, 1e20, 2], 0),
+        ("GetPointed", [4000, 1e20, 0], 0),
+        ("GetPointed", [4000, 0, 1e20], 0),
+        ("Copy", [4000, 63, 2000, 0, 2], 0),
+        ("Set", [4000, 64, 99], 99),
+        ("Get", [4000, 64], 0)
+      ]
+      for (name, arguments, expected) in cases {
+        let nodes = arguments.map { EngineDataNode(value: $0) } + [
+          EngineDataNode(function: name, arguments: Array(arguments.indices))]
+        let interpreter = EngineInterpreter(nodes: nodes, memory: memory,
+          optimizeLiteralAddresses: optimized)
+        XCTAssertEqual(try interpreter.execute(nodeAt: arguments.count), expected,
+          "\(name) \(arguments), optimized: \(optimized)")
+      }
+      XCTAssertEqual(memory.value(block: 2000, index: 0), 12)
+      XCTAssertEqual(memory.value(block: 2000, index: 1), 0)
+      // A pointer at the final slot has a zero index component past the end.
+      memory.set(block: 4000, index: 63, value: 2000)
+      XCTAssertEqual(try evaluate("GetPointed", [4000, 63, 0], memory: memory), 12)
+      memory.set(block: 4000, index: 63, value: 0)
+      XCTAssertEqual(try evaluate("Copy", [2000, 0, 4000, 63, 2], memory: memory), 0)
+      XCTAssertEqual(memory.value(block: 4000, index: 63), 12)
+      XCTAssertEqual(memory.value(block: 4000, index: 64), 0)
+      let nodes = [EngineDataNode(value: 1e20), EngineDataNode(value: 4000),
+        EngineDataNode(value: 4), EngineDataNode(value: 8),
+        EngineDataNode(function: "Set", arguments: [1, 2, 3]),
+        EngineDataNode(function: "Get", arguments: [0, 4]),
+        EngineDataNode(function: "GetPointed", arguments: [0, 2, 4])]
+      let interpreter = EngineInterpreter(nodes: nodes, memory: memory,
+        optimizeLiteralAddresses: optimized)
+      for root in [5, 6] {
+        memory.set(block: 4000, index: 4, value: 0)
+        XCTAssertEqual(try interpreter.execute(nodeAt: root), 0)
+        XCTAssertEqual(memory.value(block: 4000, index: 4), 8,
+          "Invalid reads must still evaluate index/offset side effects")
+      }
+    }
+  }
+
+  func testEntityViewBoundsDoNotAliasAdjacentEntities() throws {
+    let memory = EngineMemory()
+    try memory.configurePlayBlocks(entityCount: 2, optionCount: 0,
+      bucketCount: 0, archetypeCount: 1)
+    for (block, stride) in [(4001, 32), (4002, 32), (4003, 3), (4006, 1), (4007, 4)] {
+      memory.selectEntity(key: 1, index: 1)
+      memory.set(block: block, index: 0, value: 42)
+      memory.selectEntity(key: 0, index: 0)
+      memory.set(block: block, index: stride - 1, value: 17)
+      memory.set(block: block, index: stride, value: 99)
+      XCTAssertEqual(memory.value(block: block, index: stride), 0)
+      XCTAssertEqual(memory.value(block: block + 100, index: stride - 1), 17)
+      XCTAssertEqual(memory.value(block: block + 100, index: stride), 42)
+      XCTAssertEqual(memory.value(block: block + 100, index: stride * 2), 0)
     }
   }
 
@@ -803,20 +913,22 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(memory.value(block: 2000, index: 0), 12)
   }
 
-  func testSpawnedMemoryViewsRejectDirectIndirectAndCopyAccess() throws {
+  func testAbsentSpawnedMemoryViewsReadZeroAndRejectWrites() throws {
     let memory = EngineMemory()
     memory.selectEntity(key: 9, index: nil)
     memory.callback = .updateSequential
     for block in [4001, 4002, 4003, 4005] {
-      XCTAssertThrowsError(try evaluate("Get", [Double(block), 0], memory: memory))
-      XCTAssertThrowsError(try evaluate("GetShifted", [Double(block), 0, 0, 1],
-        memory: memory))
+      XCTAssertEqual(try evaluate("Get", [Double(block), 0], memory: memory), 0)
+      XCTAssertEqual(try evaluate("GetShifted", [Double(block), 0, 0, 1],
+        memory: memory), 0)
       memory.set(block: 4000, index: 0, value: Double(block))
-      XCTAssertThrowsError(try evaluate("GetPointed", [4000, 0, 0], memory: memory))
-      XCTAssertThrowsError(try evaluate("GetPointed", [Double(block), 0, 0],
-        memory: memory), "The pointer storage must also be accessible")
-      XCTAssertThrowsError(try evaluate("Copy", [Double(block), 0, 4000, 2, 1],
-        memory: memory))
+      XCTAssertEqual(try evaluate("GetPointed", [4000, 0, 0], memory: memory), 0)
+      XCTAssertEqual(try evaluate("GetPointed", [Double(block), 0, 0],
+        memory: memory), 0, "A missing pointer reads (0, 0)")
+      memory.set(block: 4000, index: 2, value: 99)
+      XCTAssertEqual(try evaluate("Copy", [Double(block), 0, 4000, 2, 1],
+        memory: memory), 0)
+      XCTAssertEqual(memory.value(block: 4000, index: 2), 0)
       XCTAssertThrowsError(try evaluate("Set", [Double(block), 0, 1], memory: memory))
     }
     for block in [4000, 4004, 10000] {

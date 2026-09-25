@@ -20,11 +20,13 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
-Latest API checkpoint: callback-aware memory access checks are implemented and
-independently reviewed. The September 25 02:22 simulator run passed all 237
-tests (including six cached-chart probes), and the normal simulator build
-passes. This closes the memory permission subtask, not the broader API gate;
-the remaining gaps are listed below and in COMPATIBILITY.md.
+Latest API checkpoint: callback permissions, declared block bounds and Get's
+zero-read fallback are implemented and independently reviewed. The September
+25 02:39 simulator run passed 240 tests (including six cached-chart probes);
+one stale invalid-Get assertion was corrected, then passed in the five-test
+02:46 rerun. All 241 registered tests are covered across those runs. The normal
+simulator build passes. This does not close the broader API gate; the remaining
+gaps are listed below and in COMPATIBILITY.md.
 
 ## Live-play follow-up — September 25, 2026
 
@@ -421,8 +423,11 @@ model level, checking that future judgments and spawned entities do not leak.
    DebugLog/DebugPause support and resource/callback conformance still need
    work. Memory-block callback
    permissions are now enforced across all interpreter access paths, including
-   spawned-entity restrictions; block lengths and host-function callback
-   legality remain separate open checks. Skin mode selection is now
+   spawned-entity restrictions. Declared block lengths are implemented, with
+   zero reads for missing/out-of-range addresses as required by Get; the
+   initial overrestriction on missing-block reads has been corrected.
+   Host-function callback legality remains a separate open check.
+   Skin mode selection is now
    honored, but exact native rendering parity is not claimed. Unsupported
    functions are surfaced before music rather than assumed harmless. See the
    separate contract checklist; sampled engines do not prove arbitrary support.
