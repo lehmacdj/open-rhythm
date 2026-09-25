@@ -789,6 +789,42 @@ questions. They do not certify every legal combination of resource fields.
 | Effect audio | Engine-requested named clips are selected from the ZIP and prepared through the native audio backend; missing names remain unavailable to HasEffectClip. | An exhaustive supported codec contract is not supplied by the public MP3 recommendation; native format support and acoustic alignment remain separate checks. |
 | Background | Natural aspect and unit scaling apply when overrides are absent; declared fit, color, mask and blur are consumed. | The blur kernel/radius is not specified publicly; the current size-normalized Gaussian is host policy. |
 
+## Stack implementation evidence needed
+
+The September 25 contract recheck still does not supply an interoperable stack
+layout. The [overview](
+https://wiki.sonolus.com/engine-specs/functions/stack-functions) locates the
+stack at the end of Temporary Memory; [StackInit](
+https://wiki.sonolus.com/engine-specs/functions/stack-init) and [StackEnter](
+https://wiki.sonolus.com/engine-specs/functions/stack-enter) do not define the
+pointer values or frame representation. General stack literature cannot
+resolve these observable implementation choices.
+
+An authoritative specification, public reference implementation, or legitimate
+reference execution must establish the following before registration changes:
+
+| Question | Evidence needed |
+| --- | --- |
+| Initialization | Initial stack/frame pointer values; reserved control cells; whether StackInit clears data or only resets pointers. |
+| Addressing | Whether pointers are absolute Temporary Memory indices; which cell StackGet(0)/StackGetFrame(0) addresses; offset direction. |
+| Push/pop/grow | Whether pointer updates precede or follow access; exact return values; newly reserved-cell behavior. |
+| Call frames | StackEnter(size) allocation and header layout; saved pointers; nested StackLeave restoration; frame-relative offsets. |
+| Pointer setters | Relationship to backing-memory/control cells and subsequent push/pop/frame behavior. |
+| Lifetime and limits | Reset behavior across callbacks/entities; legal bounds; overflow/underflow handling and interaction with ordinary Temporary Memory access. |
+
+Reference observations must include the pointer getters and relevant raw
+Temporary Memory cells, not only push/pop round trips: multiple incompatible
+layouts pass the same abstract round-trip test. Once established, encode the
+observations independently as conformance tests before implementing the stack.
+The existing name/dispatch test deliberately keeps all 14 functions unsupported.
+Independent review found no interoperable subset justified by these contracts;
+knowing a setter's scalar return value does not establish its backing-memory
+effects. These questions can be used for upstream clarification, but no issue,
+message or reference-client probe has been submitted or executed.
+No native-client execution is authorized by this evidence request; the user's
+device-testing gate remains in force. Repeatedly rereading the same signatures
+is not progress toward resolving the layout.
+
 ## Remaining checks, including engines we have not sampled
 
 - Fourteen play-capable stack entry points remain unimplemented: StackEnter,

@@ -33,6 +33,18 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Stack evidence dependency: the public contracts still omit observable pointer
+initialization, addressing and frame layout. COMPATIBILITY.md now lists the
+specific independent evidence needed for all 14 stack functions, including
+Temporary Memory aliasing, lifetime and bounds. This cannot be closed by
+registering guessed implementations or writing tests against the same guess.
+An authoritative specification, public implementation or legitimate reference
+trace is needed. This dependency does not authorize earlier device testing.
+Independent review confirmed that no interoperable subset is established by
+the available contracts. The user has been asked for any authoritative
+reference; no speculative stack code or external clarification request was
+submitted. The goal remains unfinished.
+
 Particle-selection follow-up: unused sprite crop bounds no longer prevent a
 valid selected effect from loading. Only referenced sprites are cropped, with
 original indices and fractional UVs retained; shared references reuse crops
