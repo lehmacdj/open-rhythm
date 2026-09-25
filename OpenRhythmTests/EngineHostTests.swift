@@ -5,6 +5,57 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testRuntimeEstablishesAndClearsEveryMemoryCallbackContext() throws {
+    for phase in EngineMemory.Callback.allCases {
+      let b = RuntimeNodeBuilder()
+      let write = b.call("Set", [b.value(2001), b.value(0), b.value(1)])
+      let despawn = b.call("Set", [b.value(4004), b.value(0), b.value(1)])
+      var archetype: [String: Any] = ["name": "Probe", "hasInput": false,
+        "imports": [], "exports": [], phase.rawValue: ["index": write]]
+      if phase == .terminate {
+        archetype["updateSequential"] = ["index": despawn]
+      }
+      let engine = try b.engine(archetypes: [archetype])
+      func prepare() throws -> EnginePlayRuntime {
+        try EnginePlayRuntime(engine: engine,
+          level: LevelData(bgmOffset: 0, entities: [
+            LevelEntity(archetype: "Probe", name: nil, data: [])]),
+          options: [], aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [],
+          particleEffectIDs: [])
+      }
+      func check(_ error: Error) {
+        guard case EngineInterpreterError.invalidMemoryAccess(
+          let block, let callback, let write) = error else {
+          return XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(block, 2001)
+        XCTAssertEqual(callback, phase.rawValue)
+        XCTAssertTrue(write)
+      }
+      if phase == .spawnOrder {
+        XCTAssertThrowsError(try prepare(), "spawnOrder cannot write LevelData",
+          check)
+        continue
+      }
+      let runtime = try prepare()
+      XCTAssertNil(runtime.memory.callback)
+      let point = EnginePoint(x: 0, y: 0)
+      let touch = EngineTouch(id: 1, started: true, ended: false, time: 0,
+        startTime: 0, position: point, startPosition: point, delta: point)
+      if phase == .preprocess {
+        try runtime.update(at: 0, touches: [touch])
+        XCTAssertEqual(runtime.memory.value(block: 2001, index: 0), 1)
+      } else {
+        XCTAssertThrowsError(try runtime.update(at: 0, touches: [touch]),
+          phase.rawValue, check)
+        XCTAssertEqual(runtime.memory.value(block: 2001, index: 0), 0)
+      }
+      XCTAssertNil(runtime.memory.callback, "Clear context even after errors")
+      runtime.restart()
+      XCTAssertNil(runtime.memory.callback)
+    }
+  }
+
   func testActiveCallbackOrderSurvivesSpawnDespawnAndRestart() throws {
     let b = RuntimeNodeBuilder()
     func get(_ block: Double, _ index: Double) -> Int {
@@ -514,7 +565,8 @@ final class EngineHostTests: XCTestCase {
     }
     let order = get(4001, 0)
     let spawn = b.call("Execute", [
-      b.call("SetAdd", [b.value(2000), b.value(0), b.value(1)]),
+      // Entity Input is writable in shouldSpawn; Level Memory is not.
+      b.call("SetAdd", [b.value(4005), b.value(1), b.value(1)]),
       b.call("GreaterOr", [get(1001, 0), get(4001, 1)])])
     let terminate = b.call("Set", [b.value(4004), b.value(0), b.value(1)])
     let engine = try b.engine(archetypes: [[
@@ -536,22 +588,31 @@ final class EngineHostTests: XCTestCase {
       options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
       particleEffectIDs: [])
     for _ in 0..<2 {
+      var resolvedCalls = 0.0
+      func callCount() -> Double {
+        resolvedCalls += runtime.judgments.reduce(0) { $0 + $1.accuracy }
+        return resolvedCalls + (0..<3).reduce(0) { total, index in
+          runtime.memory.selectEntity(key: index, index: index)
+          return total + runtime.memory.value(block: 4005, index: 1)
+        }
+      }
       try runtime.update(at: 0)
       XCTAssertTrue(runtime.judgments.isEmpty)
-      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 1)
+      XCTAssertEqual(callCount(), 1)
       try runtime.update(at: 1)
       XCTAssertEqual(runtime.judgments.map(\.entityIndex), [1])
-      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 3)
+      XCTAssertEqual(callCount(), 3)
       try runtime.update(at: 2)
       XCTAssertTrue(runtime.judgments.isEmpty,
         "The ready third entity must not bypass the blocked queue head")
+      XCTAssertEqual(callCount(), 4)
       try runtime.update(at: 3)
       XCTAssertEqual(runtime.judgments.map(\.entityIndex), [2, 0])
       XCTAssertEqual(runtime.resolvedInputCount, 3)
-      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 6)
+      XCTAssertEqual(callCount(), 6)
       try runtime.update(at: 4)
       XCTAssertTrue(runtime.judgments.isEmpty)
-      XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), 6,
+      XCTAssertEqual(callCount(), 6,
         "An exhausted queue must not execute shouldSpawn again")
       runtime.restart()
     }
@@ -714,10 +775,10 @@ final class EngineHostTests: XCTestCase {
     let initialize = b.call("Execute", [
       b.call("Play", [b.value(8), b.value(0)]),
       b.call("PlayScheduled", [b.value(8), b.value(3), b.value(0)]),
-      set(2000, 1, b.call("PlayLooped", [b.value(8)])),
-      set(2000, 2, b.call("PlayLoopedScheduled", [b.value(8), b.value(4)])),
-      b.call("StopLooped", [get(2000, 1)]),
-      b.call("StopLoopedScheduled", [get(2000, 2), b.value(5)])])
+      set(4000, 1, b.call("PlayLooped", [b.value(8)])),
+      set(4000, 2, b.call("PlayLoopedScheduled", [b.value(8), b.value(4)])),
+      b.call("StopLooped", [get(4000, 1)]),
+      b.call("StopLoopedScheduled", [get(4000, 2), b.value(5)])])
     let engine = try b.engine(archetypes: [[
       "name": "Audio", "hasInput": false, "imports": [], "exports": [],
       "preprocess": ["index": preprocess], "initialize": ["index": initialize]]])
@@ -826,7 +887,7 @@ final class EngineHostTests: XCTestCase {
       set(4000, 0, b.call("Random", [b.value(0), b.value(1)])),
       set(4002, 0, b.value(17)), set(2005, 6, b.value(800)),
       set(2004, 0, b.value(1))])
-    let spawnOrder = set(2001, 0, get(4000, 0))
+    let spawnOrder = set(4000, 1, get(4000, 0))
     let update = b.call("Execute", [
       set(4000, 0, b.value(-10)), set(4002, 0, b.value(-20)),
       set(4005, 0, b.value(1)), set(4005, 1, b.value(0.01)),
@@ -845,11 +906,11 @@ final class EngineHostTests: XCTestCase {
       level: LevelData(bgmOffset: 0, entities: [
         LevelEntity(archetype: "Note", name: nil, data: [])]), options: [],
       aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [])
-    let preparedRandom = runtime.memory.value(block: 2001, index: 0)
+    let preparedRandom = runtime.memory.value(block: 4000, index: 1)
     for _ in 0..<3 {
       runtime.restart()
-      XCTAssertEqual(runtime.memory.value(block: 2001, index: 0), preparedRandom)
       runtime.memory.selectEntity(key: 0, index: 0)
+      XCTAssertEqual(runtime.memory.value(block: 4000, index: 1), preparedRandom)
       XCTAssertEqual(runtime.memory.value(block: 4000, index: 0), preparedRandom)
       XCTAssertEqual(runtime.memory.value(block: 4002, index: 0), 17)
       XCTAssertEqual(runtime.memory.value(block: 4103, index: 2), 0)
@@ -2358,7 +2419,7 @@ final class EngineHostTests: XCTestCase {
       ["name": "Init", "hasInput": false, "imports": [], "exports": [],
        "updateSequential": ["index": initUpdate]],
       ["name": "Dynamic", "hasInput": true, "imports": [], "exports": [],
-       "updateParallel": ["index": dynamicUpdate]],
+       "updateSequential": ["index": dynamicUpdate]],
       ["name": "Note", "hasInput": true, "imports": [], "exports": [],
        "touch": ["index": touch]]
     ]

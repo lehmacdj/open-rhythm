@@ -20,6 +20,12 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
+Latest API checkpoint: callback-aware memory access checks are implemented and
+independently reviewed. The September 25 02:22 simulator run passed all 237
+tests (including six cached-chart probes), and the normal simulator build
+passes. This closes the memory permission subtask, not the broader API gate;
+the remaining gaps are listed below and in COMPATIBILITY.md.
+
 ## Live-play follow-up — September 25, 2026
 
 Status of the live-play follow-ups; offline probes do not certify live sync:
@@ -411,8 +417,12 @@ model level, checking that future judgments and spawned entities do not leak.
    diagnostics; they cannot be certified by invented simulator measurements.
    Deferred until Sonolus API coverage is complete, then tested together with
    the Metal scheduling before/after comparison and calibration controls.
-2. General engine compatibility is not complete: stack-function ABI and
-   resource/callback conformance still need work. Skin mode selection is now
+2. General engine compatibility is not complete: stack-function ABI,
+   DebugLog/DebugPause support and resource/callback conformance still need
+   work. Memory-block callback
+   permissions are now enforced across all interpreter access paths, including
+   spawned-entity restrictions; block lengths and host-function callback
+   legality remain separate open checks. Skin mode selection is now
    honored, but exact native rendering parity is not claimed. Unsupported
    functions are surfaced before music rather than assumed harmless. See the
    separate contract checklist; sampled engines do not prove arbitrary support.

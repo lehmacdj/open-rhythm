@@ -607,10 +607,22 @@ final class EnginePlayRuntime {
     default defaultValue: Double = 0
   ) throws -> Double {
     let parallelDrawing = callback == \EngineArchetype.updateParallel
-    guard let callback = engine.archetypes[entity.archetype][keyPath: callback]
+    guard let definition = engine.archetypes[entity.archetype][keyPath: callback]
     else { return defaultValue }
     select(entity, parallelDrawing: parallelDrawing)
-    return try interpreter.execute(nodeAt: callback.index)
+    switch callback {
+    case \EngineArchetype.preprocess: memory.callback = .preprocess
+    case \EngineArchetype.spawnOrder: memory.callback = .spawnOrder
+    case \EngineArchetype.shouldSpawn: memory.callback = .shouldSpawn
+    case \EngineArchetype.initialize: memory.callback = .initialize
+    case \EngineArchetype.updateSequential: memory.callback = .updateSequential
+    case \EngineArchetype.touch: memory.callback = .touch
+    case \EngineArchetype.updateParallel: memory.callback = .updateParallel
+    case \EngineArchetype.terminate: memory.callback = .terminate
+    default: preconditionFailure("Unknown engine callback")
+    }
+    defer { memory.callback = nil }
+    return try interpreter.execute(nodeAt: definition.index)
   }
 
   private func ordered(

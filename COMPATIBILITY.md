@@ -11,6 +11,29 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Play callbacks establish an explicit memory-access context. Interpreter
+  reads and writes validate the public block access table, including direct,
+  shifted, pointed, compound, increment/decrement, and Copy paths. Read-only
+  blocks cannot be overwritten, and shared writes are restricted to their
+  documented phases. Spawned entities cannot access Entity Data, Shared
+  Memory, Info or Input; they can still read original entities through arrays.
+  Host initialization uses a separate unchecked path, and callback context is
+  cleared even when execution throws. This does not yet enforce block lengths
+  or callback-specific availability of host functions.
+  Sources: [play-block access tables](
+  https://wiki.sonolus.com/engine-specs/play-blocks/overview) and
+  [Spawn restrictions](https://wiki.sonolus.com/engine-specs/functions/spawn).
+  The access audit exposed four invalid synthetic fixtures (shared writes in
+  shouldSpawn/initialize/updateParallel and a Level Data write in spawnOrder).
+  Their counters, loop handles and preparation snapshots now use legal private
+  or input memory, and the spawned helper writes shared state sequentially.
+  Existing spawn-order, deferred-spawn, restart and scheduled-audio assertions
+  remain intact. Eight focused tests pass; the final September 25 02:22
+  iPhone 17 Pro simulator suite passed all 237 tests, with no failures,
+  skips or unrun tests, including all six cached-chart probes. The normal
+  simulator build also passes. Independent review found no actionable defects
+  and verified that the fixtures preserve their intent. No physical checks
+  were run; these results do not certify live audio/display alignment.
 - Fractional ratings through decoding, filtering, persistence, and display;
   fractional callback orders; icon-only tags and omitted bucket units.
 - Quick keyword search and opaque cursor traversal, including two-page
@@ -298,13 +321,21 @@ execute; the successful rerun and final suite have separate result bundles.
 
 ## Remaining checks, including engines we have not sampled
 
-- Stack layout/control semantics and native rendering parity.
+- Stack layout/control semantics and native rendering parity. DebugLog and
+  DebugPause also remain unsupported: preflight currently rejects their
+  presence in any reachable callback graph, even in a branch guarded by the
+  disabled debug-mode flag. Do not mistake normal gameplay on cached engines
+  for coverage of these developer-facing functions. Paint (tutorial only) and
+  Print (preview only) belong to the separately scoped non-play modes, per
+  their [Paint](https://wiki.sonolus.com/engine-specs/functions/paint) and
+  [Print](https://wiki.sonolus.com/engine-specs/functions/print) contracts.
 - An independent audio-offset sign/unit reference: scheduled-audio docs require
   automatic BGM compensation but do not state the convention. Current tests
   establish the client's explicit wall-clock convention and internal timeline
   consistency, not parity with an independently observed native reference.
-- Optional/missing resources, callback-specific memory access and defaults,
-  and unknown enum values.
+- Optional/missing resources, block lengths, host-function callback legality,
+  remaining memory defaults, and unknown enum values. Memory-block callback
+  read/write permissions are now enforced separately from those open checks.
 - Runtime metadata lists a play-mode `skip` slot. The public Python framework
   describes it as a time skip in the current frame, but the play block docs
   omit its seek/resimulation behavior. It remains zero: intro fast-forward

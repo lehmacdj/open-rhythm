@@ -728,6 +728,110 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertThrowsError(try evaluate("GetPointed", [2000, .infinity, 0]))
   }
 
+  func testPlayMemoryCallbackAccessMatrix() throws {
+    // Independent transcription of the public play-block access tables.
+    let prepareOnly = [1000, 1006, 1007, 2001, 2003, 2004, 2005, 4001,
+      4006, 4007, 4101, 4106, 4107, 5000, 5001]
+    let sequential = [1003, 1004, 1005, 2000, 4002, 4102]
+    let always = [4000, 4004, 4005, 10000]
+    let readOnly = [1001, 1002, 2002, 3000, 4003, 4103]
+    for phase in EngineMemory.Callback.allCases {
+      let memory = EngineMemory()
+      memory.selectEntity(key: 2, index: 2)
+      memory.callback = phase
+      let allowed = Set(always
+        + (phase == .preprocess ? prepareOnly : [])
+        + ([.preprocess, .updateSequential, .touch].contains(phase)
+          ? sequential : []))
+      for block in prepareOnly + sequential + always + readOnly {
+        XCTAssertNoThrow(try memory.read(block: block, index: 0))
+        if allowed.contains(block) {
+          XCTAssertEqual(try memory.write(block: block, index: 0, value: 3), 3)
+          XCTAssertEqual(try memory.read(block: block, index: 0), 3)
+        } else {
+          XCTAssertThrowsError(try memory.write(block: block, index: 0, value: 3),
+            "\(phase) must not write \(block)")
+          XCTAssertEqual(memory.value(block: block, index: 0), 0)
+        }
+      }
+      XCTAssertThrowsError(try memory.read(block: 9999, index: 0))
+      XCTAssertThrowsError(try memory.write(block: 9999, index: 0, value: 1))
+    }
+  }
+
+  func testEveryMemoryMutationRespectsCallbackAccess() throws {
+    let bases = ["Set", "SetAdd", "SetSubtract", "SetMultiply", "SetDivide",
+      "SetPower", "SetMod", "SetRem", "IncrementPre", "IncrementPost",
+      "DecrementPre", "DecrementPost"]
+    for optimized in [false, true] {
+      for suffix in ["", "Shifted", "Pointed"] {
+        for base in bases {
+          let memory = EngineMemory()
+          memory.selectEntity(key: 0, index: 0)
+          memory.set(block: 2000, index: 0, value: 9)
+          memory.set(block: 4000, index: 0, value: 2000)
+          memory.set(block: 4000, index: 1, value: 0)
+          memory.callback = .updateParallel
+          var args: [Double] = switch suffix {
+          case "Shifted": [2000, 0, 0, 1]
+          case "Pointed": [4000, 0, 0]
+          default: [2000, 0]
+          }
+          if base.hasPrefix("Set") { args.append(2) }
+          let nodes = args.map { EngineDataNode(value: $0) } + [
+            EngineDataNode(function: base + suffix,
+              arguments: Array(args.indices))]
+          let interpreter = EngineInterpreter(nodes: nodes, memory: memory,
+            optimizeLiteralAddresses: optimized)
+          XCTAssertThrowsError(try interpreter.execute(nodeAt: args.count),
+            base + suffix)
+          XCTAssertEqual(memory.value(block: 2000, index: 0), 9)
+          memory.callback = .updateSequential
+          XCTAssertNoThrow(try interpreter.execute(nodeAt: args.count))
+        }
+      }
+    }
+    let memory = EngineMemory()
+    memory.selectEntity(key: 0, index: 0)
+    memory.set(block: 4000, index: 0, value: 12)
+    memory.callback = .updateParallel
+    XCTAssertThrowsError(try evaluate("Copy", [4000, 0, 2000, 0, 2],
+      memory: memory))
+    XCTAssertEqual(memory.value(block: 2000, index: 0), 0)
+    memory.callback = .touch
+    XCTAssertNoThrow(try evaluate("Copy", [4000, 0, 2000, 0, 2], memory: memory))
+    XCTAssertEqual(memory.value(block: 2000, index: 0), 12)
+  }
+
+  func testSpawnedMemoryViewsRejectDirectIndirectAndCopyAccess() throws {
+    let memory = EngineMemory()
+    memory.selectEntity(key: 9, index: nil)
+    memory.callback = .updateSequential
+    for block in [4001, 4002, 4003, 4005] {
+      XCTAssertThrowsError(try evaluate("Get", [Double(block), 0], memory: memory))
+      XCTAssertThrowsError(try evaluate("GetShifted", [Double(block), 0, 0, 1],
+        memory: memory))
+      memory.set(block: 4000, index: 0, value: Double(block))
+      XCTAssertThrowsError(try evaluate("GetPointed", [4000, 0, 0], memory: memory))
+      XCTAssertThrowsError(try evaluate("GetPointed", [Double(block), 0, 0],
+        memory: memory), "The pointer storage must also be accessible")
+      XCTAssertThrowsError(try evaluate("Copy", [Double(block), 0, 4000, 2, 1],
+        memory: memory))
+      XCTAssertThrowsError(try evaluate("Set", [Double(block), 0, 1], memory: memory))
+    }
+    for block in [4000, 4004, 10000] {
+      XCTAssertEqual(try evaluate("Set", [Double(block), 0, 7], memory: memory), 7)
+      XCTAssertEqual(try evaluate("Get", [Double(block), 0], memory: memory), 7)
+    }
+    for block in [4006, 4007] {
+      XCTAssertEqual(try evaluate("Get", [Double(block), 0], memory: memory), 0,
+        "Do not infer restrictions beyond the Spawn contract")
+    }
+    // A spawned entity can still read the arrays for original level entities.
+    memory.set(block: 4102, index: 31, value: 42)
+    XCTAssertEqual(try evaluate("Get", [4102, 31], memory: memory), 42)
+  }
+
   func testLoopReturnsAndDoWhileExecutesBeforeCondition() throws {
     let memory = EngineMemory()
     let nodes = [EngineDataNode(value: 2000), EngineDataNode(value: 0),

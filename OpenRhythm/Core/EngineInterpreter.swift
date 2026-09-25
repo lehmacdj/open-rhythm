@@ -5,6 +5,7 @@ enum EngineInterpreterError: LocalizedError {
   case invalidArguments(String)
   case unsupportedFunction(String)
   case operationLimitExceeded
+  case invalidMemoryAccess(block: Int, callback: String, write: Bool)
 
   var errorDescription: String? {
     switch self {
@@ -16,6 +17,9 @@ enum EngineInterpreterError: LocalizedError {
       "The engine function \(function) is not implemented."
     case .operationLimitExceeded:
       "The engine exceeded the operation limit for one callback."
+    case .invalidMemoryAccess(let block, let callback, let write):
+      "The engine cannot \(write ? "write" : "read") memory block \(block) "
+        + "during \(callback)."
     }
   }
 }
@@ -31,11 +35,58 @@ struct EmptyEngineRuntimeHost: EngineRuntimeHost {
 }
 
 final class EngineMemory {
+  enum Callback: String, CaseIterable {
+    case preprocess, spawnOrder, shouldSpawn, initialize
+    case updateSequential, touch, updateParallel, terminate
+  }
+
+  // Nil is reserved for host bookkeeping and standalone interpreter tests.
+  // Engine callbacks must always establish a context before evaluation.
+  var callback: Callback?
   private var rom = [Double]()
   private var blocks = [Int: [Int: Double]]()
   private var entityBlocks = [Int: [Int: [Int: Double]]]()
   private var entityKey: Int?
   private var entityIndex: Int?
+
+  private func validate(block: Int, write: Bool) throws {
+    guard let callback else { return }
+    let writable: Bool
+    switch block {
+    case 1000, 1006, 1007, 2001, 2003...2005, 4001, 4006, 4007,
+      4101, 4106, 4107, 5000, 5001:
+      writable = callback == .preprocess
+    case 1003...1005, 2000, 4002, 4102:
+      writable = callback == .preprocess || callback == .updateSequential
+        || callback == .touch
+    case 4000, 4004, 4005, 10000:
+      writable = true
+    case 1001, 1002, 2002, 3000, 4003, 4103:
+      writable = false
+    default:
+      throw EngineInterpreterError.invalidMemoryAccess(
+        block: block, callback: callback.rawValue, write: write)
+    }
+    // Spawn explicitly excludes these four level-backed blocks. Do not
+    // infer additional restrictions from a spawned entity's lack of input.
+    let unavailable = entityIndex == nil
+      && ((4001...4003).contains(block) || block == 4005)
+    guard !unavailable, !write || writable else {
+      throw EngineInterpreterError.invalidMemoryAccess(
+        block: block, callback: callback.rawValue, write: write)
+    }
+  }
+
+  func read(block: Int, index: Int) throws -> Double {
+    try validate(block: block, write: false)
+    return value(block: block, index: index)
+  }
+
+  @discardableResult
+  func write(block: Int, index: Int, value: Double) throws -> Double {
+    try validate(block: block, write: true)
+    return set(block: block, index: index, value: value)
+  }
 
   /// A copy-on-write snapshot of preparation, including engine-owned data.
   /// The returned closure belongs to the runtime, not to this memory object.
@@ -313,14 +364,14 @@ final class EngineInterpreter {
       throw EngineInterpreterError.operationLimitExceeded
     }
     operationCount += 2
-    let before = memory.value(block: address.block, index: address.index)
+    let before = try memory.read(block: address.block, index: address.index)
     let result: Double
     switch operation {
     case .get: return before
     case .incrementPre, .incrementPost, .decrementPre, .decrementPost:
       let increment = operation == .incrementPre || operation == .incrementPost
       result = before + (increment ? 1 : -1)
-      memory.set(block: address.block, index: address.index, value: result)
+      try memory.write(block: address.block, index: address.index, value: result)
       let post = operation == .incrementPost || operation == .decrementPost
       return post ? result : before
     default:
@@ -336,7 +387,7 @@ final class EngineInterpreter {
       default: result = operand
       }
     }
-    return memory.set(block: address.block, index: address.index, value: result)
+    return try memory.write(block: address.block, index: address.index, value: result)
   }
 
   // Keep recursive dispatch frames small enough for iOS's main-thread stack.
@@ -558,9 +609,11 @@ final class EngineInterpreter {
         throw EngineInterpreterError.operationLimitExceeded
       }
       operationCount += count
-      let copied = (0..<count).map { memory.value(block: a[0], index: a[1] + $0) }
+      let copied = try (0..<count).map {
+        try memory.read(block: a[0], index: a[1] + $0)
+      }
       for (offset, value) in copied.enumerated() {
-        memory.set(block: a[2], index: a[3] + offset, value: value)
+        try memory.write(block: a[2], index: a[3] + offset, value: value)
       }
       return 0
     default:
@@ -576,19 +629,19 @@ final class EngineInterpreter {
     switch operation {
     case .`get`:
       let address = try memoryAddress(arguments, function: function)
-      return memory.value(block: address.block, index: address.index)
+      return try memory.read(block: address.block, index: address.index)
     case .`getShifted`:
       try require(arguments, count: 4, function: function)
       let values = try values(arguments)
-      return memory.value(
+      return try memory.read(
         block: try integer(values[0], function: function),
         index: try integer(values[1] + values[2] * values[3], function: function)
       )
     case .`incrementPost`, .`decrementPost`, .`incrementPre`, .`decrementPre`:
       let address = try memoryAddress(arguments, function: function)
-      let before = memory.value(block: address.block, index: address.index)
+      let before = try memory.read(block: address.block, index: address.index)
       let after = before + (function.hasPrefix("Increment") ? 1 : -1)
-      memory.set(block: address.block, index: address.index, value: after)
+      try memory.write(block: address.block, index: address.index, value: after)
       // Sonolus names refer to which value is returned, not C-style operators.
       return function.hasSuffix("Post") ? after : before
     default:
@@ -605,14 +658,14 @@ final class EngineInterpreter {
     case .`setShifted`:
       try require(arguments, count: 5, function: function)
       let v = try values(arguments)
-      return memory.set(block: try integer(v[0], function: function),
+      return try memory.write(block: try integer(v[0], function: function),
         index: try integer(v[1] + v[2] * v[3], function: function), value: v[4])
     case .`set`, .`setAdd`, .`setMultiply`, .`setSubtract`, .`setDivide`, .`setPower`:
       try require(arguments, count: 3, function: function)
       let block = try integer(evaluate(arguments[0]), function: function)
       let index = try integer(evaluate(arguments[1]), function: function)
       let address = (block: block, index: index)
-      let current = memory.value(block: address.block, index: address.index)
+      let current = try memory.read(block: address.block, index: address.index)
       let operand = try evaluate(arguments[2])
       let result = switch function {
       case "SetAdd": current + operand
@@ -622,7 +675,7 @@ final class EngineInterpreter {
       case "SetPower": pow(current, operand)
       default: operand
       }
-      return memory.set(
+      return try memory.write(
         block: address.block,
         index: address.index,
         value: result
@@ -776,17 +829,17 @@ final class EngineInterpreter {
       index = try integer(a[1] + a[2] * a[3], function: function)
     } else if suffix == "Pointed" {
       guard index < Int.max else { throw EngineInterpreterError.invalidArguments(function) }
-      let targetBlock = memory.value(block: block, index: index)
-      let pointerIndex = memory.value(block: block, index: index + 1)
+      let targetBlock = try memory.read(block: block, index: index)
+      let pointerIndex = try memory.read(block: block, index: index + 1)
       let targetIndex = pointerIndex + (try evaluate(arguments[2]))
       block = try integer(targetBlock, function: function)
       index = try integer(targetIndex, function: function)
     }
-    let old = memory.value(block: block, index: index)
+    let old = try memory.read(block: block, index: index)
     if base == "Get" { return old }
     if !writes {
       let value = old + (base.hasPrefix("Increment") ? 1 : -1)
-      memory.set(block: block, index: index, value: value)
+      try memory.write(block: block, index: index, value: value)
       return base.hasSuffix("Post") ? value : old
     }
     let operand = try evaluate(arguments[addressCount])
@@ -805,7 +858,7 @@ final class EngineInterpreter {
         ? remainder + operand : remainder
     default: throw EngineInterpreterError.unsupportedFunction(function)
     }
-    return memory.set(block: block, index: index, value: value)
+    return try memory.write(block: block, index: index, value: value)
   }
 
   private func unary(
