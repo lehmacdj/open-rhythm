@@ -32,6 +32,16 @@ suite passed all 254 tests, including six cached-chart probes, with no failures
 or skips. The 03:33 normal simulator build passes. No device testing was used;
 the broader API-coverage gate remains open.
 
+Initial-memory follow-up: an engine-independent regression checks complete
+defined play-memory blocks, samples their defaults from inside preprocessing,
+and verifies restoration after mutation/restart for two entities. Independent
+review corrected one test assumption: Temporary Memory's initial contents are
+unpredictable by contract and must not be asserted as zero. No production
+default required changing. The September 25 03:40 simulator run passed all
+255 tests with no failures or skips, and the 03:45 normal build passes. This
+does not close stack-layout, resource-configuration, or physical validation
+gaps; see COMPATIBILITY.md for the exact scope and evidence.
+
 Memory API checkpoint: callback permissions, declared block bounds and Get's
 zero-read fallback are implemented and independently reviewed. The September
 25 02:39 simulator run passed 240 tests (including six cached-chart probes);
@@ -471,6 +481,10 @@ model level, checking that future judgments and spawned entities do not leak.
    must have usable HTTP(S) locators; absent ROM remains supported. Both online
    and offline playback perform unsupported-function preflight. Downloads may
    still archive an unsupported engine, but cannot play it through basic lanes.
+   Engine option categories are another confirmed gap: the public
+   `optionCategories` names/titles are not yet decoded or used to group the
+   settings controls. Add grouping while preserving runtime option indices
+   and the user's per-engine persistence policy.
    Skin mode selection is now
    honored, but exact native rendering parity is not claimed. Unsupported
    functions are surfaced before music rather than assumed harmless. See the

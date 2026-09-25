@@ -5,6 +5,96 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testPlayMemoryInitialValuesPrecedeCallbacksAndSurviveRestart() throws {
+    // Expected values come from the public play-block tables, not a sampled
+    // engine's initialization code. Check full defined blocks, including zeros.
+    // Temporary Memory has unpredictable initial values by contract; neither
+    // callback selection nor restart promises to restore its scratch contents.
+    let identity: [Double] = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
+    let background: [Double] = [-2,-0.8, -2,0.8, 2,0.8, 2,-0.8]
+    let visibility: [Double] = [1,0.9, 0.8,0.7, 0.6,0.5, 0.4,0.3, 0.2,0.1]
+    func zeros(_ count: Int) -> [Double] { Array(repeating: 0, count: count) }
+    var data = zeros(64)
+    data[3] = 7
+    data[35] = 9
+    let shared: [(Int, [Double])] = [
+      (1000, [1,2,0.02,-0.03,0,-1.8,1.7,-0.9,0.8]),
+      (1001, zeros(5)), (1002, []), (1003, identity), (1004, identity),
+      (1005, background), (1006, zeros(80)), (1007, visibility),
+      (2000, zeros(4096)), (2001, zeros(4096)), (2002, [0.25,0.75]),
+      (2003, zeros(6)), (2004, zeros(12)),
+      (2005, [0,0,0,0,0,0,1000,1000]), (3000, [1.5,-2]),
+      (4101, data), (4102, zeros(64)), (4103, [0,0,0,1,1,0]),
+      (4106, zeros(2)), (4107, zeros(8)), (5000, zeros(8)), (5001, [1,1])
+    ]
+    func entityBlocks(_ entity: Int) -> [(Int, [Double])] {
+      [(4000, zeros(64)), (4001, Array(data[(entity * 32)..<(entity * 32 + 32)])),
+       (4002, zeros(32)), (4003, [Double(entity),Double(entity),0]),
+       (4004, [0]), (4005, [0,0,-1,0,0]), (4006, [0]), (4007, zeros(4))]
+    }
+    let b = RuntimeNodeBuilder()
+    // Observe every nonzero default and each block's boundary from inside
+    // preprocessing, before any engine writes can mask a missing host default.
+    let sampled = (shared + entityBlocks(0)).flatMap { block, values in
+      values.indices.filter { $0 == 0 || $0 == values.count - 1 || values[$0] != 0 }
+        .map { (block, $0) }
+    }
+    let capture = b.call("Execute", sampled.enumerated().map { slot, address in
+      b.call("ExportValue", [b.value(Double(slot)), b.call("Get", [
+        b.value(Double(address.0)), b.value(Double(address.1))])])
+    })
+    let engine = try b.engine(archetypes: (0..<2).map { index in
+      ["name": "Probe\(index)", "hasInput": true,
+       "imports": [["name": "value", "index": 3]],
+       "exports": sampled.indices.map { "value\($0)" },
+       "preprocess": ["index": capture]]
+    }, buckets: [["sprites": []]])
+    let rom = Data([0x00,0x00,0xc0,0x3f, 0x00,0x00,0x00,0xc0])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: (0..<2).map { index in
+        LevelEntity(archetype: "Probe\(index)", name: nil, data: [
+          LevelEntityData(name: "value", value: index == 0 ? 7 : 9, ref: nil)])
+      }), options: [0.25,0.75], aspectRatio: 2, skinSpriteIDs: [],
+      effectClipIDs: [], particleEffectIDs: [], rom: rom,
+      uiConfiguration: visibility, safeArea: [-1.8,1.7,-0.9,0.8],
+      inputOffset: -0.03, audioOffset: 0.02, debugMode: true,
+      backgroundQuad: background)
+    for _ in 0..<2 {
+      for entity in 0..<2 {
+        runtime.memory.selectEntity(key: entity, index: entity)
+        let blocks = shared + entityBlocks(entity)
+        let expected = Dictionary(uniqueKeysWithValues: blocks)
+        for (block, values) in blocks {
+          XCTAssertEqual(values.indices.map {
+            runtime.memory.value(block: block, index: $0)
+          }, values, "Initial block \(block), entity \(entity)")
+        }
+        for (slot, address) in sampled.enumerated() {
+          XCTAssertEqual(runtime.host.exports[entity]?[slot],
+            expected[address.0]?[address.1],
+            "Preprocess observed block \(address.0), index \(address.1)")
+        }
+      }
+      try runtime.update(at: 0.5)
+      // Mutate the prepared state through host bookkeeping. Restart must
+      // restore defaults as well as explicit engine preprocessing writes.
+      for (block, values) in shared where block != 3000 {
+        for index in values.indices {
+          runtime.memory.set(block: block, index: index, value: 123)
+        }
+      }
+      for entity in 0..<2 {
+        runtime.memory.selectEntity(key: entity, index: entity)
+        for (block, values) in entityBlocks(entity) {
+          for index in values.indices {
+            runtime.memory.set(block: block, index: index, value: 123)
+          }
+        }
+      }
+      runtime.restart()
+    }
+  }
+
   func testScheduledLifeRejectsEveryNonPreprocessingCallback() throws {
     for callback in EngineMemory.Callback.allCases {
       let builder = RuntimeNodeBuilder()
@@ -3126,11 +3216,12 @@ private final class RuntimeNodeBuilder {
     return nodes.count - 1
   }
 
-  func engine(archetypes: [[String: Any]], sprites: [[String: Any]] = [])
+  func engine(archetypes: [[String: Any]], sprites: [[String: Any]] = [],
+    buckets: [[String: Any]] = [])
     throws -> EnginePlayData {
     let data = try JSONSerialization.data(withJSONObject: [
       "skin": ["sprites": sprites], "effect": ["clips": []],
-      "particle": ["effects": []], "buckets": [],
+      "particle": ["effects": []], "buckets": buckets,
       "nodes": nodes, "archetypes": archetypes
     ])
     return try JSONDecoder().decode(EnginePlayData.self, from: data)

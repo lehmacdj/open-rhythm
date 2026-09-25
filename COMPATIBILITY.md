@@ -11,6 +11,30 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Initial play-memory conformance now has a table-driven regression independent
+  of the sampled engines. It checks complete runtime, level, archetype, ROM,
+  entity and array blocks after construction, including identity transforms,
+  supplied environment/background/UI/option data, waiting entity identities,
+  imported values, zero-filled storage, 1,000 initial/max life, archetype score
+  weight 1 and input bucket -1. Nonzero values and block boundaries are also
+  exported from inside preprocessing, so engine initialization cannot conceal
+  missing host defaults. Mutation followed by restart checks restored state for
+  two distinct entities. Public sources include the
+  [play-block tables](https://wiki.sonolus.com/engine-specs/play-blocks/overview),
+  [skin transform](https://wiki.sonolus.com/engine-specs/play-blocks/runtime-skin-transform),
+  [life](https://wiki.sonolus.com/engine-specs/play-blocks/level-life), and
+  [input](https://wiki.sonolus.com/engine-specs/play-blocks/entity-input).
+  [Temporary Memory](https://wiki.sonolus.com/engine-specs/play-blocks/temporary-memory)
+  is deliberately excluded: its initial contents are unpredictable, not
+  contractually zero. Independent review caught and corrected that test
+  assumption; follow-up review found no further issue. No production default
+  needed changing. This is initialization/restart evidence, not stack-function
+  support or a claim about all future/dynamic memory values.
+  The September 25 03:40 simulator suite passed all 255 tests, with no failures
+  or skips (`RunAllTests/E9CBE3FC-C140-46B8-B3B4-8651D6E909C1.txt`), including the
+  six cached-chart probes. The observer timed out after 300 seconds; the same
+  run then supplied the full summary and `TEST FINISHED` marker. The 03:45
+  normal simulator build passes. Physical testing remains deferred.
 - Server runtime bundles require the configuration resource declared by
   [EngineItem](https://wiki.sonolus.com/custom-server-specs/misc/engine-item).
   Missing presentation no longer silently selects the basic lane player and
@@ -454,6 +478,11 @@ execute; the successful rerun and final suite have separate result bundles.
   engine playback. Missing explicit `UseItem` overrides and malformed declared
   ROM locators now fail clearly rather than silently selecting defaults.
   Remaining resource/default conformance is not closed by these checks.
+  In particular, [option-category definitions](
+  https://wiki.sonolus.com/engine-specs/resources/engine-configuration-option-category)
+  supply a name and title, but EngineConfiguration does not yet decode them
+  and the settings panel ignores each option's category. This requires grouping
+  the controls without reordering the runtime's option-memory indices.
 - Runtime metadata lists a play-mode `skip` slot. The public Python framework
   describes it as a time skip in the current frame, but the play block docs
   omit its seek/resimulation behavior. It remains zero: intro fast-forward
