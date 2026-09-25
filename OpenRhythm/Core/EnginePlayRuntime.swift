@@ -193,15 +193,20 @@ struct EngineTouchPool<Key: Hashable> {
   private var completed = [EngineTouch]()
   private var nextID = 1
   private var playbackGeneration: Int?
+  private var inputGeneration: Int?
 
   /// A retry has a new chart clock and runtime. A finger held across it is
   /// not a new press; ignore that contact until UIKit reports a fresh begin.
-  mutating func beginPlayback(generation: Int) {
-    guard playbackGeneration != generation else { return }
+  mutating func beginPlayback(generation: Int, inputGeneration: Int = 0) {
+    guard playbackGeneration != generation
+      || self.inputGeneration != inputGeneration else { return }
+    // A debug pause clears contacts but preserves IDs within this runtime.
+    // Reusing an old ID could attach a new finger to an existing hold.
+    if playbackGeneration != generation { nextID = 1 }
     playbackGeneration = generation
+    self.inputGeneration = inputGeneration
     contacts.removeAll(keepingCapacity: true)
     completed.removeAll(keepingCapacity: true)
-    nextID = 1
   }
 
   var touches: [EngineTouch] {
@@ -276,6 +281,7 @@ final class EnginePlayRuntime {
     playbackSpeed: Double = 1,
     inputOffset: Double = 0,
     audioOffset: Double = 0,
+    debugMode: Bool = false,
     backgroundQuad: [Double]? = nil,
     optimizeLiteralAddresses: Bool = true
   ) throws {
@@ -327,6 +333,7 @@ final class EnginePlayRuntime {
     inputCount = level.entities.filter {
       archetypes[$0.archetype].map { engine.archetypes[$0].hasInput } ?? false
     }.count
+    memory.set(block: 1000, index: 0, value: debugMode ? 1 : 0)
     memory.set(block: 1000, index: 1, value: aspectRatio)
     memory.set(block: 1000, index: 2, value: audioOffset)
     memory.set(block: 1000, index: 3, value: inputOffset)

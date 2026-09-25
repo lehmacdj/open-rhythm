@@ -213,10 +213,12 @@ protocol EngineEffectVoice: AnyObject {
   func play(after delay: Double, looped: Bool)
   func stop(after delay: Double)
   func stop()
+  func pause()
+  func resume()
 }
 
 @MainActor
-private final class NativeEffectVoice: EngineEffectVoice {
+final class NativeEffectVoice: EngineEffectVoice {
   private let player = AVAudioPlayerNode()
   private let buffer: AVAudioPCMBuffer
   private var generation = 0
@@ -249,13 +251,22 @@ private final class NativeEffectVoice: EngineEffectVoice {
 
   func start() { if !player.isPlaying { player.play() } }
 
+  func pause() {
+    stopTask?.cancel()
+    stopTask = nil
+    player.pause()
+  }
+
+  func resume() { if isPlaying { start() } }
+
   func stop(after delay: Double) {
     stopTask?.cancel()
     if delay <= 0 { stop(); return }
     let current = generation
     stopTask = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-      guard let self, self.generation == current else { return }
+      guard !Task.isCancelled, let self,
+        self.generation == current else { return }
       self.stop()
     }
   }
@@ -352,6 +363,8 @@ final class EngineAudioPlayback {
   private var players = [Int: (clipID: Int, voice: any EngineEffectVoice)]()
   private var lastPlayed = [Int: Double]()
   private var nextID = 0
+  private var isPaused = false
+  private var pausedLoopCommands = [EngineLoopCommand]()
 
   convenience init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
     guard !engine.effect.clips.isEmpty else {
@@ -398,10 +411,42 @@ final class EngineAudioPlayback {
 
   func start() throws { try nativeBank?.start() }
 
+  /// Freeze active samples, cancel wall-clock reservations, and retain the
+  /// logical schedule. Resume only once the BGM clock is advancing again.
+  func pause(at time: Double) {
+    guard !isPaused else { return }
+    isPaused = true
+    var retained = [Pending]()
+    for event in pending {
+      if event.command.time <= time, players[event.id] != nil {
+        // A reserved voice may have started since the last display update.
+        // Promote it to active ownership instead of replaying its beginning.
+        lastPlayed[event.command.clipID] = event.command.time
+      } else {
+        recycle(event.id, stop: true)
+        retained.append(event)
+      }
+    }
+    pending = retained
+    for player in players.values { player.voice.pause() }
+    for id in Array(loops.keys) {
+      guard let loop = loops[id] else { continue }
+      if loop.start > time { releaseLoopVoice(id) }
+      else {
+        loop.voice?.pause()
+        loops[id]?.scheduledEnd = nil
+      }
+    }
+    nativeBank?.engine.pause()
+  }
+
   func update(
     _ commands: [EngineAudioCommand], at time: Double, advancing: Bool = true,
     loopCommands: [EngineLoopCommand] = []
   ) throws {
+    guard loopCommands.count <= 16_384 - pausedLoopCommands.count else {
+      throw EngineInterpreterError.operationLimitExceeded
+    }
     guard commands.count <= 16_384 - pending.count else {
       throw EngineInterpreterError.operationLimitExceeded
     }
@@ -417,11 +462,22 @@ final class EngineAudioPlayback {
       $0.command.time == $1.command.time ? $0.id < $1.id
         : $0.command.time < $1.command.time
     }
+    var effectiveLoopCommands = loopCommands
+    if isPaused {
+      pausedLoopCommands.append(contentsOf: loopCommands)
+      guard advancing else { return }
+      try nativeBank?.start()
+      for player in players.values { player.voice.resume() }
+      for loop in loops.values { loop.voice?.resume() }
+      isPaused = false
+      effectiveLoopCommands = pausedLoopCommands
+      pausedLoopCommands.removeAll(keepingCapacity: true)
+    }
     if !advancing {
       // Native audio clocks do not pause when AVPlayer buffers. Cancel future
       // starts and retain their commands until the BGM clock resumes.
       for event in pending { recycle(event.id, stop: true) }
-      try updateLoops(loopCommands, at: time, advancing: false)
+      try updateLoops(effectiveLoopCommands, at: time, advancing: false)
       return
     }
     if let nativeBank, !nativeBank.engine.isRunning {
@@ -432,7 +488,7 @@ final class EngineAudioPlayback {
       for id in Array(loops.keys) { releaseLoopVoice(id) }
       try nativeBank.start()
     }
-    try updateLoops(loopCommands, at: time, advancing: true)
+    try updateLoops(effectiveLoopCommands, at: time, advancing: true)
     var prior = lastPlayed
     var retained = [Pending]()
     for event in pending {
@@ -549,6 +605,8 @@ final class EngineAudioPlayback {
   }
 
   func stop() {
+    isPaused = false
+    pausedLoopCommands.removeAll()
     for id in Array(loops.keys) { releaseLoopVoice(id) }
     loops.removeAll()
     for id in Array(players.keys) { recycle(id, stop: true) }

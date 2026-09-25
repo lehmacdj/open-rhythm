@@ -5,6 +5,182 @@ import AVFoundation
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  func testDebugFunctionsGateSideEffectsBoundLogsAndRestorePreprocessing() throws {
+    let host = makeHost()
+    XCTAssertEqual(try host.call(function: "DebugLog", arguments: [3]), 0)
+    XCTAssertEqual(try host.call(function: "DebugPause", arguments: []), 0)
+    XCTAssertTrue(host.debugLog.isEmpty)
+    XCTAssertFalse(host.takeDebugPause())
+    host.memory.set(block: 1000, index: 0, value: 1)
+    XCTAssertThrowsError(try host.call(function: "DebugLog", arguments: []))
+    XCTAssertThrowsError(try host.call(function: "DebugPause", arguments: [1]))
+    _ = try host.call(function: "DebugLog", arguments: [42])
+    _ = try host.call(function: "DebugPause", arguments: [])
+    let restore = host.makeRestorePoint()
+    XCTAssertTrue(host.takeDebugPause())
+    XCTAssertFalse(host.takeDebugPause())
+    for value in 0..<300 {
+      _ = try host.call(function: "DebugLog", arguments: [Double(value)])
+    }
+    XCTAssertEqual(host.debugLog.count, 256)
+    XCTAssertEqual(host.debugLog.first?.value, "44.0")
+    XCTAssertEqual(host.debugLog.last?.value, "299.0")
+    XCTAssertEqual(Set(host.debugLog.map(\.id)).count, 256)
+    _ = try host.call(function: "DebugLog", arguments: [.nan])
+    XCTAssertEqual(host.debugLog.last?.value, "nan")
+    restore()
+    XCTAssertEqual(host.debugLog.map(\.value), ["42.0"])
+    XCTAssertTrue(host.takeDebugPause())
+  }
+
+  func testDebugGuardedGraphsPreflightAndUseEffectiveEnvironmentOnRestart() throws {
+    let b = RuntimeNodeBuilder()
+    let log = b.call("DebugLog", [b.value(8)])
+    let pause = b.call("DebugPause", [])
+    let debug = b.call("Get", [b.value(1000), b.value(0)])
+    let guarded = b.call("If", [debug, b.call("Execute", [log, pause]), b.value(0)])
+    let engine = try b.engine(archetypes: [["name": "Probe", "hasInput": false,
+      "imports": [], "exports": [], "preprocess": ["index": guarded],
+      "updateSequential": ["index": guarded]]])
+    XCTAssertTrue(try engine.unsupportedFunctions().isEmpty)
+    for enabled in [false, true] {
+      let runtime = try EnginePlayRuntime(engine: engine,
+        level: LevelData(bgmOffset: 0, entities: [
+          LevelEntity(archetype: "Probe", name: nil, data: [])]), options: [],
+        aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [],
+        debugMode: enabled)
+      XCTAssertEqual(runtime.host.debugLog.count, enabled ? 1 : 0)
+      XCTAssertEqual(runtime.host.takeDebugPause(), enabled)
+      try runtime.update(at: 1)
+      XCTAssertEqual(runtime.host.debugLog.count, enabled ? 2 : 0)
+      XCTAssertEqual(runtime.host.takeDebugPause(), enabled)
+      runtime.restart()
+      XCTAssertEqual(runtime.host.debugLog.count, enabled ? 1 : 0)
+      XCTAssertEqual(runtime.host.takeDebugPause(), enabled)
+    }
+    for supplied in [false, true] {
+      let override = b.call("Set", [b.value(1000), b.value(0),
+        b.value(supplied ? 0 : 1)])
+      let preprocess = b.call("Execute", [override, guarded])
+      let overridingEngine = try b.engine(archetypes: [["name": "Probe",
+        "hasInput": false, "imports": [], "exports": [],
+        "preprocess": ["index": preprocess]]])
+      let runtime = try EnginePlayRuntime(engine: overridingEngine,
+        level: LevelData(bgmOffset: 0, entities: [
+          LevelEntity(archetype: "Probe", name: nil, data: [])]), options: [],
+        aspectRatio: 2, skinSpriteIDs: [], effectClipIDs: [], particleEffectIDs: [],
+        debugMode: supplied)
+      XCTAssertEqual(runtime.host.isDebugMode, !supplied)
+      XCTAssertEqual(runtime.host.takeDebugPause(), !supplied)
+      XCTAssertEqual(runtime.host.debugLog.count, supplied ? 0 : 1)
+    }
+  }
+
+  func testPauseClearsContactsWithoutReusingRuntimeTouchIDs() {
+    var pool = EngineTouchPool<Int>()
+    let point = EnginePoint(x: 0, y: 0)
+    pool.beginPlayback(generation: 1)
+    pool.receive(key: 1, position: point, time: 0, started: true, ended: false)
+    let first = pool.touches.first?.id
+    pool.beginPlayback(generation: 1, inputGeneration: 1)
+    pool.receive(key: 1, position: point, time: 1, started: false, ended: false)
+    XCTAssertTrue(pool.touches.isEmpty)
+    pool.receive(key: 2, position: point, time: 1, started: true, ended: false)
+    XCTAssertNotEqual(pool.touches.first?.id, first)
+  }
+
+  @MainActor
+  func testNativeEffectPauseRetainsSamplePosition() throws {
+    for looped in [false, true] {
+      let engine = AVAudioEngine()
+      defer { engine.stop() }
+      let format = try XCTUnwrap(AVAudioFormat(
+        standardFormatWithSampleRate: 48000, channels: 1))
+      let source = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: 4096))
+      source.frameLength = 4096
+      for frame in 0..<4096 {
+        source.floatChannelData![0][frame] = Float(frame) / 8192
+      }
+      let voice = NativeEffectVoice(engine: engine, buffer: source)
+      try engine.enableManualRenderingMode(.offline, format: format,
+        maximumFrameCount: 512)
+      let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: 512))
+      try engine.start()
+      voice.play(after: 0, looped: looped)
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      XCTAssertEqual(output.floatChannelData![0][511], Float(511) / 8192,
+        accuracy: 1e-6)
+      voice.pause()
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      XCTAssertTrue((0..<512).allSatisfy {
+        abs(output.floatChannelData![0][$0]) < 1e-6
+      })
+      engine.pause()
+      try engine.start()
+      voice.resume()
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      XCTAssertEqual(output.floatChannelData![0][0], Float(512) / 8192,
+        accuracy: 1e-6, "Resume continues the sample; it must not replay or skip")
+      voice.stop()
+    }
+  }
+
+  @MainActor
+  func testPauseRetainsReservationThatBecameDueBetweenFrames() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([EngineAudioCommand(clipID: 1, time: 0.04,
+      minimumDistance: 0.1)], at: 0)
+    let active = try XCTUnwrap(voices.first { !$0.delays.isEmpty })
+    audio.pause(at: 0.05)
+    XCTAssertEqual(active.stopCount, 0)
+    XCTAssertEqual(active.pauseCount, 1)
+    try audio.update([EngineAudioCommand(clipID: 1, time: 0.06,
+      minimumDistance: 0.1)], at: 0.05)
+    XCTAssertEqual(active.resumeCount, 1)
+    XCTAssertEqual(voices.flatMap(\.delays), [0.04],
+      "Resume must neither replay a due reservation nor forget minimum distance")
+    audio.stop()
+  }
+
+  @MainActor
+  func testDebugPausePreservesActiveSamplesAndReschedulesFutureAudio() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([
+      EngineAudioCommand(clipID: 1, time: 0, minimumDistance: 0),
+      EngineAudioCommand(clipID: 1, time: 0.4, minimumDistance: 0)
+    ], at: 0, loopCommands: [
+      .start(id: 1, clipID: 1, time: 0), .stop(id: 1, time: 0.5),
+      .start(id: 2, clipID: 1, time: 0.4)])
+    XCTAssertEqual(voices.flatMap(\.delays).count, 4)
+    audio.pause(at: 0.1)
+    XCTAssertEqual(voices.reduce(0) { $0 + $1.pauseCount }, 2)
+    XCTAssertEqual(voices.reduce(0) { $0 + $1.stopCount }, 2)
+    try audio.update([], at: 0.1, advancing: false)
+    XCTAssertEqual(voices.reduce(0) { $0 + $1.resumeCount }, 0)
+    try audio.update([], at: 0.1)
+    XCTAssertEqual(voices.reduce(0) { $0 + $1.resumeCount }, 2)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 6)
+    XCTAssertEqual(voices.flatMap(\.stopDelays).sorted(), [0.4, 0.5])
+    audio.pause(at: 0.2)
+    audio.stop()
+    let starts = voices.flatMap(\.delays).count
+    try audio.update([], at: 0.3)
+    XCTAssertEqual(voices.flatMap(\.delays).count, starts,
+      "Stop discards paused commands; they must not leak into another play")
+  }
+
   func testRuntimeTouchBoundsShrinkAndRestoreOnRestart() throws {
     let b = RuntimeNodeBuilder()
     let secondID = b.call("Get", [b.value(1002), b.value(15)])
@@ -2815,6 +2991,11 @@ private final class MockEffectVoice: EngineEffectVoice {
   var looping = [Bool]()
   var stopDelays = [Double]()
   var stopCount = 0
+  var pauseCount = 0
+  var resumeCount = 0
+
+  func pause() { pauseCount += 1 }
+  func resume() { resumeCount += 1 }
 
   func play(after delay: Double, looped: Bool) {
     delays.append(delay)

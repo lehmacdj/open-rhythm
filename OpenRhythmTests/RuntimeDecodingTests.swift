@@ -1660,6 +1660,10 @@ final class RuntimeDecodingTests: XCTestCase {
       from: Data("{}".utf8))
     XCTAssertEqual(legacy.inputOffsetMilliseconds, 0)
     XCTAssertEqual(legacy.visualOffsetMilliseconds, 0)
+    XCTAssertFalse(legacy.engineDebugMode)
+    XCTAssertTrue(try JSONDecoder().decode(GameplayPreferences.self,
+      from: JSONEncoder().encode(GameplayPreferences(engineDebugMode: true)))
+      .engineDebugMode)
     var settings = GameplayPreferences(inputOffsetMilliseconds: 300)
     XCTAssertEqual(settings.inputOffsetMilliseconds, 250)
     settings.inputOffsetMilliseconds = -.infinity

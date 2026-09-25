@@ -97,9 +97,15 @@ final class PlaybackClockTests: XCTestCase {
   }
 
   @MainActor
+  func testDebugPauseFreezesStartupPlayerAndTailClocksAcrossRestarts() async throws {
+    try await checkLiveClocks(nativePlayfield: false, debugPauseCheck: true)
+  }
+
+  @MainActor
   private func checkLiveClocks(nativePlayfield: Bool,
     softwareFallback: Bool = false, calibrateVisuals: Bool = false,
-    engineAdjustsAudioOffset: Bool = false) async throws {
+    engineAdjustsAudioOffset: Bool = false,
+    debugPauseCheck: Bool = false) async throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("live-clock-\(UUID())")
     try FileManager.default.createDirectory(at: directory,
@@ -129,6 +135,17 @@ final class PlaybackClockTests: XCTestCase {
        "nodes":[{"value":1000},{"value":2},{"func":"Get","args":[0,1]},
          {"value":0.02},{"func":"Add","args":[2,3]},
          {"func":"Set","args":[0,1,4]}]}
+      """# : debugPauseCheck ? #"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"buckets":[],
+       "archetypes":[{"name":"Debug","hasInput":true,
+         "imports":[],"exports":[],"preprocess":{"index":7}}],
+       "nodes":[{"value":1000},{"value":0},
+         {"func":"Get","args":[0,1]},{"value":42},
+         {"func":"DebugLog","args":[3]},
+         {"func":"DebugPause","args":[]},
+         {"func":"Execute","args":[4,5]},
+         {"func":"If","args":[2,6,1]}]}
       """# : #"""
       {"skin":{"sprites":[]},"effect":{"clips":[]},
        "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
@@ -148,13 +165,16 @@ final class PlaybackClockTests: XCTestCase {
     let model = GameplayModel(resultStore: ResultStore(rootURL: directory))
     model.prepare(bundle: RuntimeBundle(engine: engine,
       level: LevelData(bgmOffset: 0.25, entities: engineAdjustsAudioOffset
-        ? [LevelEntity(archetype: "Offset", name: nil, data: [])] : []), bgmURL: audio,
+        ? [LevelEntity(archetype: "Offset", name: nil, data: [])]
+        : debugPauseCheck
+          ? [LevelEntity(archetype: "Debug", name: nil, data: [])] : []), bgmURL: audio,
       isOffline: true, presentation: presentation), level: level,
       server: ServerDescriptor(id: "live-clock", name: "Fixture",
         baseURL: URL(string: "https://example.com")!), title: "Live clock fixture")
     let original = model.settings
     defer { model.stop(); model.settings = original }
-    model.settings = GameplayPreferences(recordTimingDiagnostics: true)
+    model.settings = GameplayPreferences(recordTimingDiagnostics: true,
+      engineDebugMode: debugPauseCheck)
     let size = CGSize(width: 800, height: 400)
     var window: UIWindow?
     var priorKeyWindow: UIWindow?
@@ -197,6 +217,17 @@ final class PlaybackClockTests: XCTestCase {
         XCTAssertEqual(model.currentTime, initial - 0.02, accuracy: 1e-9,
           "Preprocess must change the initial clock before intro analysis or seeking")
       }
+      if debugPauseCheck {
+        model.engineFrame(size: size, touches: [])
+        XCTAssertTrue(model.isDebugPaused)
+        XCTAssertTrue(model.isStartingPlayback)
+        XCTAssertEqual(model.debugLog.map(\.value), ["42.0"])
+        XCTAssertEqual(model.modifiedOptions.first {
+          $0.name == "Engine Debug Mode"
+        }?.value, "On")
+        try await checkPaused(model, size: size)
+        model.resumeFromDebugPause()
+      }
       let deadline = CACurrentMediaTime() + 8
       while model.phase == .playing,
         model.isStartingPlayback || model.currentTime < initial + 0.1 {
@@ -216,6 +247,24 @@ final class PlaybackClockTests: XCTestCase {
         effectiveOffset == 0 ? nil : String(format: "%+.0f ms", effectiveOffset * 1000))
       XCTAssertEqual(runtime.memory.value(block: 2002, index: 0), speed)
       XCTAssertEqual(runtime.host.timeline.bpm(at: 0), 60 * speed)
+      if debugPauseCheck {
+        let generation = model.playbackGeneration
+        let inputGeneration = model.inputGeneration
+        _ = try runtime.host.call(function: "DebugPause", arguments: [])
+        model.engineFrame(size: size, touches: [])
+        XCTAssertTrue(model.isDebugPaused)
+        XCTAssertEqual(model.playbackGeneration, generation,
+          "Pause must not invalidate playback observers or restart the runtime")
+        XCTAssertGreaterThan(model.inputGeneration, inputGeneration)
+        try await checkPaused(model, size: size)
+        model.resumeFromDebugPause()
+        let resumeTime = model.playbackTime
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertLessThan(model.playbackTime - resumeTime, 0.1,
+          "Paused wall time must never count as chart time")
+        XCTAssertTrue(model.engineRuntime === runtime)
+        XCTAssertFalse(model.isDebugPaused)
+      }
       var differences = [Double]()
       var frameSamples = Set<Double>()
       let start = CACurrentMediaTime()
@@ -273,6 +322,46 @@ final class PlaybackClockTests: XCTestCase {
       }
       print("Live clocks (native: \(nativePlayfield), software: \(softwareFallback)) \(speed)×: mean difference \(mean * 1000) ms, "
         + "max absolute \(maximum * 1000) ms, \(differences.count) samples")
+      if debugPauseCheck {
+        model.playbackEnded()
+        model.pauseForDebug()
+        let tailTime = model.playbackTime
+        try await checkPaused(model, size: size)
+        model.resumeFromDebugPause()
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertEqual(model.playbackTime - tailTime, 0.04, accuracy: 0.03,
+          "The post-audio clock must exclude the paused interval too")
+      }
+    }
+    if debugPauseCheck {
+      let oldRuntime = model.engineRuntime
+      model.settings.engineDebugMode = false
+      model.restart()
+      model.engineFrame(size: size, touches: [])
+      XCTAssertFalse(model.engineRuntime === oldRuntime,
+        "Debug mode is part of the prepared-runtime cache key")
+      XCTAssertFalse(model.isEngineDebugMode)
+      XCTAssertFalse(model.isDebugPaused)
+      XCTAssertTrue(model.debugLog.isEmpty)
+      model.pauseForDebug()
+      XCTAssertFalse(model.isDebugPaused)
+    }
+  }
+
+  @MainActor
+  private func checkPaused(_ model: GameplayModel, size: CGSize) async throws {
+    let clock = model.playbackTime
+    let frameTime = model.currentTime
+    let inputCount = model.engineRuntime?.resolvedInputCount
+    for _ in 0..<3 {
+      try await Task.sleep(for: .milliseconds(50))
+      model.engineFrame(size: size, touches: [])
+      XCTAssertEqual(model.phase, .playing)
+      XCTAssertEqual(model.playbackTime, clock)
+      XCTAssertEqual(model.inputTime(at: CACurrentMediaTime()), clock)
+      XCTAssertEqual(model.currentTime, frameTime)
+      XCTAssertEqual(model.engineRuntime?.resolvedInputCount, inputCount)
+      XCTAssertNil(model.frameTiming)
     }
   }
 

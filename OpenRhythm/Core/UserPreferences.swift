@@ -38,6 +38,7 @@ struct GameplayPreferences: Codable, Equatable {
   var engineOptions: [String: Double] = [:]
   var skinRenderMode = EngineSkinRenderMode.standard
   var recordTimingDiagnostics = false
+  var engineDebugMode = false
   var visualOffsetMilliseconds: Double = 0 {
     didSet {
       visualOffsetMilliseconds = Self.clampedInputOffset(visualOffsetMilliseconds)
@@ -61,7 +62,7 @@ struct GameplayPreferences: Codable, Equatable {
     engineOptions: [String: Double] = [:],
     skinRenderMode: EngineSkinRenderMode = .standard,
     inputOffsetMilliseconds: Double = 0, recordTimingDiagnostics: Bool = false,
-    visualOffsetMilliseconds: Double = 0) {
+    visualOffsetMilliseconds: Double = 0, engineDebugMode: Bool = false) {
     self.scoreDisplay = scoreDisplay
     self.noteSpeed = noteSpeed
     self.judgementDisplay = judgementDisplay
@@ -69,6 +70,7 @@ struct GameplayPreferences: Codable, Equatable {
     self.engineOptions = engineOptions
     self.skinRenderMode = skinRenderMode
     self.recordTimingDiagnostics = recordTimingDiagnostics
+    self.engineDebugMode = engineDebugMode
     self.inputOffsetMilliseconds = Self.clampedInputOffset(inputOffsetMilliseconds)
     self.visualOffsetMilliseconds = Self.clampedInputOffset(visualOffsetMilliseconds)
   }
@@ -77,6 +79,7 @@ struct GameplayPreferences: Codable, Equatable {
     case scoreDisplay, noteSpeed, judgementDisplay, scoreMode, engineOptions
     case skinRenderMode, inputOffsetMilliseconds, recordTimingDiagnostics
     case visualOffsetMilliseconds
+    case engineDebugMode
   }
 
   init(from decoder: Decoder) throws {
@@ -93,6 +96,8 @@ struct GameplayPreferences: Codable, Equatable {
       forKey: .skinRenderMode) ?? .standard
     recordTimingDiagnostics = try values.decodeIfPresent(Bool.self,
       forKey: .recordTimingDiagnostics) ?? false
+    engineDebugMode = try values.decodeIfPresent(Bool.self,
+      forKey: .engineDebugMode) ?? false
     inputOffsetMilliseconds = Self.clampedInputOffset(
       try values.decodeIfPresent(Double.self,
         forKey: .inputOffsetMilliseconds) ?? 0)

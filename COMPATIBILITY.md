@@ -11,6 +11,42 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- [DebugLog](https://wiki.sonolus.com/engine-specs/functions/debug-log) and
+  [DebugPause](https://wiki.sonolus.com/engine-specs/functions/debug-pause)
+  accept one and zero arguments respectively and return zero. A persistent
+  per-engine debug setting seeds RuntimeEnvironment before preprocessing;
+  host calls read the resulting flag, including engine preprocessing writes.
+  Reachable debug-guarded branches no longer fail unsupported-function preflight.
+  Log history is bounded to the latest 256 values (including nonfinite numeric
+  diagnostics), shown bottom-right and in the pause panel, and checkpointed
+  with preprocessing. Debug output stops intro skipping. Pause takes effect
+  at the completed frame/preparation boundary, preserves the runtime and
+  pending effects, freezes chart/input and EOF-tail time, and resumes without
+  counting the paused wall time. Touch generations prevent stale contacts
+  and preserve ID uniqueness within a runtime. Startup seeks may finish while
+  paused but cannot start music until resume. Restart restores preprocessing
+  logs/requests, and changing debug mode invalidates that prepared runtime.
+  Normal play leaves debug effects disabled; results record debug mode when on.
+  Public docs specify availability only in debug mode, not out-of-mode call
+  behavior, log capacity, or instruction-level suspension. Returning zero
+  without the side effect when disabled, bounded retention, and frame-boundary
+  pause are explicit client policies, not independently proven native parity.
+  Native AVAudioPlayerNode offline rendering verifies sample-continuous pause
+  and resume for one-shots and loops. Scheduler regressions cover future starts,
+  scheduled stops, and reservations becoming due between display updates.
+  Independent review identified that last edge case; the fix and regression
+  received a clean follow-up review. These simulator/offline checks do not
+  establish physical output latency or interruption behavior.
+  Verification: September 25 03:02 simulator suite, 248 passed, zero failed or
+  skipped (`RunAllTests/4C3CA1E5-88BE-4230-B25B-BBC9ECEB282D.txt`). The tool's
+  300-second observation timed out, but the same run finished and produced
+  that complete summary and `TEST FINISHED` console marker; it was not restarted.
+  The expanded preprocessing-override test passed at 03:07
+  (`RunSomeTests/F36A8A9F-D3DA-4093-9515-1324D2177A30.txt`). Native PCM sample
+  continuity is exercised in that full suite as well as the earlier focused
+  two-test run. The 03:07 normal simulator build passes without reported errors,
+  and the debug pause panel's Xcode preview was visually inspected. No physical
+  checks were run.
 - Play callbacks establish an explicit memory-access context. Interpreter
   reads and writes validate the public block access table, including direct,
   shifted, pointed, compound, increment/decrement, and Copy paths. Read-only
@@ -357,11 +393,10 @@ execute; the successful rerun and final suite have separate result bundles.
 
 ## Remaining checks, including engines we have not sampled
 
-- Stack layout/control semantics and native rendering parity. DebugLog and
-  DebugPause also remain unsupported: preflight currently rejects their
-  presence in any reachable callback graph, even in a branch guarded by the
-  disabled debug-mode flag. Do not mistake normal gameplay on cached engines
-  for coverage of these developer-facing functions. Paint (tutorial only) and
+- Stack layout/control semantics and native rendering parity. Debug functions
+  are now supported as described above; their underdocumented policy choices
+  must not be mistaken for independently observed native behavior.
+  Paint (tutorial only) and
   Print (preview only) belong to the separately scoped non-play modes, per
   their [Paint](https://wiki.sonolus.com/engine-specs/functions/paint) and
   [Print](https://wiki.sonolus.com/engine-specs/functions/print) contracts.

@@ -56,6 +56,11 @@ struct EngineSpawnCommand: Equatable, Sendable {
   let memory: [Double]
 }
 
+struct EngineDebugLogEntry: Identifiable, Equatable {
+  let id: Int
+  let value: String
+}
+
 struct EngineParticleInstance: Equatable, Sendable {
   let id: Int
   let effectID: Int
@@ -86,6 +91,7 @@ private struct EngineStream {
 /// because its name appears in EnginePlayData.
 final class CommandEngineRuntimeHost: EngineRuntimeHost {
   static let supportedFunctions: Set<String> = [
+    "DebugLog", "DebugPause",
     "AddLifeScheduled", "BeatToStartingBeat", "BeatToStartingTime",
     "BeatToTime", "BeatToBPM", "Judge", "JudgeSimple", "HasSkinSprite",
     "HasParticleEffect", "HasEffectClip", "Draw", "Play", "PlayScheduled",
@@ -124,6 +130,15 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private var exportCount = 0
   private let commandLimit = 16_384
   private var drawSegmentCount = 0
+  private(set) var debugLog = [EngineDebugLogEntry]()
+  private var debugLogSequence = 0
+  private var debugPauseRequested = false
+  var isDebugMode: Bool { memory.value(block: 1000, index: 0) != 0 }
+
+  func takeDebugPause() -> Bool {
+    defer { debugPauseRequested = false }
+    return debugPauseRequested
+  }
 
   /// Keep preprocessing side effects, but discard commands and handles from
   /// the previous play. Memory is checkpointed separately by the runtime.
@@ -131,7 +146,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     { [time, draws, particles, exports, audio, loopAudio, loopStops,
       nextLoopID, spawns, scheduledLife, streams, streamEntryCount,
       nextParticleID, entityIndex, staticIntroDrawing, exportCount,
-      drawSegmentCount] in
+      drawSegmentCount, debugLog, debugLogSequence, debugPauseRequested] in
       self.time = time
       self.draws = draws
       self.particles = particles
@@ -149,6 +164,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       self.staticIntroDrawing = staticIntroDrawing
       self.exportCount = exportCount
       self.drawSegmentCount = drawSegmentCount
+      self.debugLog = debugLog
+      self.debugLogSequence = debugLogSequence
+      self.debugPauseRequested = debugPauseRequested
     }
   }
 
@@ -229,6 +247,24 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
 
   func call(function: String, arguments a: [Double]) throws -> Double {
     switch function {
+    case "DebugLog":
+      guard a.count == 1 else {
+        throw EngineInterpreterError.invalidArguments(function)
+      }
+      // Outside debug mode we suppress the side effect and return zero.
+      // This keeps debug-guarded graphs valid without enabling diagnostics
+      // during normal play. Nonfinite values are useful diagnostic output too.
+      if isDebugMode {
+        if debugLog.count == 256 { debugLog.removeFirst() }
+        debugLog.append(EngineDebugLogEntry(id: debugLogSequence,
+          value: String(a[0])))
+        debugLogSequence &+= 1
+      }
+      return 0
+    case "DebugPause":
+      try validate(a, count: 0, function: function)
+      if isDebugMode { debugPauseRequested = true }
+      return 0
     case "TimeToScaledTime", "TimeToStartingScaledTime", "TimeToStartingTime",
       "TimeToTimeScale":
       try validate(a, count: 1, function: function)

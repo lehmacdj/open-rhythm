@@ -20,13 +20,28 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
-Latest API checkpoint: callback permissions, declared block bounds and Get's
+Memory API checkpoint: callback permissions, declared block bounds and Get's
 zero-read fallback are implemented and independently reviewed. The September
 25 02:39 simulator run passed 240 tests (including six cached-chart probes);
 one stale invalid-Get assertion was corrected, then passed in the five-test
 02:46 rerun. All 241 registered tests are covered across those runs. The normal
 simulator build passes. This does not close the broader API gate; the remaining
 gaps are listed below and in COMPATIBILITY.md.
+
+Debug-function follow-up: `DebugLog` and `DebugPause` now have host and app
+support behind a persistent per-engine Engine Debug Mode setting (off by
+default). Logs appear at the bottom right and in a resumable pause panel.
+Startup does not skip debug output; pause freezes chart/input time and active
+effect samples, keeps future audio commands, and discards stale contacts
+without reusing touch IDs within the same runtime. Debug plays are marked in
+result options. The September 25 03:02 simulator suite passed all 248 tests,
+with no failures or skips, including the six cached-chart probes. An expanded
+preprocessing-override test passed separately at 03:07; the final normal
+simulator build passes. The debug pause panel was rendered and inspected.
+Independent review found a scheduled sound that could start between frames
+and then incorrectly restart on resume. That case is fixed and regression
+tested; final review found no further actionable issue. Physical checks stay
+deferred under the API-coverage gate above.
 
 ## Live-play follow-up — September 25, 2026
 
@@ -419,9 +434,10 @@ model level, checking that future judgments and spawned entities do not leak.
    diagnostics; they cannot be certified by invented simulator measurements.
    Deferred until Sonolus API coverage is complete, then tested together with
    the Metal scheduling before/after comparison and calibration controls.
-2. General engine compatibility is not complete: stack-function ABI,
-   DebugLog/DebugPause support and resource/callback conformance still need
-   work. Memory-block callback
+2. General engine compatibility is not complete: stack-function ABI and
+   resource/callback conformance still need work. DebugLog/DebugPause now have
+   opt-in logging and resumable pause support; this does not resolve the
+   separately listed native/API ambiguities. Memory-block callback
    permissions are now enforced across all interpreter access paths, including
    spawned-entity restrictions. Declared block lengths are implemented, with
    zero reads for missing/out-of-range addresses as required by Get; the

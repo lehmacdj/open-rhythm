@@ -102,7 +102,7 @@ struct GameplayView: View {
           .padding(.top, 76)
           .allowsHitTesting(false)
       }
-      if model.isStartingPlayback {
+      if model.isStartingPlayback && !model.isDebugPaused {
         ProgressView("Starting chart…")
           .padding()
           .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -114,6 +114,11 @@ struct GameplayView: View {
         HStack {
           Spacer()
           Menu {
+            if model.isEngineDebugMode {
+              Button("Pause / Debug Log", systemImage: "pause.fill") {
+                model.pauseForDebug()
+              }
+            }
             Button("Restart Song", systemImage: "arrow.counterclockwise") {
               model.restart()
             }
@@ -162,6 +167,29 @@ struct GameplayView: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
         .padding(.top, 8)
+      }
+      if model.isEngineDebugMode {
+        if model.isDebugPaused {
+          EngineDebugPausePanel(entries: model.debugLog,
+            resume: model.resumeFromDebugPause, restart: model.restart,
+            exit: { model.stop(); dismiss() })
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.black.opacity(0.65))
+        } else if !model.debugLog.isEmpty {
+          VStack(alignment: .trailing, spacing: 2) {
+            ForEach(model.debugLog.suffix(4)) { entry in
+              Text(entry.value).lineLimit(1)
+            }
+          }
+          .font(.caption.monospaced())
+          .foregroundStyle(.white)
+          .padding(8)
+          .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 8))
+          .frame(maxWidth: .infinity, maxHeight: .infinity,
+            alignment: .bottomTrailing)
+          .padding(12)
+          .allowsHitTesting(false)
+        }
       }
     }
   }
@@ -395,6 +423,9 @@ private struct GameplaySettingsPanel: View {
           Button("Reset Input Timing") { settings.inputOffsetMilliseconds = 0 }
         }
         Section("Diagnostics") {
+          Toggle("Engine Debug Mode", isOn: $settings.engineDebugMode)
+          Text("Allow the engine to display debug values and pause playback. Applies on the next play.")
+            .font(.footnote).foregroundStyle(.secondary)
           Toggle("Record Playback Timing", isOn: $settings.recordTimingDiagnostics)
           Text("Save clock and rendering measurements with your next play’s result. Stored locally; nothing is uploaded. Recording adds some overhead and does not adjust timing.")
             .font(.footnote).foregroundStyle(.secondary)
@@ -941,12 +972,13 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
   private func advanceFrame(targetHostTime: Double?,
     drawable: CAMetalDrawable? = nil) {
     guard let model else { return }
-    touchPool.beginPlayback(generation: model.playbackGeneration)
+    touchPool.beginPlayback(generation: model.playbackGeneration,
+      inputGeneration: model.inputGeneration)
     let sampleTime = model.playbackTime
     model.engineFrame(size: bounds.size,
       touches: touchPool.touches, safeAreaInsets: safeAreaInsets)
     touchPool.nextFrame(at: sampleTime)
-    guard !model.isStartingPlayback else { return }
+    guard !model.isStartingPlayback || model.isDebugPaused else { return }
     if let memory = model.engineRuntime?.memory {
       backgroundLayer.update(quad: (0..<8).map { memory.value(block: 1005, index: $0) },
         size: bounds.size)
@@ -970,8 +1002,10 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
   private func receive(_ touches: Set<UITouch>, started: Bool, ended: Bool) {
     let deliveryTime = model?.timingRecorder.map { _ in CACurrentMediaTime() }
     guard bounds.height > 0, let model else { return }
-    touchPool.beginPlayback(generation: model.playbackGeneration)
-    guard model.phase == .playing, !model.isStartingPlayback else { return }
+    touchPool.beginPlayback(generation: model.playbackGeneration,
+      inputGeneration: model.inputGeneration)
+    guard model.phase == .playing, !model.isStartingPlayback,
+      !model.isDebugPaused else { return }
     for touch in touches {
       if let deliveryTime {
         model.timingRecorder?.record(.touchDelivery,
@@ -1023,6 +1057,49 @@ private final class EngineSoftwareSurfaceView: UIView {
       model?.renderingFailed(error)
     }
   }
+}
+
+private struct EngineDebugPausePanel: View {
+  let entries: [EngineDebugLogEntry]
+  let resume: () -> Void
+  let restart: () -> Void
+  let exit: () -> Void
+
+  var body: some View {
+    VStack(spacing: 12) {
+      Text("Engine Paused").font(.headline)
+      Text("Debug Log · Latest 256 values")
+        .font(.caption).foregroundStyle(.secondary)
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 4) {
+          if entries.isEmpty { Text("No debug values logged.") }
+          ForEach(entries.reversed()) { entry in
+            Text(entry.value).frame(maxWidth: .infinity, alignment: .leading)
+          }
+        }
+        .font(.caption.monospaced())
+        .textSelection(.enabled)
+      }
+      .frame(maxHeight: 160)
+      HStack {
+        Button("Resume", action: resume).buttonStyle(.borderedProminent)
+        Button("Restart", action: restart).buttonStyle(.bordered)
+        Button("Exit", action: exit).buttonStyle(.bordered)
+      }
+    }
+    .padding()
+    .frame(maxWidth: 420)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+    .padding()
+  }
+}
+
+#Preview("Engine Debug Pause") {
+  EngineDebugPausePanel(entries: [
+    EngineDebugLogEntry(id: 0, value: "-0.125"),
+    EngineDebugLogEntry(id: 1, value: "42.0"),
+    EngineDebugLogEntry(id: 2, value: "nan")
+  ], resume: {}, restart: {}, exit: {})
 }
 
 private struct LaneInput: UIViewRepresentable {

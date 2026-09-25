@@ -137,6 +137,11 @@ final class GameplayModel {
   )
   private(set) var hitNoteIDs = Set<String>()
   private(set) var playbackGeneration = 0
+  private(set) var inputGeneration = 0
+  private var debugPausedTime: Double?
+  var isDebugPaused: Bool { debugPausedTime != nil }
+  private(set) var debugLog = [EngineDebugLogEntry]()
+  private(set) var isEngineDebugMode = false
   private(set) var isStartingPlayback = false
   private var audioSeekCompleted = false
   private var startupLimitMediaTime: Double?
@@ -219,6 +224,7 @@ final class GameplayModel {
   private var preparedRuntimeSpeed: Double?
   private var preparedRuntimeInputOffset: Double?
   private var preparedRuntimeAudioOffset: Double?
+  private var preparedRuntimeDebugMode: Bool?
   private var preparedRuntimeAspect: Double?
   private var preparedRuntimeSafeArea: [Double]?
   private var preferenceKey = ""
@@ -253,6 +259,9 @@ final class GameplayModel {
   var modifiedOptions: [EngineOptionOverride] {
     var options = presentationAssets?.configuration
       .modifiedStandardOptions(preferences: settings) ?? []
+    if isEngineDebugMode {
+      options.append(EngineOptionOverride(name: "Engine Debug Mode", value: "On"))
+    }
     if playInputOffset != 0 {
       options.append(EngineOptionOverride(name: "Input Timing",
         value: String(format: "%+.0f ms", playInputOffset * 1000)))
@@ -265,6 +274,7 @@ final class GameplayModel {
   }
 
   var playbackTime: TimeInterval {
+    if let debugPausedTime { return debugPausedTime }
     if isStartingPlayback { return currentTime }
     if let tailStart {
       return clockMapping.chartTime(mediaTime: tailStart.mediaTime)
@@ -308,6 +318,7 @@ final class GameplayModel {
   private var resolvedHoldTailIDs = Set<String>()
 
   func inputTime(at timestamp: TimeInterval) -> TimeInterval {
+    if let debugPausedTime { return debugPausedTime }
     if isStartingPlayback { return currentTime }
     if let tailStart, timestamp >= tailStart.uptime {
       return clockMapping.chartTime(mediaTime: tailStart.mediaTime)
@@ -358,6 +369,7 @@ final class GameplayModel {
     preparedRuntimeSpeed = nil
     preparedRuntimeInputOffset = nil
     preparedRuntimeAudioOffset = nil
+    preparedRuntimeDebugMode = nil
     preparedRuntimeAspect = nil
     preparedRuntimeSafeArea = nil
     do {
@@ -428,6 +440,10 @@ final class GameplayModel {
       }
     }
     playbackGeneration += 1
+    inputGeneration += 1
+    debugPausedTime = nil
+    debugLog = []
+    isEngineDebugMode = false
     let generation = playbackGeneration
     isStartingPlayback = true
     audioSeekCompleted = false
@@ -541,6 +557,12 @@ final class GameplayModel {
       currentTime = startupNextTime
       try runtime.update(at: currentTime)
       startupSteps += 1
+      // Debug output is visible content too: do not fast-forward past it.
+      if captureEngineDebugState(runtime) || !runtime.host.debugLog.isEmpty {
+        ingestJudgments(from: runtime)
+        prepareStartupAudio()
+        return
+      }
       if let assets = presentationAssets {
         let frame = EngineIntroVisualFrame(sprites: EngineRenderer.sprites(
           host: runtime.host, assets: assets, cacheParticleRandomVariables: false),
@@ -584,7 +606,8 @@ final class GameplayModel {
   }
 
   private func startPreparedAudio() {
-    guard phase == .playing, isStartingPlayback, audioSeekCompleted,
+    guard phase == .playing, !isDebugPaused,
+      isStartingPlayback, audioSeekCompleted,
       presentationAssets == nil || engineRuntime != nil else { return }
     do {
       if let recorder = timingRecorder {
@@ -608,14 +631,14 @@ final class GameplayModel {
   }
 
   func press(lane: Int, at time: TimeInterval? = nil) {
-    guard phase == .playing else { return }
+    guard phase == .playing, !isDebugPaused else { return }
     guard pressedLanes.insert(lane).inserted else { return }
     hit(lane: lane, swingsOnly: false,
       at: (time ?? currentTime) - playInputOffset)
   }
 
   func slide(lane: Int, at time: TimeInterval? = nil) {
-    guard phase == .playing else { return }
+    guard phase == .playing, !isDebugPaused else { return }
     pressedLanes.insert(lane)
     hit(lane: lane, swingsOnly: true,
       at: (time ?? currentTime) - playInputOffset)
@@ -645,7 +668,7 @@ final class GameplayModel {
   func release(lane: Int, at time: TimeInterval? = nil) {
     pressedLanes.remove(lane)
     guard
-      phase == .playing,
+      phase == .playing, !isDebugPaused,
       let hold = activeHolds.removeValue(forKey: lane),
       let endTime = hold.endTime,
       resolvedHoldTailIDs.insert(hold.id).inserted
@@ -665,6 +688,50 @@ final class GameplayModel {
     start()
   }
 
+  /// Pause at a frame boundary, never by unwinding an engine callback.
+  /// Keep the runtime, pending commands, startup seek and EOF observers alive.
+  func pauseForDebug() {
+    guard phase == .playing, isEngineDebugMode, !isDebugPaused else { return }
+    player?.pause()
+    debugPausedTime = playbackTime
+    inputGeneration += 1
+    eventClock = nil
+    engineAudio?.pause(at: playbackTime)
+    engineHaptics.stop()
+    frameTiming = nil
+  }
+
+  func resumeFromDebugPause() {
+    guard phase == .playing, let pausedTime = debugPausedTime else { return }
+    debugPausedTime = nil
+    inputGeneration += 1
+    if isStartingPlayback {
+      startPreparedAudio()
+      return
+    }
+    if musicHasEnded {
+      tailStart = (clockMapping.mediaTime(chartTime: pausedTime),
+        ProcessInfo.processInfo.systemUptime)
+    } else {
+      if let timebase = player?.currentItem?.timebase {
+        eventClock = PlaybackEventClock(timebase: timebase)
+      }
+      player?.play()
+    }
+    engineHaptics.start()
+    finishIfReady()
+  }
+
+  @discardableResult
+  private func captureEngineDebugState(_ runtime: EnginePlayRuntime) -> Bool {
+    isEngineDebugMode = runtime.host.isDebugMode
+    if debugLog.last?.id != runtime.host.debugLog.last?.id {
+      debugLog = runtime.host.debugLog
+    }
+    if runtime.host.takeDebugPause() { pauseForDebug() }
+    return isDebugPaused
+  }
+
   func stop(deactivateAudio: Bool = true) {
     frameTiming = nil
     if let timingRouteObserver {
@@ -672,6 +739,8 @@ final class GameplayModel {
       self.timingRouteObserver = nil
     }
     playbackGeneration += 1
+    inputGeneration += 1
+    debugPausedTime = nil
     isStartingPlayback = false
     audioSeekCompleted = false
     startupAnalysis?.cancel()
@@ -738,7 +807,7 @@ final class GameplayModel {
   }
 
   func update(mediaTime: TimeInterval) {
-    guard phase == .playing, mediaTime.isFinite else { return }
+    guard phase == .playing, !isDebugPaused, mediaTime.isFinite else { return }
     currentTime = clockMapping.chartTime(mediaTime: mediaTime)
     let inputTime = currentTime - playInputOffset
 
@@ -775,7 +844,7 @@ final class GameplayModel {
   func engineFrame(size: CGSize, touches: [EngineTouch],
     safeAreaInsets: UIEdgeInsets = .zero) {
     frameTiming = nil
-    guard phase == .playing,
+    guard phase == .playing, !isDebugPaused,
       size.width > 0, size.height > 0,
       let bundle = runtimeBundle, let assets = presentationAssets else { return }
     do {
@@ -797,6 +866,7 @@ final class GameplayModel {
           preparedRuntimeSpeed == playbackSpeed,
           preparedRuntimeInputOffset == playInputOffset,
           preparedRuntimeAudioOffset == requestedAudioOffset,
+          preparedRuntimeDebugMode == settings.engineDebugMode,
           preparedRuntimeAspect == aspect, preparedRuntimeSafeArea == safeArea {
           preparedRuntime.restart()
           engineRuntime = preparedRuntime
@@ -812,6 +882,7 @@ final class GameplayModel {
             safeArea: safeArea, playbackSpeed: playbackSpeed,
             inputOffset: playInputOffset,
             audioOffset: requestedAudioOffset,
+            debugMode: settings.engineDebugMode,
             backgroundQuad: try assets.background?.initialQuad(screenAspect: aspect)
           )
           preparedRuntime = engineRuntime
@@ -819,6 +890,7 @@ final class GameplayModel {
           preparedRuntimeSpeed = playbackSpeed
           preparedRuntimeInputOffset = playInputOffset
           preparedRuntimeAudioOffset = requestedAudioOffset
+          preparedRuntimeDebugMode = settings.engineDebugMode
           preparedRuntimeAspect = aspect
           preparedRuntimeSafeArea = safeArea
         }
@@ -830,6 +902,10 @@ final class GameplayModel {
           startupNextTime = currentTime
           engineUI = (0..<8).map { EngineUIElement(memory: runtime.memory, index: $0) }
           engineLife = runtime.life
+          if captureEngineDebugState(runtime) {
+            prepareStartupAudio()
+            return
+          }
         }
       }
       if isStartingPlayback {
@@ -867,6 +943,7 @@ final class GameplayModel {
       engineScore = runtime.arcadeScore?.snapshot
       engineLife = runtime.life
       ingestJudgments(from: runtime)
+      if captureEngineDebugState(runtime) { return }
       // Interpretation can consume a substantial part of a frame. Schedule
       // against the clock now, not its value before that work, or scheduled
       // hit sounds inherit the entire interpreter delay.
@@ -901,7 +978,7 @@ final class GameplayModel {
   }
 
   private func finishIfReady() {
-    guard phase == .playing, musicHasEnded else { return }
+    guard phase == .playing, !isDebugPaused, musicHasEnded else { return }
     let complete = engineRuntime.map { $0.resolvedInputCount == $0.inputCount }
       ?? (judgements.values.reduce(0, +) == chart.judgementCount)
     guard complete else { return }
