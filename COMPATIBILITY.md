@@ -11,6 +11,27 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Server runtime bundles require the configuration resource declared by
+  [EngineItem](https://wiki.sonolus.com/custom-server-specs/misc/engine-item).
+  Missing presentation no longer silently selects the basic lane player and
+  bypasses engine execution. That internal player now requires explicit local
+  opt-in, never decoded from a server payload. Explicit
+  [UseItem](https://wiki.sonolus.com/custom-server-specs/misc/level-item)
+  overrides require an item and its family-specific resources. Declared ROM
+  and all runtime resource locators must resolve to HTTP(S); omitted/null ROM
+  remains supported. Missing unused resource families remain tolerated, so
+  this is not a claim of exhaustive resource-schema validation. Both online
+  and offline playback reject unsupported reachable functions; downloads may
+  still archive them. Regressions cover malformed configuration/ROM locators,
+  selected-family omissions, rejection before resource fetches, legacy offline
+  manifests, model startup, and offline preflight without network access.
+  Independent read-only review found no actionable defects. The September 25
+  03:28 simulator suite passed all 254 tests, including six cached-chart probes,
+  with no failures or skips
+  (`RunAllTests/1F96EA5F-AB6E-4A32-870A-EDF0A0132E78.txt`). After the observer's
+  300-second timeout, the same run supplied its full result summary and
+  `TEST FINISHED` marker. The 03:33 normal simulator build passed. No physical
+  checks or music-server requests were used.
 - [AddLifeScheduled](
   https://wiki.sonolus.com/engine-specs/functions/add-life-scheduled) now rejects
   calls outside preprocessing, with an error naming both function and callback.
@@ -426,12 +447,13 @@ execute; the successful rerun and final suite have separate result bundles.
   read/write permissions are now enforced separately from those open checks.
   AddLifeScheduled's explicit preprocessing-only rule is now enforced; no
   undocumented callback exclusions are inferred for other host functions.
-  Resource review found that a completely absent presentation bundle selects
-  the basic lane fallback and bypasses engine callbacks/preflight. The public
+  Resource review found and removed a path where an absent presentation bundle
+  selected basic lanes and bypassed engine callbacks/preflight. The public
   [EngineItem](https://wiki.sonolus.com/custom-server-specs/misc/engine-item)
-  requires configuration, and this silent downgrade needs to be removed from
-  server playback. Missing explicit `UseItem` overrides and malformed optional
-  ROM locators also need to fail clearly rather than silently selecting defaults.
+  requires configuration; server bundles now require it and always select
+  engine playback. Missing explicit `UseItem` overrides and malformed declared
+  ROM locators now fail clearly rather than silently selecting defaults.
+  Remaining resource/default conformance is not closed by these checks.
 - Runtime metadata lists a play-mode `skip` slot. The public Python framework
   describes it as a time skip in the current frame, but the play block docs
   omit its seek/resimulation behavior. It remains zero: intro fast-forward

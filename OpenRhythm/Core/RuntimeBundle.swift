@@ -4,6 +4,7 @@ enum RuntimeBundleError: LocalizedError {
   case malformedLevelDetails
   case missingResource(String)
   case unsupportedEngineVersion(Int)
+  case invalidResourceURL(String)
 
   var errorDescription: String? {
     switch self {
@@ -13,6 +14,8 @@ enum RuntimeBundleError: LocalizedError {
       "The playback bundle is missing \(name)."
     case .unsupportedEngineVersion(let version):
       "Engine version \(version) is not supported."
+    case .invalidResourceURL(let name):
+      "The \(name) resource must use an HTTP or HTTPS URL."
     }
   }
 }
@@ -84,27 +87,28 @@ struct RuntimeResourceReferences: Sendable {
     let engineBaseURL = item.engine.source.flatMap(URL.init(string:))
       ?? levelBaseURL
 
-    guard let engineDataURL = item.engine.playData.resolved(
-      against: engineBaseURL
-    ) else {
-      throw RuntimeBundleError.missingResource("engine play data")
+    func resource(_ locator: ResourceLocator?, _ name: String, base: URL)
+      throws -> URL {
+      guard let url = locator?.resolved(against: base) else {
+        throw RuntimeBundleError.missingResource(name)
+      }
+      guard let scheme = url.scheme?.lowercased(),
+        ["http", "https"].contains(scheme), url.host?.isEmpty == false else {
+        throw RuntimeBundleError.invalidResourceURL(name)
+      }
+      return url
     }
-    guard let levelDataURL = item.data.resolved(against: levelBaseURL) else {
-      throw RuntimeBundleError.missingResource("level data")
-    }
-    guard let bgmURL = item.bgm.resolved(against: levelBaseURL) else {
-      throw RuntimeBundleError.missingResource("music")
-    }
-
     engineVersion = item.engine.version
-    self.engineDataURL = engineDataURL
-    engineROMURL = item.engine.rom?.resolved(against: engineBaseURL)
-    self.levelDataURL = levelDataURL
-    self.bgmURL = bgmURL
+    engineDataURL = try resource(item.engine.playData, "engine play data",
+      base: engineBaseURL)
+    levelDataURL = try resource(item.data, "level data", base: levelBaseURL)
+    bgmURL = try resource(item.bgm, "music", base: levelBaseURL)
+    engineROMURL = try item.engine.rom.map {
+      try resource($0, "engine ROM", base: engineBaseURL)
+    }
     var urls = [String: URL]()
-    urls["configuration"] = item.engine.configuration?.resolved(
-      against: engineBaseURL
-    )
+    urls["configuration"] = try resource(item.engine.configuration,
+      "engine configuration", base: engineBaseURL)
     for (name, selection, fallback) in [
       ("skin", item.useSkin, item.engine.skin),
       ("background", item.useBackground, item.engine.background),
@@ -113,14 +117,25 @@ struct RuntimeResourceReferences: Sendable {
     ] {
       let usesDefault = selection?.useDefault ?? true
       let selected = usesDefault ? fallback : selection?.item
+      guard usesDefault || selected != nil else {
+        throw RuntimeBundleError.missingResource("selected \(name)")
+      }
       if let selected {
         let base = selected.source.flatMap(URL.init(string:))
           ?? (usesDefault ? engineBaseURL : levelBaseURL)
-        urls[name + "Data"] = selected.data.resolved(against: base)
-        urls[name + "Texture"] = selected.texture?.resolved(against: base)
-        urls[name + "Audio"] = selected.audio?.resolved(against: base)
-        urls[name + "Image"] = selected.image?.resolved(against: base)
-        urls[name + "Configuration"] = selected.configuration?.resolved(against: base)
+        urls[name + "Data"] = try resource(selected.data, "\(name) data", base: base)
+        switch name {
+        case "skin", "particle":
+          urls[name + "Texture"] = try resource(selected.texture,
+            "\(name) texture", base: base)
+        case "effect":
+          urls[name + "Audio"] = try resource(selected.audio, "effect audio", base: base)
+        default:
+          urls[name + "Image"] = try resource(selected.image,
+            "background image", base: base)
+          urls[name + "Configuration"] = try resource(selected.configuration,
+            "background configuration", base: base)
+        }
       }
     }
     presentationURLs = urls
@@ -128,6 +143,12 @@ struct RuntimeResourceReferences: Sendable {
 }
 
 struct RuntimeBundle: Sendable {
+  enum PlaybackMode: Sendable {
+    case engine
+    // Explicit internal lane-chart mode, never decoded from a server payload.
+    // Missing engine resources must not select a different game implicitly.
+    case basicLanes
+  }
   let engine: EnginePlayData
   let level: LevelData
   let bgmURL: URL
@@ -135,6 +156,7 @@ struct RuntimeBundle: Sendable {
   var presentation: RuntimePresentation? = nil
   var engineROM: Data? = nil
   var preparedAudio: PreparedRuntimeAudio? = nil
+  var playbackMode: PlaybackMode = .engine
 }
 
 /// A playback lease over a private file, separate from the evictable HTTP
@@ -220,18 +242,14 @@ actor RuntimeBundleLoader {
       }
       var resources = [String: Data]()
       for try await (name, data) in group { resources[name] = data }
-      return resources.isEmpty ? nil : RuntimePresentation(resources: resources)
+      return RuntimePresentation(resources: resources)
     }
     let engine = try await CompressedJSONDecoder.decode(
       EnginePlayData.self, from: engineData)
     let parsedLevel = try await CompressedJSONDecoder.decode(LevelData.self, from: levelData)
-    // Match GameplayModel: resource-free charts use the basic lane fallback,
-    // which does not execute engine callbacks (online or offline).
-    if presentation != nil {
-      let missing = try engine.unsupportedFunctions()
-      guard missing.isEmpty else {
-        throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
-      }
+    let missing = try engine.unsupportedFunctions()
+    guard missing.isEmpty else {
+      throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
     }
     try Task.checkCancellation()
     // Fetch music only after validating the chart and supported callbacks.

@@ -1552,7 +1552,8 @@ final class RuntimeDecodingTests: XCTestCase {
         "engine": {
           "source": "https://engine.example/v13",
           "version": 13,
-          "playData": {"url": "/data/play"}
+          "playData": {"url": "/data/play"},
+          "configuration": {"url": "/data/configuration"}
         }
       }
       """#
@@ -1576,6 +1577,78 @@ final class RuntimeDecodingTests: XCTestCase {
       references.bgmURL.absoluteString,
       "https://levels.example/game/music.mp3"
     )
+  }
+
+  func testRuntimeResourcesRejectMissingConfigurationAndMalformedOverrides() throws {
+    let base = URL(string: "https://server.example")!
+    let valid: [String: Any] = ["bgm": ["url": "music"],
+      "data": ["url": "level"], "engine": ["version": 13,
+        "playData": ["url": "play"], "configuration": ["url": "config"]]]
+    func references(_ item: [String: Any]) throws -> RuntimeResourceReferences {
+      try RuntimeResourceReferences(itemData: JSONSerialization.data(
+        withJSONObject: item), serverBaseURL: base)
+    }
+    XCTAssertNil(try references(valid).engineROMURL)
+    for field in ["configuration", "rom"] {
+      for locator: Any in [NSNull(), [:], ["url": ""],
+        ["url": "file:///private/tmp/not-a-server-resource"],
+        ["url": "data:text/plain,not-a-server-resource"]] {
+        var item = valid
+        var engine = item["engine"] as! [String: Any]
+        engine[field] = locator
+        item["engine"] = engine
+        if field == "rom", locator is NSNull {
+          XCTAssertNil(try references(item).engineROMURL)
+        } else {
+          XCTAssertThrowsError(try references(item), "Invalid \(field): \(locator)")
+        }
+      }
+      var item = valid
+      var engine = item["engine"] as! [String: Any]
+      engine[field] = nil
+      item["engine"] = engine
+      if field == "configuration" { XCTAssertThrowsError(try references(item)) }
+      else { XCTAssertNil(try references(item).engineROMURL) }
+    }
+    for (name, key) in [("skin", "useSkin"), ("background", "useBackground"),
+      ("effect", "useEffect"), ("particle", "useParticle")] {
+      var item = valid
+      item[key] = ["useDefault": false]
+      XCTAssertThrowsError(try references(item)) { error in
+        guard case RuntimeBundleError.missingResource(let missing) = error else {
+          return XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertEqual(missing, "selected \(name)")
+      }
+      let assets: [String: Any] = ["data": ["url": "data"],
+        "texture": ["url": "texture"], "audio": ["url": "audio"],
+        "image": ["url": "image"], "configuration": ["url": "config"]]
+      let required = name == "background" ? ["data", "image", "configuration"]
+        : ["data", name == "effect" ? "audio" : "texture"]
+      for missing in required {
+        var selected = assets
+        selected[missing] = ["url": ""]
+        item[key] = ["useDefault": false, "item": selected]
+        XCTAssertThrowsError(try references(item), "Missing \(name) \(missing)")
+      }
+      item[key] = ["useDefault": false, "item": assets]
+      XCTAssertNotNil(try references(item).presentationURLs[name + "Data"])
+    }
+  }
+
+  @MainActor
+  func testMissingPresentationNeverImplicitlySelectsBasicLanes() throws {
+    for presentation in [nil, RuntimePresentation(resources: [:])] {
+      let model = try gameplayModel(presentation: presentation,
+        playbackMode: .engine)
+      guard case .failed(let message) = model.phase else {
+        return XCTFail("A missing configuration must fail, not enter Ready")
+      }
+      XCTAssertTrue(message.contains("configuration"))
+      model.start()
+      XCTAssertEqual(model.phase, .failed(message))
+      XCTAssertNil(model.engineRuntime)
+    }
   }
 
   func testBuildsTimedTapAndHoldNotesAcrossBPMChanges() throws {
@@ -1893,7 +1966,8 @@ final class RuntimeDecodingTests: XCTestCase {
   @MainActor
   private func gameplayModel(
     resultStore: ResultStore = ResultStore(), engine: EnginePlayData? = nil,
-    presentation: RuntimePresentation? = nil
+    presentation: RuntimePresentation? = nil,
+    playbackMode: RuntimeBundle.PlaybackMode? = nil
   ) throws -> GameplayModel {
     let engine = try engine ?? JSONDecoder().decode(
       EnginePlayData.self,
@@ -1930,7 +2004,8 @@ final class RuntimeDecodingTests: XCTestCase {
       bundle: RuntimeBundle(
         engine: engine, level: data,
         bgmURL: URL(fileURLWithPath: "/nonexistent-test-audio.wav"),
-        isOffline: true, presentation: presentation
+        isOffline: true, presentation: presentation,
+        playbackMode: playbackMode ?? (presentation == nil ? .basicLanes : .engine)
       ),
       level: level, server: server, title: "Gameplay"
     )

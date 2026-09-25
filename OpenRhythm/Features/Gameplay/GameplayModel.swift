@@ -373,7 +373,10 @@ final class GameplayModel {
     preparedRuntimeAspect = nil
     preparedRuntimeSafeArea = nil
     do {
-      if let presentation = bundle.presentation {
+      if bundle.playbackMode == .engine {
+        guard let presentation = bundle.presentation else {
+          throw RuntimeBundleError.missingResource("engine configuration")
+        }
         let missing = try bundle.engine.unsupportedFunctions()
         guard missing.isEmpty else {
           throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))

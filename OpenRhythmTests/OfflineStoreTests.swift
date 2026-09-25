@@ -2,6 +2,60 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  func testMissingConfigurationRejectsOnlineDownloadAndLegacyOfflineBundles() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = RequestRecorder()
+    let item: [String: Any] = ["bgm": ["url": "/music"],
+      "data": ["url": "/chart"],
+      "engine": ["version": 13, "playData": ["url": "/engine"]]]
+    let details = try JSONSerialization.data(withJSONObject: ["item": item])
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      return details
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let client = SonolusClient(session: session,
+      cache: SonolusResponseCache(rootURL: root.appendingPathComponent("cache")))
+    let store = OfflineStore(rootURL: root.appendingPathComponent("offline"), client: client)
+    let loader = RuntimeBundleLoader(client: client, offlineStore: store)
+    let server = ServerDescriptor(id: "missing-configuration", name: "Fixture",
+      baseURL: URL(string: "https://fixture.example")!)
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "level", source: nil, version: 1, rating: 1,
+      title: LocalizedText("Song"), artists: LocalizedText("Fixture"),
+      author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+    func check(_ error: Error) {
+      guard case RuntimeBundleError.missingResource(let name) = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+      XCTAssertEqual(name, "engine configuration")
+    }
+    do {
+      _ = try await loader.load(level: level, from: server)
+      XCTFail("Missing presentation must not silently bypass the engine")
+    } catch { check(error) }
+    do {
+      _ = try await store.download(level: level, from: server)
+      XCTFail("Do not save an unplayable resource-free bundle")
+    } catch { check(error) }
+    let legacy = OfflineLevelManifest(id: "legacy", server: server, level: level,
+      itemData: try JSONSerialization.data(withJSONObject: item), resources: [],
+      downloadedAt: Date())
+    do {
+      _ = try await store.runtimeBundle(from: legacy)
+      XCTFail("Previously saved malformed bundles must not select basic lanes")
+    } catch { check(error) }
+    XCTAssertTrue(recorder.urls.allSatisfy { $0.lastPathComponent == "level" },
+      "Reject before fetching chart, engine, configuration, or music resources")
+    let manifests = try await store.manifests()
+    XCTAssertTrue(manifests.isEmpty)
+  }
+
   func testOnlinePlaybackPinsCachedMusicWithoutCreatingADownload() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
@@ -12,16 +66,16 @@ final class OfflineStoreTests: XCTestCase {
       recorder.append(request.url!)
       switch request.url?.lastPathComponent {
       case "music.mp3": return music
+      case "configuration": return Data(#"{"options":[]}"#.utf8)
       case "engine": return Data(#"""
         {"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},
-        "nodes":[{"func":"FutureUnsupportedFunction","args":[]}],"buckets":[],
-        "archetypes":[{"name":"note","hasInput":true,"imports":[],"exports":[],
-        "touch":{"index":0}}]}
+        "nodes":[],"buckets":[],"archetypes":[]}
         """#.utf8)
       case "chart": return Data(#"{"bgmOffset":0,"entities":[]}"#.utf8)
       default: return Data(#"""
         {"item":{"bgm":{"url":"/music.mp3"},"data":{"url":"/chart"},
-        "engine":{"version":13,"playData":{"url":"/engine"}}}}
+        "engine":{"version":13,"playData":{"url":"/engine"},
+        "configuration":{"url":"/configuration"}}}}
         """#.utf8)
       }
     }
@@ -44,8 +98,8 @@ final class OfflineStoreTests: XCTestCase {
     }
     let first = try await loader.load(level: item("easy"), from: server)
     let second = try await loader.load(level: item("hard"), from: server)
-    // The basic lane fallback never executes the unsupported callbacks.
-    XCTAssertNil(first.presentation)
+    XCTAssertNotNil(first.presentation)
+    XCTAssertEqual(first.playbackMode, .engine)
     XCTAssertFalse(first.isOffline)
     XCTAssertTrue(first.bgmURL.isFileURL)
     XCTAssertEqual(first.preparedAudio?.url, first.bgmURL)
@@ -109,6 +163,62 @@ final class OfflineStoreTests: XCTestCase {
       _ = try await loader.load(level: item, from: ServerDescriptor(id: "fixture",
         name: "Fixture", baseURL: URL(string: "https://fixture.example")!))
       XCTFail("Unsupported engine must fail")
+    } catch EngineInterpreterError.unsupportedFunction(let name) {
+      XCTAssertEqual(name, "FutureUnsupportedFunction")
+    }
+  }
+
+  func testOfflinePlaybackRejectsUnsupportedEngineWithoutNetwork() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    StubURLProtocol.handler = { request in
+      switch request.url?.lastPathComponent {
+      case "music": return Data("offline music fixture".utf8)
+      case "configuration": return Data(#"{"options":[]}"#.utf8)
+      case "chart": return Data(#"{"bgmOffset":0,"entities":[]}"#.utf8)
+      case "engine": return Data(#"""
+        {"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},
+        "nodes":[{"func":"FutureUnsupportedFunction","args":[]}],"buckets":[],
+        "archetypes":[{"name":"note","hasInput":true,"imports":[],"exports":[],
+        "touch":{"index":0}}]}
+        """#.utf8)
+      default: return Data(#"""
+        {"item":{"bgm":{"url":"/music"},"data":{"url":"/chart"},
+        "engine":{"version":13,"playData":{"url":"/engine"},
+        "configuration":{"url":"/configuration"}}}}
+        """#.utf8)
+      }
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let client = SonolusClient(session: session,
+      cache: SonolusResponseCache(rootURL: root.appendingPathComponent("cache")))
+    let store = OfflineStore(rootURL: root.appendingPathComponent("offline"),
+      client: client)
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "level", source: nil, version: 1, rating: 1,
+      title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+      author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://fixture.example")!)
+    let manifest = try await store.download(level: level, from: server)
+    StubURLProtocol.handler = { _ in
+      XCTFail("Offline preflight must not make network requests")
+      throw URLError(.notConnectedToInternet)
+    }
+    do {
+      _ = try await store.runtimeBundle(from: manifest)
+      XCTFail("Offline playback must reject unsupported callbacks too")
+    } catch EngineInterpreterError.unsupportedFunction(let name) {
+      XCTAssertEqual(name, "FutureUnsupportedFunction")
+    }
+    let loader = RuntimeBundleLoader(client: client, offlineStore: store)
+    do {
+      _ = try await loader.load(level: level, from: server)
+      XCTFail("The downloaded playback route must preserve preflight")
     } catch EngineInterpreterError.unsupportedFunction(let name) {
       XCTAssertEqual(name, "FutureUnsupportedFunction")
     }
@@ -198,7 +308,8 @@ final class OfflineStoreTests: XCTestCase {
     let details = Data(#"""
       {"item":{"bgm":{"url":"https://assets.example/data"},
       "data":{"url":"https://assets.example/data"},
-      "engine":{"version":13,"playData":{"url":"https://assets.example/data"}}}}
+      "engine":{"version":13,"playData":{"url":"https://assets.example/data"},
+      "configuration":{"url":"https://assets.example/data"}}}}
       """#.utf8)
     let list = try JSONEncoder().encode(SonolusLevelList(pageCount: 1, items: [level]))
     let recorder = RequestRecorder()
@@ -387,6 +498,7 @@ final class OfflineStoreTests: XCTestCase {
       {"item":{"bgm":{"url":"/bgm"},"data":{"url":"/level"},
       "engine":{"version":13,"source":"https://engine.example",
       "playData":{"url":"/play"},"rom":{"url":"/rom"},
+      "configuration":{"url":"/configuration"},
       "background":{"source":"https://background.example",
         "data":{"url":"/backgroundData"},"image":{"url":"/backgroundImage"},
         "configuration":{"url":"/backgroundConfiguration"}}}}}
@@ -403,6 +515,7 @@ final class OfflineStoreTests: XCTestCase {
           "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
           """#.utf8)
       case "level": return Data(#"{"bgmOffset":0,"entities":[]}"#.utf8)
+      case "configuration": return Data(#"{"options":[]}"#.utf8)
       case "bgm": return Data("audio fixture".utf8)
       case "backgroundData", "backgroundImage", "backgroundConfiguration":
         XCTAssertEqual(request.url?.host, "background.example")
@@ -556,7 +669,8 @@ final class OfflineStoreTests: XCTestCase {
     let details = Data(#"""
       {"item":{"bgm":{"url":"https://assets.example/data"},
       "data":{"url":"https://assets.example/data"},
-      "engine":{"version":13,"playData":{"url":"https://assets.example/data"}}}}
+      "engine":{"version":13,"playData":{"url":"https://assets.example/data"},
+      "configuration":{"url":"https://assets.example/data"}}}}
       """#.utf8)
     let list = try JSONEncoder().encode(SonolusLevelList(pageCount: 1, items: levels))
     let recorder = RequestRecorder()
@@ -697,6 +811,8 @@ final class OfflineStoreTests: XCTestCase {
       "data":{"url":"https://assets.example/data",
       "hash":"043c442d55264f4fb778fc32b387254d6dc40f92"},
       "engine":{"version":13,"playData":{"url":"https://assets.example/data",
+      "hash":"043c442d55264f4fb778fc32b387254d6dc40f92"},
+      "configuration":{"url":"https://assets.example/data",
       "hash":"043c442d55264f4fb778fc32b387254d6dc40f92"}}}}
       """#.utf8)
     let recorder = RequestRecorder()
@@ -978,6 +1094,10 @@ final class OfflineStoreTests: XCTestCase {
             "source": "https://server.example",
             "version": 13,
             "playData": {
+              "url": "https://assets.example/data",
+              "hash": "\#(sha1)"
+            },
+            "configuration": {
               "url": "https://assets.example/data",
               "hash": "\#(sha1)"
             }

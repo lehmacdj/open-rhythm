@@ -362,19 +362,21 @@ actor OfflineStore {
       }
       presentation[name] = try Data(contentsOf: url)
     }
+    let engine = try CompressedJSONDecoder.decode(EnginePlayData.self,
+      from: Data(contentsOf: engineURL))
+    let missing = try engine.unsupportedFunctions()
+    guard missing.isEmpty else {
+      throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
+    }
     return try RuntimeBundle(
-      engine: CompressedJSONDecoder.decode(
-        EnginePlayData.self,
-        from: Data(contentsOf: engineURL)
-      ),
+      engine: engine,
       level: CompressedJSONDecoder.decode(
         LevelData.self,
         from: Data(contentsOf: levelURL)
       ),
       bgmURL: bgmURL,
       isOffline: true,
-      presentation: presentation.isEmpty ? nil
-        : RuntimePresentation(resources: presentation),
+      presentation: RuntimePresentation(resources: presentation),
       engineROM: rom
     )
   }

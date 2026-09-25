@@ -527,7 +527,8 @@ final class PlaybackClockTests: XCTestCase {
       author: "Fixture", tags: [], cover: resource, bgm: resource, data: resource)
     let model = GameplayModel()
     model.prepare(bundle: RuntimeBundle(engine: engine, level: chart,
-      bgmURL: URL(fileURLWithPath: "/nonexistent-clock-fixture.wav"), isOffline: true),
+      bgmURL: URL(fileURLWithPath: "/nonexistent-clock-fixture.wav"), isOffline: true,
+      playbackMode: .basicLanes),
       level: level, server: ServerDescriptor(id: "clock", name: "Clock",
         baseURL: URL(string: "https://example.com")!), title: "Clock")
     model.start()

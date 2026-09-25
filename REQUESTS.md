@@ -20,6 +20,18 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
+Resource-loading follow-up: server playback now requires engine configuration
+and defaults explicitly to engine execution. Missing presentation cannot
+silently select the internal basic lane player. Explicit overrides require
+their family-specific files; declared ROM and all runtime locators must resolve
+to HTTP(S), while absent ROM remains valid. Unsupported-function preflight now
+also runs on offline playback, including the downloaded route through the main
+loader. Downloads may archive unsupported engines; playback rejects them.
+Independent review found no actionable issue. The September 25 03:28 simulator
+suite passed all 254 tests, including six cached-chart probes, with no failures
+or skips. The 03:33 normal simulator build passes. No device testing was used;
+the broader API-coverage gate remains open.
+
 Memory API checkpoint: callback permissions, declared block bounds and Get's
 zero-read fallback are implemented and independently reviewed. The September
 25 02:39 simulator run passed 240 tests (including six cached-chart probes);
@@ -453,9 +465,12 @@ model level, checking that future judgments and spawned entities do not leak.
    zero reads for missing/out-of-range addresses as required by Get; the
    initial overrestriction on missing-block reads has been corrected.
    AddLifeScheduled's preprocessing-only rule is now enforced; remaining
-   host-function and resource conformance stay open. A missing server engine
-   presentation bundle must not silently bypass its callbacks via the basic
-   lane fallback; this newly identified path is not fixed yet.
+   host-function and resource conformance stay open. Server playback now
+   requires engine configuration and cannot silently bypass callbacks via the
+   basic lane fallback. Explicit resource overrides and declared optional ROM
+   must have usable HTTP(S) locators; absent ROM remains supported. Both online
+   and offline playback perform unsupported-function preflight. Downloads may
+   still archive an unsupported engine, but cannot play it through basic lanes.
    Skin mode selection is now
    honored, but exact native rendering parity is not claimed. Unsupported
    functions are surfaced before music rather than assumed harmless. See the
