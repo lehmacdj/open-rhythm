@@ -11,6 +11,35 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Fractional skin/particle sprite rectangles preserve exact texture regions.
+  The public [skin sprite](
+  https://wiki.sonolus.com/skin-specs/resources/skin-data-sprite) and
+  [particle sprite](
+  https://wiki.sonolus.com/particle-specs/resources/particle-data-sprite)
+  contracts declare numeric coordinates and dimensions. Previously CGImage
+  rounded fractional crop bounds and the renderer stretched that entire crop.
+  Crops now retain fractional UV bounds with a one-texel neighboring border
+  for linear filtering; horizontal/vertical curved slices compose within those
+  bounds, and particle tints retain them. Integral crops keep their existing
+  full-region affine fast path. Tests compare emitted skin and tinted particle
+  pixels against independent whole-atlas UVs in software and Metal, including
+  nearest/linear filtering, atlas-edge clipped borders, and subpixel extents.
+  The initial regression failed before the fix (maximum channel errors 255
+  and 98), then passed after it. Independent review found no correctness issue.
+  The public [Studio importer](
+  https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/skin.ts)
+  also forwards source bounds directly to drawImage, but its integer canvas
+  backing dimensions make it an imperfect rasterization oracle. The tests
+  prove exact whole-atlas sampling equivalence, not native filtering parity.
+  Existing integral-edge clamping is unchanged. On systems without Metal,
+  fractional regions use the existing whole-frame software mesh path; physical
+  performance and rendering checks stay deferred under the API-coverage gate.
+  Verification: the September 25 05:07 full simulator run passed all 272 tests,
+  including six cached-chart integrations, with no failures or skips
+  (`RunAllTests/02856B1F-BD6A-4C55-B009-F1C10EB6CC66.txt`). After the observer's
+  300-second timeout, the same execution supplied the full passing summary and
+  `TEST FINISHED` marker. The 05:13 normal simulator build passed. No physical
+  checks or song-server requests were used.
 - Intro simulation can continue beyond input activation until the first
   visible frame or an existing audio/debug/effect boundary. Resolving an input
   during simulation instead restores the original start, before committing

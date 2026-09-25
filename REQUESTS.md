@@ -25,6 +25,19 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
+Sprite-resource follow-up: fractional texture bounds now retain their exact
+sampling region instead of stretching the whole-pixel-rounded crop. Skin,
+curved skin slices, and tinted particles share the correction. A one-texel
+border preserves neighboring samples for linear filtering; integral crops
+keep their existing fast path. The regression failed before the fix and now
+passes for both simulator renderers, including atlas edges and subpixel-sized
+rectangles. Independent review found no correctness issue. This establishes
+whole-atlas sampling equivalence, not native Sonolus filtering parity; broader
+resource conformance and physical verification remain open.
+The September 25 05:07 full simulator run passed all 272 tests with no failures
+or skips; the 05:13 normal simulator build passed. No device checks or
+song-server requests were used.
+
 Intro follow-up: input activation alone no longer ends silent-intro simulation.
 An offscreen active note can advance to its first visible frame, while music,
 engine sounds, debug output and visual effects retain their existing stopping

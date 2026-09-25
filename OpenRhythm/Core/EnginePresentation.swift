@@ -649,6 +649,7 @@ final class EnginePresentationAssets {
   struct Sprite {
     let image: UIImage
     let transform: EngineQuadTransform
+    let textureRegion: EngineTextureRegion
   }
   let options: [Double]
   let configuration: EngineConfiguration
@@ -661,6 +662,7 @@ final class EnginePresentationAssets {
   let skin: [Int: Sprite]
   let particles: [Int: ParticleData.Effect]
   let particleImages: [UIImage]
+  let particleRegions: [EngineTextureRegion]
   let interpolation: Bool
   let particleInterpolation: Bool
   let background: EngineBackgroundAssets?
@@ -719,9 +721,10 @@ final class EnginePresentationAssets {
       for definition in engine.skin.sprites {
         guard let sprite = skinData.sprites.first(where: { $0.name == definition.name })
         else { continue }
-        let image = try Self.crop(texture, x: sprite.x, y: sprite.y,
+        let crop = try Self.crop(texture, x: sprite.x, y: sprite.y,
           w: sprite.w, h: sprite.h)
-        sprites[definition.id] = Sprite(image: image, transform: sprite.transform)
+        sprites[definition.id] = Sprite(image: crop.image,
+          transform: sprite.transform, textureRegion: crop.region)
       }
     }
     skin = sprites
@@ -730,6 +733,7 @@ final class EnginePresentationAssets {
     guard !engine.particle.effects.isEmpty else {
       particleInterpolation = false
       particleImages = []
+      particleRegions = []
       particles = [:]
       return
     }
@@ -742,9 +746,11 @@ final class EnginePresentationAssets {
     )?.cgImage else {
       throw RuntimeBundleError.missingResource("valid particle texture")
     }
-    particleImages = try particleData.sprites.map {
+    let crops = try particleData.sprites.map {
       try Self.crop(texture, x: $0.x, y: $0.y, w: $0.w, h: $0.h)
     }
+    particleImages = crops.map(\.image)
+    particleRegions = crops.map(\.region)
     var effects = [Int: ParticleData.Effect]()
     for definition in engine.particle.effects {
       guard let effect = particleData.effects.first(where: {
@@ -829,13 +835,32 @@ final class EnginePresentationAssets {
 
   private static func crop(
     _ texture: CGImage, x: Double, y: Double, w: Double, h: Double
-  ) throws -> UIImage {
+  ) throws -> (image: UIImage, region: EngineTextureRegion) {
     guard [x, y, w, h].allSatisfy(\.isFinite), x >= 0, y >= 0,
-      w > 0, h > 0, x + w <= Double(texture.width),
-      y + h <= Double(texture.height),
-      let cropped = texture.cropping(to: CGRect(x: x, y: y, width: w, height: h))
+      w > 0, h > 0, x + w > x, y + h > y,
+      x + w <= Double(texture.width), y + h <= Double(texture.height)
     else { throw EngineInterpreterError.invalidArguments("sprite bounds") }
-    return UIImage(cgImage: cropped)
+    // CGImage rounds crop rectangles to whole pixels. Retain the requested
+    // fractional region as UVs, with neighboring texels for linear filtering.
+    // Integral sprites retain their full-region crop and affine fast path.
+    let fractional = [x, y, w, h].contains { $0 != floor($0) }
+    let padding = fractional ? 1.0 : 0.0
+    let left = max(0, floor(x) - padding)
+    let top = max(0, floor(y) - padding)
+    let right = min(Double(texture.width), ceil(x + w) + padding)
+    let bottom = min(Double(texture.height), ceil(y + h) + padding)
+    let width = right - left, height = bottom - top
+    guard let cropped = texture.cropping(to:
+      CGRect(x: left, y: top, width: width, height: height)) else {
+      throw EngineInterpreterError.invalidArguments("sprite bounds")
+    }
+    let region = EngineTextureRegion(minU: (x - left) / width,
+      minV: 1 - (y + h - top) / height,
+      maxU: (x + w - left) / width, maxV: 1 - (y - top) / height)
+    guard region.isValid else {
+      throw EngineInterpreterError.invalidArguments("sprite texture region")
+    }
+    return (UIImage(cgImage: cropped), region)
   }
 }
 
@@ -984,14 +1009,16 @@ enum EngineRenderer {
         for patch in EngineGeometry.curvedPatches(points, curve: curve) {
           result.append(EngineRenderSprite(image: sprite.image, points: patch.points,
             matrix: command.transform, alpha: command.alpha,
-            interpolation: assets.interpolation, textureRegion: patch.region,
+            interpolation: assets.interpolation,
+            textureRegion: sprite.textureRegion.subregion(patch.region),
             renderMode: assets.skinRenderMode,
             isStaticIntroDecoration: command.isStaticIntroDecoration))
         }
       } else {
         result.append(EngineRenderSprite(image: sprite.image, points: points,
           matrix: command.transform, alpha: command.alpha,
-          interpolation: assets.interpolation, renderMode: assets.skinRenderMode,
+          interpolation: assets.interpolation, textureRegion: sprite.textureRegion,
+          renderMode: assets.skinRenderMode,
           isStaticIntroDecoration: command.isStaticIntroDecoration))
       }
     }
@@ -1050,7 +1077,8 @@ enum EngineRenderer {
             let image = assets.particleImage(index: particle.sprite, key: particle.color)
             result.append(EngineRenderSprite(image: image, points: points,
               matrix: particleMatrix, alpha: alpha,
-              interpolation: assets.particleInterpolation))
+              interpolation: assets.particleInterpolation,
+              textureRegion: assets.particleRegions[particle.sprite]))
           }
         }
       }

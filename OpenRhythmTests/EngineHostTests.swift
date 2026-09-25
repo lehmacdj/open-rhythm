@@ -2140,6 +2140,142 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testFractionalResourceSpritesPreserveExactAtlasRegions() throws {
+    try checkFractionalResourceSprites(x: 1.25, y: 0.5, w: 2.5, h: 1.25)
+  }
+
+  @MainActor
+  func testFractionalResourceSpritesAtAtlasEdgesAndBelowOnePixel() throws {
+    try checkFractionalResourceSprites(x: 4.25, y: 2.25, w: 1.75, h: 1.75)
+    try checkFractionalResourceSprites(x: 0.1, y: 0.2, w: 0.25, h: 0.3)
+  }
+
+  @MainActor
+  private func checkFractionalResourceSprites(
+    x: Double, y: Double, w: Double, h: Double
+  ) throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let metal = try EngineMetalRenderer(device: device)
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm, width: 40, height: 40, mipmapped: false)
+    descriptor.storageMode = .shared
+    descriptor.usage = [.renderTarget]
+    let target = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
+    func gpuBytes(_ sprite: EngineRenderSprite) throws -> [UInt8] {
+      let command = try XCTUnwrap(metal.queue.makeCommandBuffer())
+      try metal.encode([sprite], size: CGSize(width: 40, height: 40),
+        target: target, commandBuffer: command)
+      command.commit()
+      command.waitUntilCompleted()
+      XCTAssertNil(command.error)
+      var bytes = [UInt8](repeating: 0, count: 40 * 40 * 4)
+      target.getBytes(&bytes, bytesPerRow: 160,
+        from: MTLRegionMake2D(0, 0, 40, 40), mipmapLevel: 0)
+      return bytes
+    }
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[{"id":7,"name":"note"}]},"effect":{"clips":[]},
+       "particle":{"effects":[{"id":9,"name":"hit"}]},
+       "archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let atlas = UIGraphicsImageRenderer(size: CGSize(width: 6, height: 4),
+      format: format).image { context in
+      for y in 0..<4 {
+        for x in 0..<6 {
+          UIColor(red: Double(x) / 5, green: Double(y) / 3,
+            blue: (x + y).isMultiple(of: 2) ? 1 : 0, alpha: 1).setFill()
+          context.fill(CGRect(x: x, y: y, width: 1, height: 1))
+        }
+      }
+    }
+    let transform = Dictionary(uniqueKeysWithValues: (1...4).flatMap { index in
+      ["x\(index)", "y\(index)"].map { ($0, [$0: 1.0]) }
+    })
+    let rectangle: [String: Any] = ["x": x, "y": y, "w": w, "h": h]
+    var skinSprite = rectangle
+    skinSprite["name"] = "note"
+    skinSprite["transform"] = transform
+    var particle: [String: Any] = ["sprite": 0, "color": "#6c9",
+      "start": 0, "duration": 1]
+    for key in ["x", "y", "w", "h", "r", "a"] {
+      let value = ["w", "h", "a"].contains(key) ? 1.0 : 0.0
+      particle[key] = ["from": ["c": value], "to": ["c": value]]
+    }
+    let fullRegion = EngineTextureRegion(minU: x / 6,
+      minV: 1 - (y + h) / 4, maxU: (x + w) / 6, maxV: 1 - y / 4)
+    for linear in [false, true] {
+      let skin: [String: Any] = ["width": 6, "height": 4,
+        "interpolation": linear, "sprites": [skinSprite]]
+      let particles: [String: Any] = ["width": 6, "height": 4,
+        "interpolation": linear, "sprites": [rectangle], "effects": [
+          ["name": "hit", "transform": transform,
+           "groups": [["count": 1, "particles": [particle]]]]]]
+      let assets = try EnginePresentationAssets(engine: engine,
+        presentation: RuntimePresentation(resources: [
+          "configuration": Data(#"{"options":[]}"#.utf8),
+          "skinData": try JSONSerialization.data(withJSONObject: skin),
+          "particleData": try JSONSerialization.data(withJSONObject: particles),
+          "skinTexture": try XCTUnwrap(atlas.pngData()),
+          "particleTexture": try XCTUnwrap(atlas.pngData())]))
+      let host = makeHost()
+      _ = try host.call(function: "Draw", arguments: [7] + quad + [0, 1])
+      _ = try host.call(function: "SpawnParticleEffect",
+        arguments: [9] + quad + [1, 0])
+      let rendered = EngineRenderer.sprites(host: host, assets: assets)
+      XCTAssertEqual(rendered.count, 2)
+      for (index, sprite) in rendered.enumerated() {
+        let source = index == 0 ? atlas : EnginePresentationAssets.tinted(atlas,
+          color: UIColor(red: 0.4, green: 0.8, blue: 0.6, alpha: 1))
+        let reference = EngineRenderSprite(image: source, points: sprite.points,
+          matrix: sprite.matrix, alpha: sprite.alpha, interpolation: linear,
+          textureRegion: fullRegion)
+        let actual = try EngineSoftwareRenderer.render([sprite],
+          size: CGSize(width: 40, height: 40))
+        let expected = try EngineSoftwareRenderer.render([reference],
+          size: CGSize(width: 40, height: 40))
+        let actualBytes = try XCTUnwrap(actual.dataProvider?.data) as Data
+        let expectedBytes = try XCTUnwrap(expected.dataProvider?.data) as Data
+        // Independent whole-atlas UVs catch both rounded bounds and loss of
+        // neighboring texels needed by linear interpolation near crop edges.
+        let maximumError = zip(actualBytes, expectedBytes).map {
+          abs(Int($0) - Int($1))
+        }.max() ?? 0
+        XCTAssertLessThanOrEqual(maximumError, 1, "linear=\(linear)")
+        let actualGPU = try gpuBytes(sprite)
+        let expectedGPU = try gpuBytes(reference)
+        let maximumGPUError = zip(actualGPU, expectedGPU).map {
+          abs(Int($0) - Int($1))
+        }.max() ?? 0
+        XCTAssertLessThanOrEqual(maximumGPUError, 1, "GPU linear=\(linear)")
+      }
+      _ = try host.call(function: "DrawCurvedLR", arguments:
+        [7] + quad + [1, 1, 2, -1, 0, 1, 0])
+      _ = try host.call(function: "DrawCurvedBT", arguments:
+        [7] + quad + [2, 1, 2, 0, -1, 0, 1])
+      let curves = EngineRenderer.sprites(host: host, assets: assets)
+      let region = rendered[0].textureRegion
+      XCTAssertEqual(curves[1].textureRegion.minU, region.minU)
+      XCTAssertEqual(curves[1].textureRegion.maxU, region.maxU)
+      XCTAssertEqual(curves[1].textureRegion.minV, region.minV)
+      XCTAssertEqual(curves[1].textureRegion.maxV,
+        (region.minV + region.maxV) / 2, accuracy: 1e-12)
+      XCTAssertEqual(curves[2].textureRegion.minV,
+        curves[1].textureRegion.maxV, accuracy: 1e-12)
+      XCTAssertEqual(curves[2].textureRegion.maxV, region.maxV)
+      XCTAssertEqual(curves[3].textureRegion.minV, region.minV)
+      XCTAssertEqual(curves[3].textureRegion.maxV, region.maxV)
+      XCTAssertEqual(curves[3].textureRegion.minU, region.minU)
+      XCTAssertEqual(curves[3].textureRegion.maxU,
+        (region.minU + region.maxU) / 2, accuracy: 1e-12)
+      XCTAssertEqual(curves[4].textureRegion.minU,
+        curves[3].textureRegion.maxU, accuracy: 1e-12)
+      XCTAssertEqual(curves[4].textureRegion.maxU, region.maxU)
+    }
+  }
+
+  @MainActor
   func testCurvesApplyCornerCoupledSkinTransformBeforeControlInterpolation() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
       {"skin":{"sprites":[{"id":7,"name":"note"}]},"effect":{"clips":[]},
@@ -2167,6 +2303,10 @@ final class EngineHostTests: XCTestCase {
       ]))
     let host = makeHost()
     host.memory.set(block: 1003, index: 3, value: 0.1)
+    XCTAssertEqual(assets.skin[7]?.textureRegion, .full,
+      "Integral sprites retain the full-region affine fast path")
+    XCTAssertEqual(assets.skin[7]?.image.cgImage?.width, 1)
+    XCTAssertEqual(assets.skin[7]?.image.cgImage?.height, 1)
     _ = try host.call(function: "DrawCurvedLR", arguments:
       [7] + quad + [0, 1, 2, 0, 0, 1, 0])
     host.memory.set(block: 1003, index: 3, value: 0.9)

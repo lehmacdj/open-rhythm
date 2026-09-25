@@ -21,6 +21,13 @@ struct EngineTextureRegion: Equatable, Sendable {
   let maxU: Double
   let maxV: Double
   static let full = Self(minU: 0, minV: 0, maxU: 1, maxV: 1)
+  func subregion(_ region: Self) -> Self {
+    let width = maxU - minU, height = maxV - minV
+    return Self(minU: minU + region.minU * width,
+      minV: minV + region.minV * height,
+      maxU: minU + region.maxU * width,
+      maxV: minV + region.maxV * height)
+  }
   var isValid: Bool {
     minU.isFinite && minV.isFinite && maxU.isFinite && maxV.isFinite
       && minU >= 0 && minV >= 0 && maxU <= 1 && maxV <= 1
