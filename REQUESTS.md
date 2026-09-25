@@ -4,6 +4,22 @@ This ledger distinguishes implemented behavior from remaining compatibility
 work and device verification. Passing simulator tests does not establish that
 phone audio alignment, touch handling, or frame pacing is correct.
 
+## Current verification order — September 25, 2026
+
+Per the user's latest direction, postpone real-device testing until Sonolus
+API coverage is complete, then perform the outstanding physical checks in one
+large batch. Do not request phone unlocks or run incremental device checks
+before that gate unless the user explicitly asks for a specific device issue
+to be investigated sooner. The previous pending unlock request is superseded.
+
+Prioritize the API contract checklist, implementation gaps and synthetic
+conformance tests, using simulator tests and builds while that work proceeds.
+Keep the physical checks below open and label them deferred, not passed or
+blocked on an immediate phone unlock. Existing device evidence remains useful
+but does not substitute for the eventual batch. The stable-build push
+authorization is unchanged; deferred physical validation must be disclosed,
+and no unmeasured latency improvement should be claimed.
+
 ## Live-play follow-up — September 25, 2026
 
 Status of the live-play follow-ups; offline probes do not certify live sync:
@@ -58,7 +74,7 @@ Status of the live-play follow-ups; offline probes do not certify live sync:
   software-fallback test and six focused regressions passed afterward.
   Detach/reattach is covered, the device build passes, and independent review
   found no further issue after centralizing both software-fallback paths.
-  Physical before/after latency comparison remains pending.
+  Physical before/after latency comparison is deferred to the post-API batch.
   This scheduling change is not yet pushed or claimed to improve device sync.
 - Add persistent manual timing overrides in Gameplay Settings so the player
   can compensate for observed bias. Define adjustment direction and units
@@ -376,6 +392,8 @@ model level, checking that future judgments and spawned entities do not leak.
    and holds, hit effects, audible sync, repeated starts, interruptions and
    gameplay frame pacing. These require the relevant device/build or field
    diagnostics; they cannot be certified by invented simulator measurements.
+   Deferred until Sonolus API coverage is complete, then tested together with
+   the Metal scheduling before/after comparison and calibration controls.
 2. General engine compatibility is not complete: stack-function ABI and
    resource/callback conformance still need work. Skin mode selection is now
    honored, but exact native rendering parity is not claimed. Unsupported
@@ -391,7 +409,7 @@ model level, checking that future judgments and spawned entities do not leak.
    Unknown silence is never inferred from bgmOffset.
 4. Full-chart no-touch runtime integration now passes on the physical device
    for four cached charts. Interactive playback, audio and display integration
-   beyond those probes still need verification.
+   beyond those probes still need verification in the deferred device batch.
 5. Manual visual/audio alignment calibration remains separate from the
    implemented input-judgment adjustment. Use measured clock/display/audio
    behavior to define its direction and avoid double-applying engine offsets;

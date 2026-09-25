@@ -557,6 +557,11 @@ remained near zero, even when raw startup differences reached approximately
 seek floors, negative raw values and all three speeds. No gameplay timing
 behavior, calibration or judgment windows changed. Three focused tests passed
 on both simulator and device; the final device build passed without warnings.
+Independent review also prompted rejecting repeated reads of a stale frame:
+the native test now requires distinct frame timestamps and continued runtime
+advancement during observation. All 17 clock/diagnostics tests pass together on
+simulator; the strengthened native-playfield and persisted-label tests pass
+again on thyme5. No full-suite rerun is claimed for this follow-up.
 
 ## Metal display scheduling follow-up (physical comparison pending)
 
@@ -574,7 +579,8 @@ This follows Apple's documented
 and [one/two-frame latency preference](https://developer.apple.com/documentation/quartzcore/cametaldisplaylink/preferredframelatency).
 The initial real-window simulator regression passed on September 25 at 01:46.
 The simulator cannot measure drawable presentation timestamps. Physical
-before/after comparison is still pending because thyme5 locked again; do not
+before/after comparison was initially held by a locked phone and is now
+deliberately deferred under the user's post-API-coverage batch policy. Do not
 interpret the API change itself as proof of lower latency. The prior measured
 33.76–34.12 ms sample-to-present means are the unchanged-driver baseline.
 The display-target difference is not directly comparable between driver APIs;
@@ -590,10 +596,7 @@ backends. Thus all 228 tests have passing evidence, not in a single final
 suite run. The final physical-device build at 01:53 passed. Independent
 read-only review found no remaining actionable issue; it did not run tests.
 The fallback regression exercises the real attached-view driver handoff, not
-an injected GPU/encoding failure inside an in-flight frame. This unit remains
-local until its physical presentation behavior is checked.
-Independent review also prompted rejecting repeated reads of a stale frame:
-the native test now requires distinct frame timestamps and continued runtime
-advancement during observation. All 17 clock/diagnostics tests pass together on
-simulator; the strengthened native-playfield and persisted-label tests pass
-again on thyme5. No full-suite rerun is claimed for this follow-up.
+an injected GPU/encoding failure inside an in-flight frame. The unit is still
+local at this checkpoint; the user has since deferred physical verification
+until Sonolus API coverage is complete (see REQUESTS.md). Do not resume phone
+checks unless that gate is met or the user requests a specific exception.
