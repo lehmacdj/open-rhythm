@@ -542,8 +542,46 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesEarlyInputActivationUntilNoteIsVisible() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "EarlyNote",
+      earlyInput: true)
+  }
+
+  @MainActor
+  func testGameplayIntroRewindsInsteadOfConsumingAnInvisibleInput() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "HiddenNote",
+      earlyInput: true, resolveAt: 0.25)
+  }
+
+  @MainActor
+  func testGameplayIntroStopsAtMusicBeforeEarlyActivatedNoteAppears() async throws {
+    try await checkGameplayIntro(appearanceTime: 2.5, spriteName: "LaterNote",
+      earlyInput: true)
+  }
+
+  @MainActor
+  func testGameplayIntroRestoresDebugPauseWithInitialJudgment() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "DebugNote",
+      earlyInput: true, resolveAt: 0, debugAtResolution: true)
+  }
+
+  @MainActor
+  func testGameplayIntroVisualOnlyRewindDiscardsFutureSpawn() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+      rewind: true, resolvesFutureInput: false)
+  }
+
+  @MainActor
+  func testGameplayIntroPreservesScheduledLifeChanges() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "LifeNote",
+      earlyInput: true, lifeChangeAt: 0.25)
+  }
+
+  @MainActor
   private func checkGameplayIntro(appearanceTime: Double, spriteName: String,
-    rewind: Bool = false) async throws {
+    rewind: Bool = false, earlyInput: Bool = false,
+    resolveAt: Double? = nil, debugAtResolution: Bool = false,
+    resolvesFutureInput: Bool = true, lifeChangeAt: Double? = nil) async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -564,10 +602,32 @@ final class EngineHostTests: XCTestCase {
     let visible = b.call("GreaterOr", [now, b.value(appearanceTime)])
     let draw = b.call("Draw", [b.value(1)] + quad.map(b.value)
       + [b.value(0), b.value(1)])
-    let effect = b.call("If", [visible, draw, b.value(0)])
+    let offscreenQuad = quad.enumerated().map { index, value in
+      b.value(index.isMultiple(of: 2) ? value : value + 4)
+    }
+    let offscreenDraw = b.call("Draw", [b.value(1)] + offscreenQuad
+      + [b.value(0), b.value(1)])
+    let effect = b.call("If", [visible, draw,
+      earlyInput ? offscreenDraw : b.value(0)])
     var archetypes: [[String: Any]] = [[
-      "name": "OpeningEffect", "hasInput": false, "imports": [], "exports": [],
+      "name": "OpeningEffect", "hasInput": earlyInput,
+      "imports": [], "exports": [],
       "updateParallel": ["index": rewind ? draw : effect]]]
+    if let resolveAt {
+      let due = b.call("GreaterOr", [now, b.value(resolveAt)])
+      var actions = [b.call("Set", [b.value(4004), b.value(0), b.value(1)])]
+      if debugAtResolution {
+        archetypes[0]["preprocess"] = ["index": b.call("Set",
+          [b.value(1000), b.value(0), b.value(1)])]
+        actions += [b.call("DebugLog", [b.value(17)]), b.call("DebugPause", [])]
+      }
+      archetypes[0]["updateSequential"] = ["index": b.call("If",
+        [due, b.call("Execute", actions), b.value(0)])]
+    }
+    if let lifeChangeAt {
+      archetypes[0]["preprocess"] = ["index": b.call("AddLifeScheduled",
+        [b.value(-100), b.value(lifeChangeAt)])]
+    }
     var entities = [LevelEntity(archetype: "OpeningEffect", name: nil, data: [])]
     if rewind {
       let actions = b.call("Execute", [
@@ -575,7 +635,7 @@ final class EngineHostTests: XCTestCase {
         b.call("Set", [b.value(4005), b.value(0), b.value(1)]),
         b.call("Set", [b.value(4004), b.value(0), b.value(1)]),
         b.call("Spawn", [b.value(0)])])
-      archetypes.append(["name": "FutureNote", "hasInput": true,
+      archetypes.append(["name": "FutureNote", "hasInput": resolvesFutureInput,
         "imports": [], "exports": [], "shouldSpawn": ["index": visible],
         "updateSequential": ["index": actions]])
       entities.append(LevelEntity(archetype: "FutureNote", name: nil, data: []))
@@ -613,14 +673,55 @@ final class EngineHostTests: XCTestCase {
     model.start()
     for _ in 0..<1000 {
       model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
-      if !model.isStartingPlayback { break }
+      if !model.isStartingPlayback || model.isDebugPaused { break }
       try await Task.sleep(for: .milliseconds(5))
     }
+    if debugAtResolution {
+      XCTAssertTrue(model.isDebugPaused)
+      XCTAssertTrue(model.isStartingPlayback,
+        "Restored initial debug pause must prevent audio from starting")
+      XCTAssertEqual(model.debugLog.count, 1)
+      XCTAssertEqual(model.judgements.values.reduce(0, +), 1,
+        "Only the original initial-time judgment is committed")
+      model.resumeFromDebugPause()
+      for _ in 0..<1000 {
+        model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+        if !model.isStartingPlayback { break }
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      XCTAssertFalse(model.isStartingPlayback)
+      XCTAssertFalse(model.isDebugPaused)
+      XCTAssertEqual(model.judgements.values.reduce(0, +), 1)
+      return
+    }
     XCTAssertFalse(model.isStartingPlayback)
-    XCTAssertEqual(model.skippedIntroDuration, rewind ? 0 : appearanceTime,
+    XCTAssertEqual(model.skippedIntroDuration,
+      rewind || resolveAt != nil || lifeChangeAt != nil
+        ? 0 : min(appearanceTime, 1.95),
       accuracy: 1.0 / 60 + 1e-9,
-      "A non-input visual effect must stop skipping before the 2s audio onset")
+      "Stop at visible content or 50 ms before the 2s audio onset")
     XCTAssertEqual(model.engineRuntime?.host.draws.count, 1)
+    if earlyInput {
+      let runtime = try XCTUnwrap(model.engineRuntime)
+      XCTAssertTrue(runtime.hasActivatedInput)
+      XCTAssertEqual(runtime.resolvedInputCount, 0)
+      XCTAssertTrue(runtime.judgments.isEmpty)
+      XCTAssertEqual(model.judgements.values.reduce(0, +), 0)
+      XCTAssertGreaterThanOrEqual(model.startupSteps,
+        resolveAt == nil && lifeChangeAt == nil ? 31 : 16,
+        "Activation must not itself terminate intro simulation")
+      if let resolveAt {
+        try runtime.update(at: resolveAt)
+        XCTAssertEqual(runtime.resolvedInputCount, 1,
+          "The unplayed input must remain pending after rewind")
+      }
+      if let lifeChangeAt {
+        XCTAssertEqual(runtime.life.value, 1000)
+        try runtime.update(at: lifeChangeAt)
+        XCTAssertEqual(runtime.life.value, 900,
+          "The visible life change must remain pending after rewind")
+      }
+    }
     if rewind {
       XCTAssertGreaterThanOrEqual(model.startupSteps, 31,
         "Must actually simulate the future frame, not merely stop at time zero")
@@ -632,7 +733,7 @@ final class EngineHostTests: XCTestCase {
       XCTAssertEqual(model.judgements.values.reduce(0, +), 0)
       // Confirm the future event is still pending, not suppressed forever.
       try runtime.update(at: appearanceTime)
-      XCTAssertEqual(runtime.resolvedInputCount, 1)
+      XCTAssertEqual(runtime.resolvedInputCount, resolvesFutureInput ? 1 : 0)
       XCTAssertEqual(runtime.host.takeSpawnCommands().count, 1)
     }
   }

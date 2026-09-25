@@ -25,6 +25,21 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
+Intro follow-up: input activation alone no longer ends silent-intro simulation.
+An offscreen active note can advance to its first visible frame, while music,
+engine sounds, debug output and visual effects retain their existing stopping
+conditions. If an input resolves before playback starts, discard the skip and
+restore the original beginning instead of consuming an invisible note. Life
+changes also restore the beginning, preserving scheduled life events; the time
+HUD intentionally follows the skipped timeline. Eleven focused model/visual
+guard tests pass, including BGM-first, hidden-input rollback, held graphics,
+visual-only spawn rollback, and initial judgment plus DebugPause. Independent
+review caught the restored debug-pause ordering issue; it is fixed and final
+review found no further issue. The September 25 04:50 full simulator run passed
+269 tests; the subsequently added life test had no result in that run. All 11
+focused checks passed on the final code at 04:56, and the 04:57 normal simulator
+build passed. Conservative initial-stage classification remains open below.
+
 Resource-loading follow-up: server playback now requires engine configuration
 and defaults explicitly to engine execution. Missing presentation cannot
 silently select the internal basic lane player. Explicit overrides require
@@ -279,7 +294,7 @@ Status of the live-play follow-ups; offline probes do not certify live sync:
 | Expose other engine-provided options | Generic sliders/toggles/choices, validation, named per-engine persistence; type-aware dedicated controls; standard overrides on results |
 | Engine playback speed option | BGM rate, BPM imports/lookups, input metadata and event mapping change together; real-second judgment windows preserved |
 | Keep playing until music ends | Results wait for audio EOF and resolved inputs; post-audio runtime tail handles trailing notes |
-| Preserve lead-in; optionally skip safe silence | No seeking straight to first note/beat zero. Selected online BGM is cached and pinned before Ready, so online/offline playback use the same local PCM analysis. Runtime advances conservatively until input activation, engine sound, audio onset, or an intro visual boundary |
+| Preserve lead-in; optionally skip safe silence | No seeking straight to first note/beat zero. Online/offline playback use the same pinned local PCM analysis. Advance until engine sound, audio onset or a visual boundary, including offscreen active inputs; restore the original beginning if simulation consumes an input |
 | Complete historical results and chronological plays | `ResultStore`, `ResultDetailView`, global play list, deduplicated played songs retaining replay server/level metadata |
 | Timing scatter, miss lines, distribution, note-type filters and statistics | Shared result statistics sections for new/past plays; both plots filtered together |
 | Remove automatic hold ticks from histogram and fix zero alignment | Continuous density curves (no histogram bins), known intermediate ticks excluded only from distribution; exact-zero, outlier and bounded-work tests |
@@ -561,8 +576,9 @@ model level, checking that future judgments and spawned entities do not leak.
    graphics, with synthetic gameplay-model and renderer regressions. Unknown
    initial graphics stop skipping immediately; only narrowly proven persistent
    literal stage draws are exempt. Consequently custom/dynamic stage producers
-   can retain more silence than necessary. First-input activation also remains
-   earlier than first visible pixels in some engines. Broader safe skipping and
+   can retain more silence than necessary. First-input activation no longer
+   ends skipping; unseen input resolution instead restores the original start.
+   Broader safe stage classification and
    physical visual verification remain open, not an unresolved product choice.
    Unknown silence is never inferred from bgmOffset.
 4. Full-chart no-touch runtime integration now passes on the physical device

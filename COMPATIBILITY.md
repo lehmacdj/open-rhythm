@@ -11,6 +11,35 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Intro simulation can continue beyond input activation until the first
+  visible frame or an existing audio/debug/effect boundary. Resolving an input
+  during simulation instead restores the original start, before committing
+  judgments, score or timing history. No engine-specific note-time heuristic
+  or timing offset is introduced. The former first-activation stop failed the
+  new offscreen-note model regression; the corrected path reaches visibility.
+  Eleven focused model/visual guard tests pass, including BGM-first (the 50 ms
+  pre-onset margin), invisible-input fallback, held opening graphics, and
+  separate judgment-triggered and visual-only background/spawn rollback.
+  Independent review found that restored initial DebugPause needed capturing
+  before audio startup; its failing regression now passes, including resume
+  with a single committed initial judgment/log. Final review found no further
+  actionable issue. Scheduled life changes also trigger rewind: the regression
+  failed before the fix and now confirms restored life and the still-pending
+  event. Time HUD content intentionally follows the skipped timeline; this is
+  not a claim that all HUD values remain frozen. Existing direct runtime tests
+  cover scheduled/looped
+  engine-sound boundaries; a model-level sound-first fixture is still useful.
+  This does not establish optimal skipping for every dynamic stage or certify
+  an audible/visible phone start. Unknown initial graphics remain protected.
+  Verification: the September 25 04:50 full simulator run passed 269 tests
+  (`RunAllTests/C26C14ED-5180-4EA4-AE74-99B518AD0B0F.txt`), with its completed
+  console marker checked after the observer timeout. The life test was added
+  after that run built and appears as No result, not a pass. All 11 focused
+  intro/visual guard tests passed on the final code at 04:56
+  (`RunSomeTests/5C59FEC8-3362-4555-9912-A85D1203CB78.txt`), with no failures
+  or skips; the 04:57 normal simulator build passed. No real-device checks
+  were performed. General API coverage and the deferred physical batch remain
+  open.
 - Particle dimensions now use local half-extents before rotation and bilinear
   mapping. The previous extra division by two shrank both dimensions compared
   with the official Studio renderer. Its pinned
@@ -385,7 +414,8 @@ integration probes, including successful inputs and restart/buffering paths.
 - Spawned entities have no input, even if their archetype declares hasInput;
   they must not introduce a false first-note boundary while skipping silence.
 - Silent intro simulation stops for visible non-input graphics and particle
-  lifetimes as well as the existing input/audio boundaries. Unknown graphics
+  lifetimes as well as audio boundaries; resolving an unseen input rewinds it.
+  Unknown graphics
   present at media zero preserve the entire opening; unchanged alone is not
   evidence of disposable stage decoration. A narrow exception requires literal
   standard-stage Draw calls from persistent non-input level entities without
@@ -625,8 +655,9 @@ execute; the successful rerun and final suite have separate result bundles.
   play-mode support.
 - Expired cursors, changing remote ordering, and sparse filtered results
   without unbounded crawls.
-- First-input activation and conservative visual provenance can preserve more
-  intro silence than necessary, especially custom/dynamic stage producers.
+- Conservative visual provenance can preserve more intro silence than
+  necessary, especially custom/dynamic stage producers. Input activation alone
+  no longer stops simulation; an unseen resolved input restores the start.
   Optimal first-visible-pixel skipping across arbitrary engines and physical
   presentation verification remain open. Unknown silence is not inferred from
   bgmOffset.

@@ -866,9 +866,10 @@ struct EngineIntroVisualFrame: Equatable {
   let sprites: [Sprite]
   let background: [Double]
   let ui: [[Double]]
+  let life: Double?
 
   init(sprites: [EngineRenderSprite], aspect: Double,
-    background: [Double] = [], ui: [[Double]] = []) {
+    background: [Double] = [], ui: [[Double]] = [], life: Double? = nil) {
     let size = CGSize(width: aspect * 2, height: 2)
     let screen = CGRect(origin: .zero, size: size)
     self.sprites = sprites.compactMap { sprite in
@@ -889,6 +890,7 @@ struct EngineIntroVisualFrame: Equatable {
     }
     self.background = background
     self.ui = ui
+    self.life = life
   }
 }
 
@@ -912,7 +914,8 @@ struct EngineIntroVisualGuard {
     // A newly appearing graphic starts here. If an initial graphic changes or
     // disappears, retain its held first state too (e.g. the "3" of a count-in),
     // rather than starting at its first transition to "2".
-    guard frame.background == initial.background, frame.ui == initial.ui else {
+    guard frame.background == initial.background, frame.ui == initial.ui,
+      frame.life == initial.life else {
       return .rewind
     }
     var next = frame.sprites.startIndex

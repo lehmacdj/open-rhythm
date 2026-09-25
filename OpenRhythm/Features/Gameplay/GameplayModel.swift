@@ -560,6 +560,15 @@ final class GameplayModel {
       currentTime = startupNextTime
       try runtime.update(at: currentTime)
       startupSteps += 1
+      // Activation can precede a note entering the viewport. Simulate beyond
+      // it, but never commit an input consumed while searching for visibility.
+      // Hidden/instant inputs fall back to the original, untrimmed start.
+      if !runtime.judgments.isEmpty {
+        try rewindSilentIntro(runtime)
+        ingestJudgments(from: runtime)
+        prepareStartupAudio()
+        return
+      }
       // Debug output is visible content too: do not fast-forward past it.
       if captureEngineDebugState(runtime) || !runtime.host.debugLog.isEmpty {
         ingestJudgments(from: runtime)
@@ -574,17 +583,14 @@ final class GameplayModel {
           ui: (0..<8).map {
             let element = EngineUIElement(memory: runtime.memory, index: $0)
             return element.isVisible ? element.values : []
-          })
+          }, life: runtime.life.value)
         let decision = startupVisualGuard.observe(frame,
           hasParticles: !runtime.host.particles.isEmpty)
         if decision != .advance {
           if decision == .rewind {
-            // No earlier frame activated an input, or we would have stopped.
             // Restore before recording this frame's judgments or audio so a
             // retained count-in does not leak future playback side effects.
-            runtime.restart()
-            currentTime = clockMapping.initialChartTime
-            try runtime.update(at: currentTime)
+            try rewindSilentIntro(runtime)
           }
           ingestJudgments(from: runtime)
           prepareStartupAudio()
@@ -592,7 +598,7 @@ final class GameplayModel {
         }
       }
       ingestJudgments(from: runtime)
-      if runtime.hasActivatedInput || currentTime >= finalTime
+      if currentTime >= finalTime
         || runtime.host.nextAudioStartTime.map({ $0 <= currentTime }) == true {
         prepareStartupAudio()
         return
@@ -606,6 +612,13 @@ final class GameplayModel {
       }
       startupNextTime = next
     } while ProcessInfo.processInfo.systemUptime < deadline
+  }
+
+  private func rewindSilentIntro(_ runtime: EnginePlayRuntime) throws {
+    runtime.restart()
+    currentTime = clockMapping.initialChartTime
+    try runtime.update(at: currentTime)
+    captureEngineDebugState(runtime)
   }
 
   private func startPreparedAudio() {
