@@ -25,6 +25,20 @@ but does not substitute for the eventual batch. The stable-build push
 authorization is unchanged; deferred physical validation must be disclosed,
 and no unmeasured latency improvement should be claimed.
 
+Static-stage follow-up: intro analysis now recognizes unconditional stage
+draws whose geometry uses fixed prepared Level Data, Level Option, Engine ROM,
+or Entity Data through Get and deterministic arithmetic/easing. Reused graph
+nodes and curved draws are supported. Mutable reads, randomness during drawing,
+conditional drawing, and dynamically spawned copies remain protected. Analysis
+is iterative and bounded; inconclusive graphs retain the intro. A model test
+now passes the prepared stage to the first visible note, while another confirms
+that a different entity moving the stage forces rewind and preserves that event.
+This expands safe classification, not a claim of optimal skipping for every
+engine or physical startup verification.
+Independent review found no soundness or work-budget issue. The September 25
+05:22 full simulator run passed all 277 tests with no failures or skips; the
+05:28 normal build passed. No device checks or song-server requests were used.
+
 Sprite-resource follow-up: fractional texture bounds now retain their exact
 sampling region instead of stretching the whole-pixel-rounded crop. Skin,
 curved skin slices, and tinted particles share the correction. A one-texel
@@ -587,8 +601,8 @@ model level, checking that future judgments and spawned entities do not leak.
    separate contract checklist; sampled engines do not prove arbitrary support.
 3. Intro skipping now preserves visible non-input effects and held opening
    graphics, with synthetic gameplay-model and renderer regressions. Unknown
-   initial graphics stop skipping immediately; only narrowly proven persistent
-   literal stage draws are exempt. Consequently custom/dynamic stage producers
+   initial graphics stop skipping immediately; only proven persistent stage
+   draws with fixed expressions are exempt. Consequently custom/dynamic producers
    can retain more silence than necessary. First-input activation no longer
    ends skipping; unseen input resolution instead restores the original start.
    Broader safe stage classification and

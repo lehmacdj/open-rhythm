@@ -578,10 +578,23 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesStagePreparedFromFixedData() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+      earlyInput: true, preparedStage: true)
+  }
+
+  @MainActor
+  func testGameplayIntroRewindsWhenAnotherEntityMovesPreparedStage() async throws {
+    try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+      earlyInput: true, preparedStage: true, stageMovesAt: 0.25)
+  }
+
+  @MainActor
   private func checkGameplayIntro(appearanceTime: Double, spriteName: String,
     rewind: Bool = false, earlyInput: Bool = false,
     resolveAt: Double? = nil, debugAtResolution: Bool = false,
-    resolvesFutureInput: Bool = true, lifeChangeAt: Double? = nil) async throws {
+    resolvesFutureInput: Bool = true, lifeChangeAt: Double? = nil,
+    preparedStage: Bool = false, stageMovesAt: Double? = nil) async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -629,6 +642,28 @@ final class EngineHostTests: XCTestCase {
         [b.value(-100), b.value(lifeChangeAt)])]
     }
     var entities = [LevelEntity(archetype: "OpeningEffect", name: nil, data: [])]
+    if preparedStage {
+      let coordinates = quad.indices.map {
+        b.call("Get", [b.value(2001), b.value(Double($0))])
+      }
+      let writes = quad.enumerated().map { index, value in
+        b.call("Set", [b.value(2001), b.value(Double(index)), b.value(value)])
+      }
+      archetypes.append(["name": "Stage", "hasInput": false,
+        "imports": [], "exports": [],
+        "preprocess": ["index": b.call("Execute0", writes)],
+        "updateParallel": ["index": b.call("Draw", [b.value(1)]
+          + coordinates + [b.value(-1), b.value(1)])]])
+      entities.append(LevelEntity(archetype: "Stage", name: nil, data: []))
+    }
+    if let stageMovesAt {
+      let move = b.call("Set", [b.value(1003), b.value(3), b.value(0.25)])
+      archetypes.append(["name": "Mover", "hasInput": false,
+        "imports": [], "exports": [], "updateSequential": ["index":
+          b.call("If", [b.call("GreaterOr", [now, b.value(stageMovesAt)]),
+            move, b.value(0)])]])
+      entities.append(LevelEntity(archetype: "Mover", name: nil, data: []))
+    }
     if rewind {
       let actions = b.call("Execute", [
         b.call("Set", [b.value(1005), b.value(0), b.value(0)]),
@@ -696,11 +731,11 @@ final class EngineHostTests: XCTestCase {
     }
     XCTAssertFalse(model.isStartingPlayback)
     XCTAssertEqual(model.skippedIntroDuration,
-      rewind || resolveAt != nil || lifeChangeAt != nil
+      rewind || resolveAt != nil || lifeChangeAt != nil || stageMovesAt != nil
         ? 0 : min(appearanceTime, 1.95),
       accuracy: 1.0 / 60 + 1e-9,
       "Stop at visible content or 50 ms before the 2s audio onset")
-    XCTAssertEqual(model.engineRuntime?.host.draws.count, 1)
+    XCTAssertEqual(model.engineRuntime?.host.draws.count, preparedStage ? 2 : 1)
     if earlyInput {
       let runtime = try XCTUnwrap(model.engineRuntime)
       XCTAssertTrue(runtime.hasActivatedInput)
@@ -708,7 +743,7 @@ final class EngineHostTests: XCTestCase {
       XCTAssertTrue(runtime.judgments.isEmpty)
       XCTAssertEqual(model.judgements.values.reduce(0, +), 0)
       XCTAssertGreaterThanOrEqual(model.startupSteps,
-        resolveAt == nil && lifeChangeAt == nil ? 31 : 16,
+        resolveAt == nil && lifeChangeAt == nil && stageMovesAt == nil ? 31 : 16,
         "Activation must not itself terminate intro simulation")
       if let resolveAt {
         try runtime.update(at: resolveAt)
@@ -720,6 +755,12 @@ final class EngineHostTests: XCTestCase {
         try runtime.update(at: lifeChangeAt)
         XCTAssertEqual(runtime.life.value, 900,
           "The visible life change must remain pending after rewind")
+      }
+      if let stageMovesAt {
+        XCTAssertEqual(runtime.memory.value(block: 1003, index: 3), 0)
+        try runtime.update(at: stageMovesAt)
+        XCTAssertEqual(runtime.memory.value(block: 1003, index: 3), 0.25,
+          "The transform change must remain pending after rewind")
       }
     }
     if rewind {
@@ -736,6 +777,82 @@ final class EngineHostTests: XCTestCase {
       XCTAssertEqual(runtime.resolvedInputCount, resolvesFutureInput ? 1 : 0)
       XCTAssertEqual(runtime.host.takeSpawnCommands().count, 1)
     }
+  }
+
+  func testStaticIntroProofAcceptsPreparedExpressionsAndSharedDraws() throws {
+    let b = RuntimeNodeBuilder()
+    let one = b.value(1)
+    let index = b.call("Add", [b.value(0), b.value(0)])
+    let fixed = [2001, 2002, 3000, 4001].map {
+      b.call("Get", [b.value(Double($0)), index])
+    }
+    let width = b.call("If", [one,
+      b.call("Max", [one, b.call("Add", fixed)]), one])
+    let left = b.call("Negate", [width])
+    let alpha = b.call("EaseInSine", [one])
+    let draw = b.call("Draw", [one, left, left, left, width,
+      width, width, width, left, b.value(0), alpha])
+    let curved = b.call("DrawCurvedLR", [one, left, left, left, width,
+      width, width, width, left, b.value(0), one, b.value(2),
+      left, b.value(0), width, b.value(0)])
+    let callback = b.call("Execute0", [draw, curved, draw])
+    let prepare = b.call("Execute0", [
+      b.call("Set", [b.value(2001), b.value(0),
+        b.call("Random", [one, b.value(2)])]),
+      b.call("Set", [b.value(4101), b.value(0), b.value(0.25)])])
+    let engine = try b.engine(archetypes: [["name": "Stage", "hasInput": false,
+      "imports": [], "exports": [], "preprocess": ["index": prepare],
+      "updateParallel": ["index": callback]]],
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, [0])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Stage", name: nil, data: [])]),
+      options: [1], aspectRatio: 2, skinSpriteIDs: [1], effectClipIDs: [],
+      particleEffectIDs: [])
+    var preparedDraws: [EngineDrawCommand]?
+    for time in [0.0, 0.25, 0.5] {
+      try runtime.update(at: time)
+      XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration),
+        [true, true, true])
+      if let preparedDraws { XCTAssertEqual(runtime.host.draws, preparedDraws) }
+      else { preparedDraws = runtime.host.draws }
+    }
+    runtime.restart()
+    try runtime.update(at: 0)
+    XCTAssertEqual(runtime.host.draws, preparedDraws,
+      "Prepared random values remain fixed across restart")
+  }
+
+  func testStaticIntroProofRejectsMutableArgumentExpressionsAndCycles() throws {
+    let b = RuntimeNodeBuilder()
+    let one = b.value(1)
+    let mutable = [1001, 1002, 1003, 2000, 4000, 4002, 4003, 4004,
+      4005, 4102, 4103, 10000].map {
+      b.call("Get", [b.value(Double($0)), b.value(0)])
+    }
+    let random = b.call("Random", [b.value(0), one])
+    let stream = b.call("StreamGetValue", [b.value(0), b.value(0)])
+    let write = b.call("Set", [b.value(4000), b.value(0), one])
+    let indirectBlock = b.call("Get", [
+      b.call("Get", [b.value(2002), b.value(0)]), b.value(0)])
+    let archetypes: [[String: Any]] = (mutable + [random, stream, write,
+      indirectBlock]).map { expression in
+      let alpha = b.call("Add", [one, expression])
+      let draw = b.call("Draw", [one] + quad.map(b.value) + [b.value(0), alpha])
+      return ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
+        "updateParallel": ["index": draw]]
+    }
+    XCTAssertTrue(try b.engine(archetypes: archetypes,
+      sprites: [["name": "#LANE", "id": 1]]).staticIntroArchetypes.isEmpty)
+    let cycle = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[{"id":1,"name":"#LANE"}]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"buckets":[],
+       "archetypes":[{"name":"Cycle","hasInput":false,"imports":[],
+         "exports":[],"updateParallel":{"index":0}}],
+       "nodes":[{"func":"Execute","args":[0]}]}
+      """#.utf8))
+    XCTAssertTrue(cycle.staticIntroArchetypes.isEmpty)
   }
 
   func testStaticIntroProofRejectsConditionalAndMutableStageDraws() throws {
@@ -767,6 +884,46 @@ final class EngineHostTests: XCTestCase {
     XCTAssertTrue(try b.engine(archetypes: [base], sprites: [
       ["name": "#LANE", "id": 1], ["name": "READY", "id": 1]
     ]).staticIntroArchetypes.isEmpty, "Ambiguous resource IDs are not proof")
+  }
+
+  func testStaticIntroProofSeparatesDrawEffectsAndBoundsGraphWork() throws {
+    let b = RuntimeNodeBuilder()
+    let one = b.value(1)
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [b.value(0), one])
+    let contaminated = b.call("Add", [draw, one])
+    let nested = b.call("Draw", [one] + quad.map(b.value)
+      + [b.value(0), contaminated])
+    let conditional = b.call("If", [one, draw, draw])
+    let roots = [b.call("Execute", [draw, contaminated]),
+      b.call("Execute", [contaminated, draw]), nested, conditional]
+    func archetype(_ root: Int) -> [String: Any] {
+      ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
+        "updateParallel": ["index": root]]
+    }
+    XCTAssertTrue(try b.engine(archetypes: roots.map(archetype),
+      sprites: [["name": "#LANE", "id": 1]]).staticIntroArchetypes.isEmpty,
+      "A cached drawing proof must not become a pure-expression proof")
+    var deep = draw
+    for _ in 0..<12_000 { deep = b.call("Execute0", [deep]) }
+    XCTAssertEqual(try b.engine(archetypes: [archetype(deep)],
+      sprites: [["name": "#LANE", "id": 1]]).staticIntroArchetypes, [0],
+      "Analysis uses an explicit stack, independent of Swift call-stack depth")
+    let tooWide = b.call("Execute0", Array(repeating: draw, count: 100_000))
+    XCTAssertTrue(try b.engine(archetypes: [archetype(tooWide)],
+      sprites: [["name": "#LANE", "id": 1]]).staticIntroArchetypes.isEmpty,
+      "Excessive proof work preserves the intro rather than trusting the graph")
+    let invalid = b.call("Execute0", [-1])
+    XCTAssertTrue(try b.engine(archetypes: [archetype(invalid)],
+      sprites: [["name": "#LANE", "id": 1]]).staticIntroArchetypes.isEmpty)
+    let indirectCycle = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"buckets":[],
+       "archetypes":[{"name":"Cycle","hasInput":false,"imports":[],
+         "exports":[],"updateParallel":{"index":0}}],
+       "nodes":[{"func":"Execute","args":[1]},
+         {"func":"Execute0","args":[0]}]}
+      """#.utf8))
+    XCTAssertTrue(indirectCycle.staticIntroArchetypes.isEmpty)
   }
 
   func testStaticIntroProvenanceExcludesPreparationAndDynamicSpawns() throws {

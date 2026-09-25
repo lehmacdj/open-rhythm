@@ -124,7 +124,7 @@ struct EnginePlayData: Decodable, Sendable {
   let nodes: [EngineDataNode]
   let buckets: [EngineBucket]
 
-  /// Only persistent non-input entities with unconditional literal stage draws
+  /// Only persistent non-input entities with proven fixed stage draws
   /// are exempt from the initial visual boundary. A sprite's name alone cannot
   /// establish that it is static: engines can animate ordinary stage sprites.
   var staticIntroArchetypes: Set<Int> {
@@ -140,25 +140,78 @@ struct EnginePlayData: Decodable, Sendable {
     let stageIDs = Set(grouped.compactMap { id, sprites in
       sprites.allSatisfy { stageNames.contains($0.name) } ? id : nil
     })
-    func isStaticDrawing(_ index: Int) -> Bool {
-      var pending = [index], visited = Set<Int>()
-      while let index = pending.popLast() {
-        guard nodes.indices.contains(index), visited.insert(index).inserted
-        else { return false }
+    // Do not infer purity from supportedFunctions: streams and random values
+    // can change even when their arguments are fixed. Drawing is a separate
+    // proof result and must never qualify as a side-effect-free argument.
+    let pure: Set<String> = Set([
+      "Abs", "Add", "And", "Arccos", "Arcsin", "Arctan", "Arctan2",
+      "Ceil", "Clamp", "Cos", "Cosh", "Degree", "Divide", "Equal",
+      "Floor", "Frac", "Greater", "GreaterOr", "If", "Lerp", "LerpClamped",
+      "Less", "LessOr", "Log", "Max", "Min", "Mod", "Multiply", "Negate",
+      "Not", "NotEqual", "Or", "Power", "Radian", "Rem", "Remap",
+      "RemapClamped", "Round", "Sign", "Sin", "Sinh", "Subtract", "Tan",
+      "Tanh", "Trunc", "Unlerp", "UnlerpClamped"
+    ]).union(EngineInterpreter.easingFunctions)
+    let drawing: Set<String> = ["Draw", "DrawCurvedB", "DrawCurvedT",
+      "DrawCurvedL", "DrawCurvedR", "DrawCurvedBT", "DrawCurvedLR"]
+    // These blocks cannot change after preprocessing, including writes via
+    // Entity Data's array alias. Only level-backed entities receive the flag.
+    let fixedBlocks: Set<Double> = [2001, 2002, 3000, 4001]
+    enum Proof { case constant, drawing, unsafe }
+    var proofs = [Int: Proof]()
+    var remainingWork = 100_000
+    func isStaticDrawing(_ root: Int) -> Bool {
+      var pending = [(index: root, expanded: false)]
+      var active = Set<Int>()
+      while let (index, expanded) = pending.popLast() {
+        if proofs[index] != nil { continue }
+        guard nodes.indices.contains(index), remainingWork > 0 else {
+          return false
+        }
         let node = nodes[index]
-        if node.value != nil { continue }
-        if node.function == "Execute" || node.function == "Execute0" {
-          pending.append(contentsOf: node.arguments)
+        let function = node.function ?? ""
+        if expanded {
+          active.remove(index)
+          let arguments = node.arguments.map { proofs[$0] ?? .unsafe }
+          if function == "Execute" || function == "Execute0" {
+            proofs[index] = arguments.contains(.unsafe) ? .unsafe
+              : arguments.contains(.drawing) ? .drawing : .constant
+          } else {
+            proofs[index] = arguments.allSatisfy { $0 == .constant }
+              ? (drawing.contains(function) ? .drawing : .constant) : .unsafe
+          }
           continue
         }
-        guard node.function == "Draw", let first = node.arguments.first,
-          nodes.indices.contains(first), let value = nodes[first].value,
-          let id = Int(exactly: value), stageIDs.contains(id),
-          node.arguments.allSatisfy({
-            nodes.indices.contains($0) && nodes[$0].value != nil
-          }) else { return false }
+        // Charge edges before allocating their traversal frames. Reuse results
+        // across archetypes and shared DAGs, but reject gray (cyclic) nodes.
+        guard node.arguments.count < remainingWork else { return false }
+        remainingWork -= node.arguments.count + 1
+        guard active.insert(index).inserted else {
+          proofs[index] = .unsafe
+          continue
+        }
+        if node.value != nil {
+          proofs[index] = .constant
+          active.remove(index)
+          continue
+        }
+        let first = node.arguments.first.flatMap {
+          nodes.indices.contains($0) ? nodes[$0].value : nil
+        }
+        let fixedRead = function == "Get" && node.arguments.count == 2
+          && first.map(fixedBlocks.contains) == true
+        let stageDraw = drawing.contains(function)
+          && first.flatMap(Int.init(exactly:)).map(stageIDs.contains) == true
+        guard pure.contains(function) || fixedRead || stageDraw
+          || function == "Execute" || function == "Execute0" else {
+          proofs[index] = .unsafe
+          active.remove(index)
+          continue
+        }
+        pending.append((index, true))
+        pending.append(contentsOf: node.arguments.map { ($0, false) })
       }
-      return true
+      return proofs[root].map { $0 != .unsafe } ?? false
     }
     return Set(archetypes.indices.filter { index in
       let a = archetypes[index]

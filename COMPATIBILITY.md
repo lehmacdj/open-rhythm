@@ -11,6 +11,39 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Static intro-stage proof includes expressions over prepared immutable data,
+  not just literal arguments. The public [Level Data](
+  https://wiki.sonolus.com/engine-specs/play-blocks/level-data),
+  [Level Option](https://wiki.sonolus.com/engine-specs/play-blocks/level-option),
+  and [Entity Data](https://wiki.sonolus.com/engine-specs/play-blocks/entity-data)
+  access contracts support their fixed post-preprocessing values; [ROM](
+  https://wiki.sonolus.com/engine-specs/play-blocks/engine-rom) is also read-only.
+  The proof accepts Get with a literal ID for one of those four
+  blocks, a fixed index expression, and explicitly allowlisted deterministic
+  arithmetic/easing. Unconditional Draw/DrawCurved statements still require
+  a literal known-stage sprite ID and a persistent level-backed non-input
+  entity. Drawing effects are tracked separately from pure expressions, so
+  shared graph nodes cannot smuggle a drawing operation into an argument proof.
+  Traversal is iterative, memoized across archetypes, and limited to 100,000
+  node/edge work units; cycles, mutable reads, streams, per-frame randomness,
+  dynamic block IDs and conditional drawing retain the intro.
+  The prepared-expression regression failed before the change and passes after
+  it. Additional tests cover shared draws, curved geometry, randomized
+  preprocessing and restart, Entity Data array-alias preparation, mixed proof
+  roles, direct/indirect cycles, invalid indices, a 12,000-node chain and an
+  excessive-width graph. Constant If/easing expressions and a computed fixed
+  Get index also have positive coverage. Independent review found no soundness
+  or work-budget defect. Model tests reach the first visible note through a
+  prepared stage and rewind when another entity changes its global transform.
+  Visual comparison remains necessary even with fixed arguments. This does not
+  close dynamic/custom-stage classification or deferred physical verification.
+  Verification: the September 25 05:22 full simulator run passed all 277 tests
+  with no failures or skips, including six cached-chart integrations
+  (`RunAllTests/B67BD69C-3CEC-48EC-BC9D-953BEF6D7639.txt`). The observer timed
+  out at 300 seconds; the still-running test process subsequently completed,
+  and the same execution supplied its full passing summary and `TEST FINISHED`
+  marker. The 05:28 normal simulator build passed. No physical-device checks
+  or song-server requests were used.
 - Fractional skin/particle sprite rectangles preserve exact texture regions.
   The public [skin sprite](
   https://wiki.sonolus.com/skin-specs/resources/skin-data-sprite) and
@@ -446,10 +479,11 @@ integration probes, including successful inputs and restart/buffering paths.
   lifetimes as well as audio boundaries; resolving an unseen input rewinds it.
   Unknown graphics
   present at media zero preserve the entire opening; unchanged alone is not
-  evidence of disposable stage decoration. A narrow exception requires literal
-  standard-stage Draw calls from persistent non-input level entities without
+  evidence of disposable stage decoration. A narrow exception requires fixed
+  standard-stage Draw/DrawCurved calls from persistent non-input entities without
   spawn conditions or mutable play callbacks. Custom names, conditional draws,
   ambiguous resource IDs and dynamic spawns cannot establish that exception.
+  The prepared-expression extension and its bounds are described above.
   Changes/removal/reordering of initial decoration, background or visible HUD
   geometry rewind to prepared media zero before retaining runtime side effects.
   Projected sprite bounds respect skin/runtime transforms and screen aspect;
