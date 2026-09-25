@@ -11,6 +11,25 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Particle dimensions now use local half-extents before rotation and bilinear
+  mapping. The previous extra division by two shrank both dimensions compared
+  with the official Studio renderer. Its pinned
+  [import/export path](https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/particle.ts)
+  and [state evaluation](https://github.com/Sonolus/studio/blob/c6cb8e93a25368da7fca5b2cb8e44be16f29bd24/src/core/particle-state.ts)
+  pass width/height coefficients through without compensating scaling.
+  A failing-before-fix synthetic regression now passes with independently
+  calculated corners for animated width, translated centers, quarter-turn
+  rotation, negative-width reflection, and non-square parent geometry across
+  all four cache modes. Four focused simulator checks pass. Independent review
+  checked the source chain and corner calculations and found no issue. This
+  improves reference-renderer conformance; it does not certify the user's
+  physical hit-effect appearance or the GPU cost of the larger visible area.
+  Verification: September 25 04:27 simulator suite, all 263 tests passed with
+  no failures or skips, including six cached-chart integrations
+  (`RunAllTests/658CE375-A60D-4966-95ED-FBB0DE18BAEE.txt`). The observer's
+  300-second timeout was followed by the same run's full summary and
+  `TEST FINISHED` marker. The 04:33 normal simulator build passed. No device
+  checks or song-server requests were used.
 - Particle subintervals now retain their animated tail across a loop boundary
   and include their exact end point while the parent effect remains alive.
   The independent reference is the official public Studio
@@ -27,6 +46,12 @@ integration probes, including successful inputs and restart/buffering paths.
   Additional source comparison found easing-curve differences (Back/Elastic
   composition and Expo midpoint); these remain to be
   reconciled rather than treating the editor as a universal runtime oracle.
+  The official [numerical easing contract](
+  https://wiki.sonolus.com/engine-specs/functions/easing-functions) references
+  easings.net; its Back/Elastic definitions support the existing numerical
+  implementation. Do not replace that shared implementation wholesale to
+  match Studio's particle curves. Presentation-specific behavior needs its
+  own evidence and tests.
   Verification: September 25 04:16 simulator suite, all 261 tests passed with
   no failures or skips, including six cached-chart probes
   (`RunAllTests/172F14CB-4321-4EDD-A543-BFE46A109EC5.txt`). The observer timed out

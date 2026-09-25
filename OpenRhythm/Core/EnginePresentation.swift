@@ -1011,8 +1011,10 @@ enum EngineRenderer {
             let alpha = particle.a.value(at: time, endpoints: properties.a)
             let cosine = cos(rotation), sine = sin(rotation)
             let points = [(-1.0,-1.0),(-1,1),(1,1),(1,-1)].map { sx, sy in
-              let dx = sx * w / 2
-              let dy = sy * h / 2
+              // Resource dimensions are local half-extents. The bilinear map
+              // below already converts the -1...1 coordinate space to 0...1.
+              let dx = sx * w
+              let dy = sy * h
               return EngineGeometry.bilinear(quad,
                 u: (x + dx * cosine - dy * sine + 1) / 2,
                 v: (y + dx * sine + dy * cosine + 1) / 2)

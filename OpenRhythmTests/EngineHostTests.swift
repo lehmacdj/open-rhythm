@@ -902,6 +902,73 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticleDimensionsAreLocalHalfExtentsBeforeRotation() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[{"id":9,"name":"fixture"}]},
+       "archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let texture = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2))
+      .pngData { context in
+        UIColor.white.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      }
+    // At half duration: center (1/4, -1/8), half width 3/8,
+    // half height 1/4. Corner expectations are independent of EngineGeometry.
+    let cases: [(Double, Double, [(Double, Double)])] = [
+      (0, 1, [(-0.125, -0.375), (-0.125, 0.125),
+        (0.625, 0.125), (0.625, -0.375)]),
+      (.pi / 2, 1, [(0.5, -0.5), (0, -0.5), (0, 0.25), (0.5, 0.25)]),
+      (0, -1, [(0.625, -0.375), (0.625, 0.125),
+        (-0.125, 0.125), (-0.125, -0.375)])]
+    for (rotation, direction, corners) in cases {
+      let particle: [String: Any] = [
+        "sprite": 0, "color": "#fff", "start": 0, "duration": 1,
+        "x": ["from": ["c": 0.25], "to": ["c": 0.25]],
+        "y": ["from": ["c": -0.125], "to": ["c": -0.125]],
+        "w": ["from": ["c": 0.25 * direction],
+          "to": ["c": 0.5 * direction]],
+        "h": ["from": ["c": 0.25], "to": ["c": 0.25]],
+        "r": ["from": ["c": rotation], "to": ["c": rotation]],
+        "a": ["from": ["c": 1], "to": ["c": 1]]]
+      let data: [String: Any] = [
+        "width": 2, "height": 2, "interpolation": false,
+        "sprites": [["x": 0, "y": 0, "w": 2, "h": 2]],
+        "effects": [["name": "fixture", "transform": [
+          "x1": ["x1": 1], "y1": ["y1": 1],
+          "x2": ["x2": 1], "y2": ["y2": 1],
+          "x3": ["x3": 1], "y3": ["y3": 1],
+          "x4": ["x4": 1], "y4": ["y4": 1]],
+          "groups": [["count": 1, "particles": [particle]]]]]]
+      let assets = try EnginePresentationAssets(engine: engine,
+        presentation: RuntimePresentation(resources: [
+          "configuration": Data(#"{"options":[]}"#.utf8),
+          "particleData": try JSONSerialization.data(withJSONObject: data),
+          "particleTexture": texture]))
+      for xScale in [1.0, 2] {
+        let host = makeHost()
+        try host.beginFrame(at: 3)
+        let spawnQuad = [-xScale, -1, -xScale, 1, xScale, 1, xScale, -1]
+        _ = try host.call(function: "SpawnParticleEffect",
+          arguments: [9] + spawnQuad + [2, 0])
+        try host.beginFrame(at: 4)
+        for mode in 0..<4 {
+          let sprites = EngineRenderer.sprites(host: host, assets: assets,
+            cacheParticleRandomVariables: mode & 1 != 0,
+            cacheParticleProperties: mode & 2 != 0)
+          XCTAssertEqual(sprites.count, 1)
+          let sprite = try XCTUnwrap(sprites.first)
+          XCTAssertEqual(sprite.points.count, corners.count)
+          for (point, expected) in zip(sprite.points, corners) {
+            XCTAssertEqual(point.x, expected.0 * xScale, accuracy: 1e-12)
+            XCTAssertEqual(point.y, expected.1, accuracy: 1e-12)
+          }
+        }
+      }
+    }
+  }
+
+  @MainActor
   func testParticlePropertyDefaultsAndStepEndpoints() throws {
     // The official Studio importer supplies zero coefficients for missing
     // endpoints and linear easing. Its "none" curve steps at exactly 1.

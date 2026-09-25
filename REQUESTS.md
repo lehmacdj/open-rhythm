@@ -68,6 +68,16 @@ Four focused simulator checks and the 04:25 normal build pass; independent
 review found no defect. Numerical engine easing is unchanged; remaining curve
 differences stay open in COMPATIBILITY.md.
 
+Particle geometry follow-up: removed an extra width/height halving that made
+effects smaller than the official public Studio reference. A synthetic corner
+regression failed before the fix and now passes, including rotation,
+reflection, animation and parent aspect scaling. Four focused simulator tests
+pass; independent review found no issue. The reported phone hit effects and
+the performance impact of the corrected larger area still belong to the
+deferred physical batch, not a claimed device fix.
+The September 25 04:27 simulator suite passed all 263 tests with no failures
+or skips; the 04:33 normal simulator build passed.
+
 Option-category follow-up: engine-provided section titles/order now organize
 settings without changing Level Option memory indices. Dedicated note-speed
 and score-mode preferences remain compatible, and resetting either also clears
