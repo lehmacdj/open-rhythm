@@ -367,7 +367,7 @@ struct ParticleData: Decodable {
 
     func value(at time: Double, endpoints: Endpoints) -> Double {
       endpoints.from + (endpoints.to - endpoints.from)
-        * EngineEasing.value(ease ?? "linear", time)
+        * EngineEasing.particleValue(ease ?? "linear", time)
     }
   }
   let width: Int
@@ -567,6 +567,31 @@ enum EngineEasing {
   static func validate(_ name: String?, field: String) throws {
     if let name, !supportedNames.contains(name) {
       throw RuntimeBundleError.unsupportedPresentationValue(field: field, value: name)
+    }
+  }
+
+  /// Resource curves follow the public Studio renderer. Keep its variants
+  /// separate from numerical engine functions and HUD animation curves.
+  static func particleValue(_ name: String, _ time: Double) -> Double {
+    let t = min(1, max(0, time))
+    switch name {
+    case "inOutBack", "inOutElastic":
+      let curve = name == "inOutBack" ? "Back" : "Elastic"
+      return t < 0.5 ? inward(curve, 2 * t) / 2
+        : 1 - inward(curve, 2 - 2 * t) / 2
+    case "outInExpo":
+      if t == 0 || t == 1 { return t }
+      return t < 0.5 ? (1 - pow(2, -20 * t)) / 2
+        : (1 + pow(2, 20 * t - 20)) / 2
+    case "outInElastic":
+      if t == 0 || t == 1 { return t }
+      if t < 0.5 { return value(name, t) }
+      // Studio preserves the inward curve's exponential term at this
+      // midpoint rather than applying the numerical function's zero guard.
+      return (1 - pow(2, 20 * t - 20)
+        * sin((20 * t - 20.75) * 2 * .pi / 3)) / 2
+    default:
+      return value(name, t)
     }
   }
 

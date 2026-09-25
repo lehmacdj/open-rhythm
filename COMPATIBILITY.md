@@ -43,15 +43,13 @@ integration probes, including successful inputs and restart/buffering paths.
   sources and found no interval defect. Studio previews use modulo wall time;
   they do not prove native spawned-effect first-cycle or lifetime behavior.
   Existing one-shot parent expiry remains unchanged.
-  Additional source comparison found easing-curve differences (Back/Elastic
-  composition and Expo midpoint); these remain to be
-  reconciled rather than treating the editor as a universal runtime oracle.
+  Additional source comparison found particle easing-curve differences;
+  the separate particle implementation is described below.
   The official [numerical easing contract](
   https://wiki.sonolus.com/engine-specs/functions/easing-functions) references
   easings.net; its Back/Elastic definitions support the existing numerical
-  implementation. Do not replace that shared implementation wholesale to
-  match Studio's particle curves. Presentation-specific behavior needs its
-  own evidence and tests.
+  implementation. Particle-specific formulas must not replace numerical
+  functions or HUD animation behavior wholesale.
   Verification: September 25 04:16 simulator suite, all 261 tests passed with
   no failures or skips, including six cached-chart probes
   (`RunAllTests/172F14CB-4321-4EDD-A543-BFE46A109EC5.txt`). The observer timed out
@@ -73,6 +71,30 @@ integration probes, including successful inputs and restart/buffering paths.
   numerical easing and UI animation regressions; the 04:25 normal build passes.
   This is focused verification following the prior 261-test full-suite pass,
   not a new full-suite run or physical check.
+- Particle resource easing now has a separate path for Studio's `inOutBack`,
+  `inOutElastic`, `outInExpo` and `outInElastic` variants. The numerical engine
+  functions and HUD animations retain their existing formulas. The initial
+  three-curve regression failed before this correction; independent review
+  caught the fourth case, `outInElastic`'s exact midpoint, which was added to
+  the implementation and regression. Independent expected values cover both
+  halves, endpoints and midpoints, including overshoot and the small Expo/
+  Elastic midpoint discontinuities. Decoded particle properties exercise both
+  direct and cached endpoints; decoded HUD tweens check path separation.
+  After the fourth-case fix, independent review compared all 38 Studio curves
+  against a separate arithmetic transcription of the Swift formulas at 10,009
+  phases each, including exact midpoint and adjacent representable values.
+  Maximum difference was 2.34e-15; no remaining issue was found. This numerical
+  source comparison is distinct from executing the Swift regression tests.
+  This is parity with the pinned public Studio curves, not a claim of native
+  renderer output. Other resource/native conformance work remains open.
+  Verification: the September 25 04:37 full simulator run passed all 264 tests
+  with no failures or skips (`RunAllTests/FF1EB864-8416-49F7-9685-7D432AA5FDE7.txt`).
+  The observer timed out at 300 seconds, then the same run produced its full
+  passing summary and `TEST FINISHED`. That run built before the fourth-case
+  review correction and HUD assertions. All seven focused particle/numerical/
+  HUD regressions passed against the final code at 04:42
+  (`RunSomeTests/B18F6498-F146-4053-9C21-59BD3CF415D6.txt`), and the final 04:42
+  normal simulator build passed. No device tests or song-server requests.
 - Presentation preparation now rejects unknown primary/secondary metrics,
   judgment-error styles/placements and UI/selected-particle easing names with
   a human-readable error identifying the field and value. This replaces silent

@@ -902,6 +902,60 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticleEasingKeepsResourceCurvesSeparateFromEngineMath() throws {
+    let phases = [0.0, 0.25, 0.5, 0.75, 1]
+    // Independent values from the pinned public Studio particle curves.
+    // Back/Elastic concatenate the inward/outward half curves; Expo retains
+    // its nonzero midpoint term. Numerical engine functions use easings.net.
+    let examples: [(String, [Double])] = [
+      ("inOutBack", [0, -0.04384875, 0.5, 1.04384875, 1]),
+      ("inOutElastic", [0, -0.0078125, 0.5, 1.0078125, 1]),
+      ("outInExpo", [0, 0.484375, 0.50048828125, 0.515625, 1]),
+      ("outInElastic", [0, 0.5078125, 0.499755859375, 0.4921875, 1])]
+    for (ease, expected) in examples {
+      let data = try JSONSerialization.data(withJSONObject: [
+        "from": ["c": 2], "to": ["c": 6], "ease": ease])
+      let property = try JSONDecoder().decode(ParticleData.Property.self,
+        from: data)
+      let tweenData = try JSONSerialization.data(withJSONObject: [
+        "from": 2, "to": 6, "duration": 1, "ease": ease])
+      let tween = try JSONDecoder().decode(EngineConfiguration.UI.Animation.Tween.self,
+        from: tweenData)
+      let variables = EngineGeometry.randomVariables(seed: 7)
+      let endpoints = property.endpoints(variables: variables)
+      for (phase, value) in zip(phases, expected) {
+        XCTAssertEqual(property.value(at: phase, variables: variables),
+          2 + 4 * value, accuracy: 1e-12, "\(ease) at \(phase)")
+        XCTAssertEqual(property.value(at: phase, endpoints: endpoints),
+          2 + 4 * value, accuracy: 1e-12)
+        XCTAssertEqual(tween.value(at: phase),
+          2 + 4 * EngineEasing.value(ease, phase), accuracy: 1e-12,
+          "HUD animation must not select the particle-specific curve")
+      }
+      XCTAssertEqual(property.value(at: -1, variables: variables), 2,
+        accuracy: 1e-12)
+      XCTAssertEqual(property.value(at: 2, variables: variables), 6,
+        accuracy: 1e-12)
+    }
+    XCTAssertEqual(EngineEasing.value("inOutBack", 0.25), -0.09968184375,
+      accuracy: 1e-12)
+    XCTAssertEqual(EngineEasing.value("inOutElastic", 0.25),
+      0.011969444423734, accuracy: 1e-12)
+    XCTAssertEqual(EngineEasing.value("outInExpo", 0.5), 0.5)
+    XCTAssertEqual(EngineEasing.value("outInElastic", 0.5), 0.5)
+    let exceptions = Set(examples.map(\.0))
+    for ease in EngineEasing.supportedNames.subtracting(exceptions) {
+      let property = ParticleData.Property(from: ["c": 0], to: ["c": 1],
+        ease: ease)
+      for phase in phases {
+        XCTAssertEqual(property.value(at: phase, variables: ["c": 1]),
+          EngineEasing.value(ease, phase), accuracy: 1e-12,
+          "Other resource curves must remain unchanged: \(ease)")
+      }
+    }
+  }
+
+  @MainActor
   func testParticleDimensionsAreLocalHalfExtentsBeforeRotation() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
       {"skin":{"sprites":[]},"effect":{"clips":[]},

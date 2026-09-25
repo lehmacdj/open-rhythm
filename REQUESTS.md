@@ -66,7 +66,18 @@ endpoint instead of holding the starting value forever. A failing-before-fix
 regression now passes, including rendered positions across loop boundaries.
 Four focused simulator checks and the 04:25 normal build pass; independent
 review found no defect. Numerical engine easing is unchanged; remaining curve
-differences stay open in COMPATIBILITY.md.
+differences are addressed by the particle-specific follow-up below.
+
+Particle curve follow-up: particle properties now use the public Studio
+Back/Elastic composition and Expo/Elastic midpoint behavior without changing
+numerical engine easing or HUD animations. The regression failed before the
+initial correction; independent review identified an additional Elastic
+midpoint case, which is also corrected and covered. Native presentation parity
+still needs the later physical batch; this does not close general API coverage.
+Independent re-review found no remaining curve mismatch. The 04:37 full
+simulator run passed 264 tests; it built before the final review correction.
+Seven focused regressions then passed on the final code at 04:42, along with
+the normal simulator build. The verification sequence is in COMPATIBILITY.md.
 
 Particle geometry follow-up: removed an extra width/height halving that made
 effects smaller than the official public Studio reference. A synthetic corner
