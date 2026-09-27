@@ -75,8 +75,14 @@ All 37 focused audio checks pass at 12:10 after the fix. Seven bounded checks
 also passed under Thread Sanitizer at 12:09 with no reported races; the build
 log confirms native `-fsanitize=thread` instrumentation. This is not exhaustive
 race proof. The temporary sanitizer setting is restored and the normal build
-passes at 12:10. A full-suite rerun after the ARC fix remains pending before
-stable push; the earlier 314-test result must not be treated as that rerun.
+passes at 12:10. The full rerun after the ARC fix then completed at 12:21 with
+all 316 tests passing, zero failures or skips, and the final `TEST FINISHED`
+marker. This includes the cached Eleventh, 光, 22/7 and “shake it!” lifecycle/
+restart checks and the repeated-contact probe. The final normal build passes
+at 12:22. The observer's five-minute timeout did not restart or invalidate the
+still-running suite; completion was verified from the original run's artifacts.
+This closes the native implementation's pending full-suite validation, not
+acoustic alignment, hardware interruptions or arbitrary-engine compatibility.
 
 Buffering-audio follow-up (September 27, 2026): buffering now uses the same
 sample-preserving pause path as explicit debug pause. Previously a reserved
@@ -892,12 +898,15 @@ model level, checking that future judgments and spawned entities do not leak.
    observations, not independently established. Native player re-anchors are
    not corrected by arbitrary calibration or relaxed alignment tolerances.
    This limitation does not reopen device testing before the API gate.
-7. Finish full-suite validation of the new native scheduled-stop implementation.
-   The main-actor timer is replaced, with exact PCM and host-timestamp kernel
-   tests, asymmetric pause rebasing, earlier/later stops, voice reuse and the
-   controller resume-order race covered. The final normal build passes; full-suite
-   validation remains pending. Acoustic parity and hardware interruptions stay in
-   the deferred physical batch. Do not infer calibration from these checks.
+
+The former native scheduled-stop full-suite item is complete: all 316 tests
+pass after the ARC fix, with final normal build and independent review. Its
+acoustic/hardware checks remain part of items 1, 4, 5 and 6 above. Do not infer
+calibration from these checks. A bounded independent resource review on
+September 27 found no new contract-supported defect; undocumented parity and
+the stack ABI remain open. A public stack-contract clarification draft is
+prepared locally, awaiting permission to post to Sonolus/feedback; no issue
+has been submitted.
 
 ## Deliberately not added / superseded requests
 

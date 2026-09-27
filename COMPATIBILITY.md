@@ -36,7 +36,9 @@ integration probes, including successful inputs and restart/buffering paths.
   pass at 12:09 without reported races (native instrumentation verified in the
   build log); this is not exhaustive proof. Temporary diagnostics are restored,
   and the normal build passes at 12:10. Full-suite validation after the ARC fix
-  remains pending before stable push.
+  completed at 12:21: all 316 tests passed, no failures or skips, with the final
+  `TEST FINISHED` marker. The final normal build passes at 12:22. This closes
+  the pending implementation validation, not acoustic/hardware parity.
 - Buffering freezes active effect samples instead of restarting them. A due
   reserved one-shot is promoted once, preserving minimum-distance history;
   active loops retain their sample position and only future reservations are
@@ -973,6 +975,11 @@ questions. They do not certify every legal combination of resource fields.
 | Effect audio | Engine-requested named clips are selected from the ZIP and prepared through the native audio backend; missing names remain unavailable to HasEffectClip. | An exhaustive supported codec contract is not supplied by the public MP3 recommendation; native format support and acoustic alignment remain separate checks. |
 | Background | Natural aspect and unit scaling apply when overrides are absent; declared fit, color, mask and blur are consumed. | The blur kernel/radius is not specified publicly; the current size-normalized Gaussian is host policy. |
 
+A bounded independent review on September 27 found no new contract-supported
+valid-resource incompatibility in decoding, selection, options or play UI.
+This does not close the evidence limits above or convert host policies into
+native guarantees. Per-engine preference scope remains an explicit user policy.
+
 ## Stack implementation evidence needed
 
 The September 25 contract recheck still does not supply an interoperable stack
@@ -1007,7 +1014,10 @@ effects. These questions can be used for upstream clarification, but no issue,
 message or reference-client probe has been submitted or executed.
 No native-client execution is authorized by this evidence request; the user's
 device-testing gate remains in force. Repeatedly rereading the same signatures
-is not progress toward resolving the layout.
+is not progress toward resolving the layout. A public clarification draft was
+prepared on September 27; permission to post it to the project's designated
+[developer-support repository](https://github.com/Sonolus/feedback) is pending.
+No public issue or message has been submitted.
 
 ## Remaining checks, including engines we have not sampled
 
@@ -1015,7 +1025,10 @@ is not progress toward resolving the layout.
   https://wiki.sonolus.com/engine-specs/functions/stop-looped-scheduled)
   specifies precise stopping when scheduled at least 0.5 seconds ahead. The new
   native PCM adapter implements timer-independent stops, including later
-  rebasing after asymmetric buffering; full-suite validation remains pending.
+  rebasing after asymmetric buffering. The ARC-fixed implementation passes all
+  316 tests in the September 27 12:21 full simulator run and the final normal
+  build; the independent review and native boundary/lifetime tests are recorded
+  above.
   The earlier silent-buffer prototype was rejected after a native probe proved
   that an earlier queued interruption survived a later replacement. The new
   gates do not rely on selective unscheduling or missing player-time anchors.
