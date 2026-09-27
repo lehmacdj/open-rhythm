@@ -1298,6 +1298,18 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesReadOnlyLocalStageAndPreservesChanges() async throws {
+    for shifted in [false, true] {
+      let moveTimes: [Double?] = [nil, 0.25]
+      for movesAt in moveTimes {
+        try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+          earlyInput: true, preparedStage: true, stageMovesAt: movesAt,
+          shiftedStageRead: shifted, stageMemoryBlock: 4000)
+      }
+    }
+  }
+
+  @MainActor
   func testGameplayIntroPassesFixedBranchSelectedStage() async throws {
     for branch in ["If", "Switch", "SwitchWithDefault", "SwitchInteger",
       "SwitchIntegerWithDefault"] {
@@ -1341,7 +1353,8 @@ final class EngineHostTests: XCTestCase {
     preparedBranch: String? = nil,
     stagePureCallbacks: Bool = false,
     shiftedStageRead: Bool = false,
-    stageResourceQuery: String? = nil) async throws {
+    stageResourceQuery: String? = nil,
+    stageMemoryBlock: Int = 2001) async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -1392,12 +1405,13 @@ final class EngineHostTests: XCTestCase {
     if preparedStage {
       let coordinates = quad.indices.map {
         shiftedStageRead
-          ? b.call("GetShifted", [b.value(2001), b.value(0),
+          ? b.call("GetShifted", [b.value(Double(stageMemoryBlock)), b.value(0),
             b.value(Double($0)), b.value(1)])
-          : b.call("Get", [b.value(2001), b.value(Double($0))])
+          : b.call("Get", [b.value(Double(stageMemoryBlock)), b.value(Double($0))])
       }
       let writes = quad.enumerated().map { index, value in
-        b.call("Set", [b.value(2001), b.value(Double(index)), b.value(value)])
+        b.call("Set", [b.value(Double(stageMemoryBlock)), b.value(Double(index)),
+          b.value(value)])
       }
       var stage = b.call("Draw", [b.value(1)]
         + coordinates + [b.value(-1), b.value(1)])
@@ -1618,7 +1632,7 @@ final class EngineHostTests: XCTestCase {
     }
     let mutable = b.call("Get", [b.value(1001), zero])
     let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, one])
-    var invalid = [1001, 1002, 1003, 2000, 4000, 4002, 4003, 4004,
+    var invalid = [1001, 1002, 1003, 2000, 4002, 4003, 4004,
       4005, 4101, 4102, 4103, 10000].map {
       b.call("GetShifted", [b.value(Double($0)), zero, zero, one])
     }
@@ -1664,6 +1678,84 @@ final class EngineHostTests: XCTestCase {
         "updateParallel": ["index": b.call("If", [query, draw, zero])]]
     }, sprites: [["name": "#LANE", "id": 1]])
     XCTAssertEqual(engine.staticIntroArchetypes, Set(valid.indices))
+  }
+
+  func testStaticIntroProofLocalReadsRequireReadOnlyLifecycle() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1), local = b.value(4000)
+    let read = b.call("Get", [local, zero])
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, read])
+    let callbacks = ["shouldSpawn", "initialize", "updateSequential", "touch",
+      "updateParallel", "terminate"]
+    let base: [String: Any] = ["name": "Stage", "hasInput": false,
+      "imports": [], "exports": [], "updateParallel": ["index": draw]]
+    var archetypes = [base]
+    let mutations = [
+      b.call("Set", [local, zero, one]),
+      b.call("SetShifted", [local, zero, zero, one, one]),
+      b.call("SetPointed", [local, zero, zero, one]),
+      b.call("IncrementPost", [local, zero]),
+      b.call("Copy", [local, zero, local, one, one])]
+    for callback in callbacks {
+      for mutation in mutations {
+        var candidate = base
+        // Even an unselected writing branch disqualifies the whole entity.
+        candidate[callback] = ["index": b.call("If", [one,
+          callback == "updateParallel" ? draw : read, mutation])]
+        archetypes.append(candidate)
+      }
+    }
+    let engine = try b.engine(archetypes: archetypes,
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, [0])
+    XCTAssertEqual(try b.engine(archetypes: Array(archetypes.reversed()),
+      sprites: [["name": "#LANE", "id": 1]]).staticIntroArchetypes,
+      [archetypes.count - 1], "Shared memoized reads cannot hide a writer")
+  }
+
+  func testStaticIntroLocalMemoryKeepsEntityIsolationSpawnAndRestart() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1), local = b.value(4000)
+    let read = b.call("Get", [local, zero])
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, read])
+    let now = b.call("Get", [b.value(1001), zero])
+    let other = b.call("Execute0", [
+      b.call("Set", [local, zero, now]),
+      b.call("If", [b.call("Equal", [now, zero]),
+        b.call("Spawn", [zero, b.value(0.9)]), zero])])
+    let engine = try b.engine(archetypes: [
+      ["name": "Stage", "hasInput": false,
+        "imports": [["name": "alpha", "index": 0]], "exports": [],
+        "preprocess": ["index": b.call("Set", [local, zero,
+          b.call("Get", [b.value(4001), zero])])],
+        "spawnOrder": ["index": b.call("Set", [local, one, b.value(7)])],
+        "shouldSpawn": ["index": b.call("Get", [local, one])],
+        "initialize": ["index": read], "touch": ["index": read],
+        "updateSequential": ["index": read], "terminate": ["index": read],
+        "updateParallel": ["index": draw]],
+      ["name": "Other", "hasInput": false, "imports": [], "exports": [],
+        "updateSequential": ["index": other]]],
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, [0])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "Stage", name: nil,
+          data: [LevelEntityData(name: "alpha", value: 0.25, ref: nil)]),
+        LevelEntity(archetype: "Stage", name: nil,
+          data: [LevelEntityData(name: "alpha", value: 0.75, ref: nil)]),
+        LevelEntity(archetype: "Other", name: nil, data: [])]),
+      options: [], aspectRatio: 2, skinSpriteIDs: [1], effectClipIDs: [],
+      particleEffectIDs: [])
+    for _ in 0..<2 {
+      try runtime.update(at: 0)
+      XCTAssertEqual(runtime.host.draws.map(\.alpha), [0.25, 0.75])
+      XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration), [true, true])
+      try runtime.update(at: 0.25)
+      XCTAssertEqual(runtime.host.draws.map(\.alpha), [0.25, 0.75, 0.9])
+      XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration),
+        [true, true, false], "Dynamically spawned copies are not initial decoration")
+      runtime.restart()
+    }
   }
 
   func testStaticIntroProofClassifiesFixedSelectionBranches() throws {
@@ -1789,7 +1881,7 @@ final class EngineHostTests: XCTestCase {
   func testStaticIntroProofRejectsMutableArgumentExpressionsAndCycles() throws {
     let b = RuntimeNodeBuilder()
     let one = b.value(1)
-    let mutable = [1001, 1002, 1003, 2000, 4000, 4002, 4003, 4004,
+    let mutable = [1001, 1002, 1003, 2000, 4002, 4003, 4004,
       4005, 4102, 4103, 10000].map {
       b.call("Get", [b.value(Double($0)), b.value(0)])
     }

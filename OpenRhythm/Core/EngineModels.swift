@@ -163,6 +163,12 @@ struct EnginePlayData: Decodable, Sendable {
     // These blocks cannot change after preprocessing, including writes via
     // Entity Data's array alias. Only level-backed entities receive the flag.
     let fixedBlocks: Set<Double> = [2001, 2002, 3000, 4001]
+    // Entity Memory (4000) has no cross-entity alias. It is also stable once
+    // preparation finishes IF all subsequent callbacks are read-only. The
+    // whole-archetype checks below establish that condition: any possible
+    // write disqualifies the entity, even when a shared read node was memoized.
+    // Spawned copies never receive this flag; their memory is initialized at
+    // spawn rather than at level preparation.
     enum Proof { case constant, drawing, unsafe }
     var proofs = [Int: Proof]()
     var remainingWork = 100_000
@@ -226,7 +232,7 @@ struct EnginePlayData: Decodable, Sendable {
         let readArity = function == "Get" ? 2
           : function == "GetShifted" ? 4 : nil
         let fixedRead = readArity == node.arguments.count
-          && first.map(fixedBlocks.contains) == true
+          && first.map { fixedBlocks.contains($0) || $0 == 4000 } == true
         let stageDraw = drawing.contains(function)
           && first.flatMap(Int.init(exactly:)).map(stageIDs.contains) == true
         let fixedResourceQuery = resourceQueries.contains(function)

@@ -43,6 +43,22 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Read-only entity-memory intro follow-up (September 27, 2026): prepared local
+stage coordinates can now qualify for safe skipping through direct or shifted
+reads. Entity Memory has no cross-entity alias; this is a conditional proof,
+not a declaration that block 4000 is globally immutable. Every callback after
+preparation must be read-only (or only draw fixed stage graphics), and any
+possible writer disqualifies the archetype, including unselected branches.
+Preprocess and spawn-order writes finish before the restart snapshot. Spawned
+copies remain excluded from initial-decoration flags. Three regressions failed
+before the change and now cover advancement to the first visible note, visual
+rewind, writer rejection across all callbacks, shared proof nodes in both
+traversal orders, independent entity values, other-entity writes, spawned copies
+and restart restoration. All 317 non-cached tests and the normal build pass at
+12:38; the six cached-chart tests were not repeated. Independent review found
+no actionable issue. Shared/dynamic stage state and physical presentation
+verification remain open.
+
 Resource-query intro follow-up (September 27, 2026): fixed unary
 `HasSkinSprite`, `HasEffectClip` and `HasParticleEffect` calls can now select
 static stage layouts. Their availability sets are immutable for each prepared

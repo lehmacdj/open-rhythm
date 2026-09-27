@@ -11,6 +11,19 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Entity Memory reads can qualify as fixed intro-stage expressions only under
+  the whole-archetype read-only proof. Block 4000 is entity-keyed and unaliased;
+  preprocessing/spawn-order changes precede the prepared snapshot, and all
+  subsequent callbacks must be free of writes or other unproven side effects.
+  A memoized read does not waive this condition for another writing archetype.
+  Spawned entities never receive the initial-decoration flag. Three new tests
+  failed before the change and now cover direct/shifted local stage reads,
+  cross-entity isolation, writes in every callback and unselected branches,
+  spawn/restart state, actual intro advancement and visual-change rewind.
+  All 317 non-cached tests and the normal build pass at 12:38 September 27;
+  the six cached-chart tests were not repeated. Independent review found no
+  actionable issue. Shared memory and arbitrary dynamic-stage classification
+  remain outside this proof.
 - Resource-existence checks with fixed pure IDs qualify as constant expressions
   in intro-stage proof. The host's skin/effect/particle availability sets are
   immutable runtime inputs, unlike streams. Exact unary arity is required;
