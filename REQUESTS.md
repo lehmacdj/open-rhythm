@@ -14,6 +14,11 @@ the user explicitly asks for a specific device issue to be investigated sooner.
 The previous pending unlock request is superseded; a connected or unlocked
 phone alone does not reopen device testing.
 
+The pending live audio-clock device check is deferred with the rest of the
+batch, including after the user's earlier unlock confirmation. Do not retry
+that launch or continue other queued device checks in the background. Continue
+API implementation and simulator validation without waiting for the phone.
+
 Prioritize the API contract checklist, implementation gaps and synthetic
 conformance tests, using simulator tests and builds while that work proceeds.
 The gate is closure of the API contract gaps tracked in COMPATIBILITY.md, not
