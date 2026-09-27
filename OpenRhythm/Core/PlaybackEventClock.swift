@@ -55,51 +55,114 @@ struct PlaybackClockHistory {
     let mediaTime: Double
     let rate: Double
   }
-  private(set) var segments = [Segment]()
+  struct Entry {
+    let validFrom: Double
+    let mapping: Segment
+  }
+  struct Transition {
+    let earliestHostTime: Double
+    let latestHostTime: Double
+    let appliedHostTime: Double
+    let usedNotificationTime: Bool
+  }
+  private(set) var segments = [Entry]()
+  private var lastObservation: Double?
 
-  mutating func record(_ segment: Segment) {
+  mutating func record(_ segment: Segment, validFrom: Double? = nil) {
+    let boundary = validFrom ?? segment.hostTime
     guard segment.hostTime.isFinite, segment.mediaTime.isFinite,
-      segment.rate.isFinite else { return }
-    if segments.last == segment { return }
-    // A re-anchor replaces the mapping from that instant onward.
-    segments.removeAll { $0.hostTime >= segment.hostTime }
-    segments.append(segment)
+      segment.rate.isFinite, boundary.isFinite else { return }
+    if segments.last?.mapping == segment { return }
+    // Conversion origins may be zero, old, or future. They are not the
+    // instant at which this newly observed mapping replaced the previous one.
+    segments.removeAll { $0.validFrom >= boundary }
+    segments.append(Entry(validFrom: boundary, mapping: segment))
     if segments.count > 128 { segments.removeFirst(segments.count - 128) }
+  }
+
+  @discardableResult
+  mutating func observe(_ segment: Segment, at hostTime: Double,
+    transitionHostTime: Double? = nil) -> Transition? {
+    guard hostTime.isFinite, segment.hostTime.isFinite,
+      segment.mediaTime.isFinite, segment.rate.isFinite,
+      lastObservation.map({ hostTime > $0 }) ?? true else { return nil }
+    // A notification can refine a boundary only within the interval in
+    // which this mapping could have changed. Never rewrite an observed past
+    // because a clock drift calibration chose a different affine origin.
+    let earliest = lastObservation ?? hostTime
+    lastObservation = hostTime
+    guard segments.last?.mapping != segment else { return nil }
+    let candidate = transitionHostTime.flatMap {
+      $0.isFinite && $0 > earliest && $0 <= hostTime ? $0 : nil
+    }
+    let boundary = candidate ?? hostTime
+    record(segment, validFrom: boundary)
+    return Transition(earliestHostTime: earliest, latestHostTime: hostTime,
+      appliedHostTime: boundary, usedNotificationTime: candidate != nil)
   }
 
   func mediaTime(at hostTime: Double) -> Double? {
     guard hostTime.isFinite,
-      let segment = segments.last(where: { $0.hostTime <= hostTime })
+      let entry = segments.last(where: { $0.validFrom <= hostTime })
         ?? segments.first else { return nil }
+    let segment = entry.mapping
     return segment.mediaTime + (hostTime - segment.hostTime) * segment.rate
   }
 }
 
 /// UIKit event timestamps and Core Media's host clock share system uptime.
-/// Capture clock transitions synchronously on the posting thread, so main
-/// thread stalls do not move a buffering boundary to notification delivery.
+/// Capture transitions on the posting thread. Moving notification times can
+/// be inverted into host time; stopped mappings have only an observation
+/// bracket, not a documented exact host timestamp.
 final class PlaybackEventClock: @unchecked Sendable {
+  struct Observation {
+    let observedHostTime: Double
+    let reason: String
+    let notificationPayload: String?
+    let segment: PlaybackClockHistory.Segment
+    let sourceAnchorHostTime: Double
+    let sourceAnchorMediaTime: Double
+    let transition: PlaybackClockHistory.Transition?
+  }
+
   private let timebase: CMTimebase
+  private let recordTransitions: Bool
   private let lock = NSLock()
   private var history = PlaybackClockHistory()
+  private var observations = [Observation]()
   private var observers = [NSObjectProtocol]()
 
-  init(timebase: CMTimebase) {
+  init(timebase: CMTimebase, recordTransitions: Bool = false) {
     self.timebase = timebase
+    self.recordTransitions = recordTransitions
     for name in [kCMTimebaseNotification_EffectiveRateChanged,
       kCMTimebaseNotification_TimeJumped] {
       observers.append(NotificationCenter.default.addObserver(
         forName: Notification.Name(name as String), object: timebase,
-        queue: nil) { [weak self] _ in self?.capture() })
+        queue: nil) { [weak self] notification in
+          guard let self else { return }
+          self.capture(reason: notification.name.rawValue,
+            eventTime: (notification.userInfo?[
+              kCMTimebaseNotificationKey_EventTime as String] as? NSDictionary)
+              .map { CMTimeMakeFromDictionary($0).seconds },
+            payload: recordTransitions ? String(describing: notification.userInfo) : nil)
+        })
     }
-    capture()
+    capture(reason: "initial")
   }
 
   deinit {
     for observer in observers { NotificationCenter.default.removeObserver(observer) }
   }
 
-  private func capture() {
+  var diagnosticObservations: [Observation] {
+    lock.lock()
+    defer { lock.unlock() }
+    return observations
+  }
+
+  private func capture(reason: String, eventTime: Double? = nil,
+    payload: String? = nil) {
     lock.lock()
     defer { lock.unlock() }
     var rate = 0.0
@@ -108,11 +171,42 @@ final class PlaybackEventClock: @unchecked Sendable {
     guard CMSyncGetRelativeRateAndAnchorTime(timebase,
       relativeTo: CMClockGetHostTimeClock(), relativeRateOut: &rate,
       anchorTimeOut: &media, relativeToAnchorTimeOut: &host) == noErr else { return }
-    history.record(.init(hostTime: host.seconds, mediaTime: media.seconds, rate: rate))
+    let segment = PlaybackClockHistory.Segment(hostTime: host.seconds,
+      mediaTime: media.seconds, rate: rate)
+    let observedHost = CMClockGetTime(CMClockGetHostTimeClock()).seconds
+    var sourceHost = CMTime.invalid
+    var sourceMedia = CMTime.invalid
+    if recordTransitions {
+      let source = CMTimebaseCopyUltimateSourceClock(timebase)
+      var sourceTime = CMTime.invalid
+      if CMSyncGetRelativeRateAndAnchorTime(timebase, relativeTo: source,
+        relativeRateOut: nil, anchorTimeOut: &sourceMedia,
+        relativeToAnchorTimeOut: &sourceTime) == noErr {
+        sourceHost = CMSyncConvertTime(sourceTime, from: source,
+          to: CMClockGetHostTimeClock())
+      }
+    }
+    let transition: Double?
+    if let eventTime, rate != 0 {
+      transition = host.seconds + (eventTime - media.seconds) / rate
+    } else {
+      transition = nil
+    }
+    let recorded = history.observe(segment, at: observedHost,
+      transitionHostTime: transition)
+    if recordTransitions,
+      observations.last?.segment != segment || payload != nil {
+      if observations.count == 64 { observations.removeFirst() }
+      observations.append(Observation(
+        observedHostTime: observedHost,
+        reason: reason, notificationPayload: payload, segment: segment,
+        sourceAnchorHostTime: sourceHost.seconds,
+        sourceAnchorMediaTime: sourceMedia.seconds, transition: recorded))
+    }
   }
 
   func mediaTime(at timestamp: Double) -> Double? {
-    capture()
+    capture(reason: "read")
     lock.lock()
     defer { lock.unlock() }
     return history.mediaTime(at: timestamp)

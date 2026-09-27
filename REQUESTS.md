@@ -39,6 +39,36 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Clock-history follow-up (September 27, 2026): simulator traces reproduced a
+client defect independently of the reported acoustic bias. Core Media supplied
+host-relative affine anchors at zero; the history mistook those reference
+origins for transition times and replaced prior mappings, changing an already
+queued touch by roughly 2–9 ms in captured failures. History now stores its
+validity boundary separately and never uses a new reference origin to rewrite
+previously observed timestamps. Moving notification times can refine the
+boundary inside the observation interval. Stopped or uncertain transitions use
+the first changed observation; their exact physical transition time is not
+claimed. Opt-in diagnostics retain that uncertainty bracket in bounded storage.
+
+The investigation also found an incorrect future-anchor test assumption:
+Core Media already extrapolates before a future reference anchor; it does not
+wait for that anchor to start the timebase. A new assertion failed before the
+fix and now agrees with a direct native-clock read. Regression coverage includes
+the captured zero-origin sequence, repeated reads, discontinuities, invalid
+boundaries, exact-timestamp ordering, nested parent changes and source swaps.
+Twenty clock tests passed at 10:52; the added nested-source test passed at
+10:54, and final boundary/debug-pause checks passed at 10:56. The normal build
+passed at 10:57. The full simulator suite is now running; not yet a stable-push
+sign-off. Independent review caught the exact-timestamp edge and it is fixed;
+final follow-up review found no remaining actionable issue.
+
+Native playback stalls/jumps are distinguished from uninterrupted wall-time
+progression in the integration checks. Every moving native rate is still
+checked against the requested speed, and input/player alignment and queued
+history assertions remain strict. Neither calibration nor player timing is
+adjusted to hide a failure. Physical audio/display alignment remains unverified
+and deferred under the API gate.
+
 Long-curve compatibility follow-up (September 27, 2026): removed the app's
 undocumented 1,024-segment limit on individual curved draws. All six variants
 can now use the remaining shared frame drawing budget, with no reduction in
@@ -775,14 +805,14 @@ model level, checking that future judgments and spawned entities do not leak.
    Check calibration usability and alignment in the deferred device batch;
    resolve the public API's underdocumented audio-offset sign/unit convention
    without guessing a correction from the user's early/late distribution.
-6. Investigate the September 27 simulator live debug-pause clock failure before
-   treating the current build as stable. Five other live-clock tests recovered
-   unchanged after the long full run, but the isolated debug-pause case exposed
-   historical input remapping and elapsed-time disagreement during an audio
-   I/O reconfiguration. Distinguish sampling uncertainty, legitimate Core Media
-   clock changes and a client history defect; do not blindly loosen tolerances
-   or adjust input calibration to hide the observation. This simulator issue
-   does not reopen physical testing before the API-coverage gate.
+6. Finish full-suite validation and independent review of the September 27
+   clock-history fix before treating the current build as stable. The confirmed
+   affine-origin/history-boundary defect is fixed and focused checks pass;
+   the current full run has no result yet. Exact stopped-transition timing is
+   still bounded by observations, not independently established. Native player
+   re-anchors are not corrected by arbitrary calibration or relaxed alignment
+   tolerances. This simulator work does not reopen physical testing before the
+   API-coverage gate.
 
 ## Deliberately not added / superseded requests
 

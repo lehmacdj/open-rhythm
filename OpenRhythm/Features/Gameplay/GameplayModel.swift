@@ -301,6 +301,23 @@ final class GameplayModel {
   }
   private var player: AVPlayer?
   private var eventClock: PlaybackEventClock?
+  var eventClockDiagnosticObservations: [PlaybackEventClock.Observation] {
+    eventClock?.diagnosticObservations ?? []
+  }
+  var eventClockDiagnostics: String {
+    let observations = eventClockDiagnosticObservations
+    return "Player rate=\(player?.rate ?? 0), "
+      + "status=\(player?.timeControlStatus.rawValue ?? -1), "
+      + "waiting=\(player?.reasonForWaitingToPlay?.rawValue ?? "none"); "
+      + observations.map {
+        "[observed=\($0.observedHostTime), reason=\($0.reason), "
+          + "anchor=\($0.segment.hostTime), media=\($0.segment.mediaTime), "
+          + "sourceHost=\($0.sourceAnchorHostTime), "
+          + "sourceMedia=\($0.sourceAnchorMediaTime), "
+          + "transition=\(String(describing: $0.transition)), "
+          + "rate=\($0.segment.rate), payload=\($0.notificationPayload ?? "none")]"
+      }.joined(separator: " ")
+  }
   private var timeObserver: Any?
   private var endObserver: NSObjectProtocol?
   private var statusObserver: NSKeyValueObservation?
@@ -636,7 +653,8 @@ final class GameplayModel {
       try engineAudio?.start()
       if engineRuntime != nil { engineHaptics.start() }
       if let timebase = player?.currentItem?.timebase {
-        eventClock = PlaybackEventClock(timebase: timebase)
+        eventClock = PlaybackEventClock(timebase: timebase,
+          recordTransitions: timingRecorder != nil)
       }
       isStartingPlayback = false
       player?.play()
@@ -730,7 +748,8 @@ final class GameplayModel {
         ProcessInfo.processInfo.systemUptime)
     } else {
       if let timebase = player?.currentItem?.timebase {
-        eventClock = PlaybackEventClock(timebase: timebase)
+        eventClock = PlaybackEventClock(timebase: timebase,
+          recordTransitions: timingRecorder != nil)
       }
       player?.play()
     }

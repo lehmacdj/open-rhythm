@@ -98,7 +98,9 @@ final class PlaybackClockTests: XCTestCase {
 
   @MainActor
   func testDebugPauseFreezesStartupPlayerAndTailClocksAcrossRestarts() async throws {
-    try await checkLiveClocks(nativePlayfield: false, debugPauseCheck: true)
+    for _ in 0..<3 {
+      try await checkLiveClocks(nativePlayfield: false, debugPauseCheck: true)
+    }
   }
 
   @MainActor
@@ -269,6 +271,7 @@ final class PlaybackClockTests: XCTestCase {
       var frameSamples = Set<Double>()
       let start = CACurrentMediaTime()
       let chartStart = model.playbackTime
+      let startSampleEnd = CACurrentMediaTime()
       let frameChartStart = model.currentTime
       for _ in 0..<40 {
         let before = CACurrentMediaTime()
@@ -285,16 +288,54 @@ final class PlaybackClockTests: XCTestCase {
         // Delayed delivery must retain the earlier event's media mapping.
         let oldTime = model.inputTime(at: before)
         try await Task.sleep(for: .milliseconds(10))
-        XCTAssertEqual(model.inputTime(at: before), oldTime, accuracy: 0.001)
+        XCTAssertEqual(model.inputTime(at: before), oldTime, accuracy: 0.001,
+          "Queried host time=\(before); \(model.eventClockDiagnostics)")
       }
-      let elapsed = CACurrentMediaTime() - start
-      XCTAssertEqual(model.playbackTime - chartStart, elapsed, accuracy: 0.025,
-        "Chart seconds track wall seconds even at \(speed)× music speed")
+      let endSampleStart = CACurrentMediaTime()
+      let chartEnd = model.playbackTime
+      let endSampleEnd = CACurrentMediaTime()
+      let elapsed = endSampleStart - start
+      // Drift updates must not hide a wrong playback speed by taking the
+      // transition-aware branch below. Check the native effective rate at
+      // every moving observation independently of input/player agreement.
+      let movingRates = model.eventClockDiagnosticObservations.filter {
+        $0.segment.rate != 0
+      }.map { $0.segment.rate }
+      XCTAssertFalse(movingRates.isEmpty, model.eventClockDiagnostics)
+      for rate in movingRates {
+        XCTAssertEqual(rate, speed, accuracy: 0.001,
+          "Native clock must run at the selected speed, apart from drift")
+      }
+      let clockChanged = model.eventClockDiagnosticObservations.contains {
+        guard let transition = $0.transition else { return false }
+        return transition.latestHostTime >= start
+          && transition.earliestHostTime <= endSampleEnd
+      }
+      if clockChanged {
+        // Buffering/re-anchoring can legitimately stop or jump the player.
+        // Do not mistake that for input disagreement or compensate its rate.
+        // Check against the captured piecewise player mapping instead.
+        let mappedStart = model.inputTime(at: (start + startSampleEnd) / 2)
+        let mappedEnd = model.inputTime(at: (endSampleStart + endSampleEnd) / 2)
+        XCTAssertEqual(chartStart, mappedStart, accuracy: 0.002,
+          model.eventClockDiagnostics)
+        XCTAssertEqual(chartEnd, mappedEnd, accuracy: 0.002,
+          model.eventClockDiagnostics)
+        print("Player transitioned during wall-progression check: "
+          + "chart delta=\(chartEnd - chartStart), wall delta=\(elapsed); "
+          + "native rates checked=\(movingRates.count)")
+      } else {
+        XCTAssertEqual(chartEnd - chartStart, elapsed, accuracy: 0.025,
+          "Uninterrupted chart seconds track wall seconds at \(speed)×; "
+            + "read widths=\(startSampleEnd - start), "
+            + "\(endSampleEnd - endSampleStart); \(model.eventClockDiagnostics)")
+      }
       if nativePlayfield {
         XCTAssertGreaterThan(frameSamples.count, 2,
           "Repeatedly reading one stale frame must not pass")
-        XCTAssertEqual(model.currentTime - frameChartStart, elapsed, accuracy: 0.075,
-          "Display-driven runtime must keep advancing during observation")
+        XCTAssertEqual(model.currentTime - frameChartStart,
+          chartEnd - chartStart, accuracy: 0.075,
+          "Display-driven runtime must track the player, including its stalls")
       }
       let mean = differences.reduce(0, +) / Double(differences.count)
       let maximum = differences.map(abs).max() ?? 0
@@ -484,6 +525,80 @@ final class PlaybackClockTests: XCTestCase {
     XCTAssertEqual(try XCTUnwrap(history.mediaTime(at: 103.1)), 12.2, accuracy: 1e-9)
   }
 
+  func testZeroOriginClockMappingsDoNotRewriteObservedTouches() throws {
+    var history = PlaybackClockHistory()
+    let moving = PlaybackClockHistory.Segment(hostTime: 0,
+      mediaTime: -85153.621562, rate: 1)
+    history.observe(moving, at: 85153.781923625)
+    let queuedHost = 85153.98802570836
+    history.observe(moving, at: queuedHost)
+    let queuedMedia = try XCTUnwrap(history.mediaTime(at: queuedHost))
+    let stop = history.observe(.init(hostTime: 0,
+      mediaTime: 0.375681291, rate: 0), at: 85153.997367333)
+    XCTAssertEqual(stop?.earliestHostTime, queuedHost)
+    XCTAssertEqual(stop?.usedNotificationTime, false)
+    XCTAssertEqual(history.mediaTime(at: queuedHost), queuedMedia)
+    XCTAssertEqual(history.mediaTime(at: 85153.998), 0.375681291)
+    let resumed = PlaybackClockHistory.Segment(hostTime: 0,
+      mediaTime: -85153.587163209, rate: 1)
+    let resumeHost = 85154.008091208
+    history.observe(resumed, at: 85154.008772041,
+      transitionHostTime: resumeHost)
+    XCTAssertEqual(history.mediaTime(at: resumeHost - 0.0001), 0.375681291)
+    XCTAssertEqual(try XCTUnwrap(history.mediaTime(at: resumeHost + 0.0001)),
+      0.421027999, accuracy: 1e-8)
+    for index in 0..<200 {
+      history.observe(resumed, at: 85154.009 + Double(index) / 1000)
+    }
+    XCTAssertEqual(history.segments.count, 3)
+    XCTAssertEqual(history.mediaTime(at: queuedHost), queuedMedia)
+    // A discontinuity whose conversion origin is still zero must begin now,
+    // not replace the earlier stopped or running intervals.
+    history.observe(.init(hostTime: 0, mediaTime: 99, rate: 0), at: 85155)
+    XCTAssertEqual(history.mediaTime(at: queuedHost), queuedMedia)
+    XCTAssertEqual(history.mediaTime(at: 85155), 99)
+  }
+
+  func testClockObservationFallbacksPreservePastAndBoundStorage() throws {
+    var history = PlaybackClockHistory()
+    history.observe(.init(hostTime: 0, mediaTime: 10, rate: 0), at: 100)
+    let candidates: [Double] = [.nan, -.infinity, 0, 1000]
+    for (index, candidate) in candidates.enumerated() {
+      let now = 101 + Double(index)
+      let change = history.observe(.init(hostTime: 0,
+        mediaTime: Double(index), rate: 0), at: now,
+        transitionHostTime: candidate)
+      XCTAssertEqual(change?.appliedHostTime, now)
+      XCTAssertEqual(change?.usedNotificationTime, false)
+      XCTAssertEqual(history.mediaTime(at: 100), 10)
+    }
+    let count = history.segments.count
+    history.observe(.init(hostTime: 0, mediaTime: 99, rate: 1), at: 99)
+    history.observe(.init(hostTime: 0, mediaTime: .nan, rate: 1), at: 105)
+    XCTAssertEqual(history.segments.count, count)
+    for index in 105..<300 {
+      history.observe(.init(hostTime: 0, mediaTime: Double(index), rate: 0),
+        at: Double(index))
+    }
+    XCTAssertEqual(history.segments.count, 128)
+    XCTAssertEqual(history.mediaTime(at: 299), 299)
+  }
+
+  func testTransitionAtPreviousObservationCannotReplaceThatObservation() {
+    var history = PlaybackClockHistory()
+    let old = PlaybackClockHistory.Segment(hostTime: 0, mediaTime: 10, rate: 0)
+    let new = PlaybackClockHistory.Segment(hostTime: 0, mediaTime: 20, rate: 0)
+    history.observe(old, at: 100)
+    XCTAssertNil(history.observe(new, at: 100, transitionHostTime: 100),
+      "Equal-resolution snapshots cannot order two different mappings")
+    let transition = history.observe(new, at: 101, transitionHostTime: 100)
+    XCTAssertEqual(transition?.usedNotificationTime, false)
+    XCTAssertEqual(transition?.appliedHostTime, 101)
+    XCTAssertEqual(history.mediaTime(at: 99), 10)
+    XCTAssertEqual(history.mediaTime(at: 100), 10)
+    XCTAssertEqual(history.mediaTime(at: 101), 20)
+  }
+
   func testEventClockUsesCoreMediaRateAndAnchorRatherThanDeliveryAge() throws {
     let host = CMClockGetHostTimeClock()
     var base: CMTimebase?
@@ -500,10 +615,93 @@ final class PlaybackClockTests: XCTestCase {
     XCTAssertEqual(CMTimebaseSetRateAndAnchorTime(timebase, rate: 1,
       anchorTime: CMTime(seconds: 10, preferredTimescale: 60000),
       immediateSourceTime: CMTimeAdd(anchor, CMTime(value: 1, timescale: 1))), noErr)
+    let now = CMClockGetTime(host).seconds
+    let nativeNow = CMTimebaseGetTime(timebase).seconds
+    let afterNative = CMClockGetTime(host).seconds
+    XCTAssertGreaterThanOrEqual(nativeNow, now - anchor.seconds + 9 - 1e-8)
+    XCTAssertLessThanOrEqual(nativeNow, afterNative - anchor.seconds + 9 + 1e-8)
+    XCTAssertEqual(try XCTUnwrap(clock.mediaTime(at: now)),
+      now - anchor.seconds + 9, accuracy: 1e-8,
+      "A future reference anchor does not schedule a future rate change")
     XCTAssertEqual(try XCTUnwrap(clock.mediaTime(at: anchor.seconds + 0.5)),
-      10, accuracy: 1e-8, "Queued pre-resume events keep the paused mapping")
+      9.5, accuracy: 1e-8, "The new mapping already applies before its anchor")
+    XCTAssertEqual(try XCTUnwrap(clock.mediaTime(at: anchor.seconds - 0.012)),
+      10, accuracy: 1e-8, "Actual pre-transition events keep the paused mapping")
     XCTAssertEqual(try XCTUnwrap(clock.mediaTime(at: anchor.seconds + 1.012)),
       10.012, accuracy: 1e-8)
+  }
+
+  func testClockTransitionDiagnosticsAreOptInBoundedAndDoNotChangeMapping() throws {
+    let host = CMClockGetHostTimeClock()
+    var base: CMTimebase?
+    XCTAssertEqual(CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault,
+      sourceClock: host, timebaseOut: &base), noErr)
+    let timebase = try XCTUnwrap(base)
+    let plain = PlaybackEventClock(timebase: timebase)
+    let traced = PlaybackEventClock(timebase: timebase, recordTransitions: true)
+    for value in 1...80 {
+      XCTAssertEqual(CMTimebaseSetTime(timebase,
+        time: CMTime(value: Int64(value), timescale: 1)), noErr)
+      let timestamp = CMClockGetTime(host).seconds
+      XCTAssertEqual(try XCTUnwrap(traced.mediaTime(at: timestamp)),
+        Double(value), accuracy: 1e-9)
+      XCTAssertEqual(plain.mediaTime(at: timestamp), traced.mediaTime(at: timestamp))
+    }
+    XCTAssertTrue(plain.diagnosticObservations.isEmpty)
+    XCTAssertEqual(traced.diagnosticObservations.count, 64)
+    let snapshot = traced.diagnosticObservations
+    XCTAssertEqual(snapshot.last?.segment.mediaTime, 80)
+    XCTAssertTrue(snapshot.allSatisfy { $0.observedHostTime.isFinite })
+    XCTAssertEqual(CMTimebaseSetTime(timebase,
+      time: CMTime(value: 81, timescale: 1)), noErr)
+    _ = traced.mediaTime(at: CMClockGetTime(host).seconds)
+    XCTAssertEqual(snapshot.last?.segment.mediaTime, 80)
+    XCTAssertEqual(traced.diagnosticObservations.last?.segment.mediaTime, 81)
+  }
+
+  func testNestedClockChangesAndSourceReplacementPreserveQueuedEvents() throws {
+    let host = CMClockGetHostTimeClock()
+    var parent: CMTimebase?
+    XCTAssertEqual(CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault,
+      sourceClock: host, timebaseOut: &parent), noErr)
+    let source = try XCTUnwrap(parent)
+    XCTAssertEqual(CMTimebaseSetTime(source,
+      time: CMTime(value: 10, timescale: 1)), noErr)
+    XCTAssertEqual(CMTimebaseSetRate(source, rate: 1), noErr)
+    var child: CMTimebase?
+    XCTAssertEqual(CMTimebaseCreateWithSourceTimebase(
+      allocator: kCFAllocatorDefault, sourceTimebase: source,
+      timebaseOut: &child), noErr)
+    let timebase = try XCTUnwrap(child)
+    XCTAssertEqual(CMTimebaseSetRate(timebase, rate: 2), noErr)
+    let clock = PlaybackEventClock(timebase: timebase)
+    var queued = [(Double, Double)]()
+    func checkAndQueue() throws {
+      // Compare a timestamp after capture, avoiding uncertainty inside the
+      // just-observed transition bracket. No wall-time sleeps are needed.
+      _ = clock.mediaTime(at: CMClockGetTime(host).seconds)
+      let now = CMClockGetTime(host)
+      let expected = CMSyncConvertTime(now, from: host, to: timebase).seconds
+      let actual = try XCTUnwrap(clock.mediaTime(at: now.seconds))
+      XCTAssertEqual(actual, expected, accuracy: 1e-7)
+      for (timestamp, media) in queued {
+        XCTAssertEqual(try XCTUnwrap(clock.mediaTime(at: timestamp)), media,
+          accuracy: 1e-7)
+      }
+      queued.append((now.seconds, actual))
+    }
+    try checkAndQueue()
+    XCTAssertEqual(CMTimebaseSetRate(source, rate: 0), noErr)
+    try checkAndQueue()
+    XCTAssertEqual(CMTimebaseSetTime(source,
+      time: CMTime(value: 50, timescale: 1)), noErr)
+    try checkAndQueue()
+    XCTAssertEqual(CMTimebaseSetRate(source, rate: -1), noErr)
+    try checkAndQueue()
+    XCTAssertEqual(CMTimebaseSetSourceClock(timebase, host), noErr)
+    try checkAndQueue()
+    XCTAssertEqual(CMTimebaseSetSourceTimebase(timebase, source), noErr)
+    try checkAndQueue()
   }
 
   @MainActor

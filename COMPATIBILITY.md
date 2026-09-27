@@ -11,6 +11,29 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Playback clock history distinguishes an affine reference origin from its
+  validity interval. Native simulator traces supplied host origin zero across
+  stop/resume transitions; treating that as a boundary erased earlier mappings
+  and changed queued input times. The fix preserves observed history, including
+  equal-timestamp ordering and drift-only recalibration, with 128 retained
+  mappings. Moving notification EventTime values refine the boundary only
+  inside its observation bracket. Stopped transitions and out-of-bracket
+  evidence fall back to first observation, explicitly not an exact transition
+  measurement; opt-in traces retain 64 records and the uncertainty interval.
+  Source-clock anchors are diagnostic only, not presumed transition times.
+  A future reference anchor now extrapolates immediately, as documented in the
+  active SDK's CMSync.h for CMTimebaseSetRateAndAnchorTime. The new native-clock
+  assertion failed before the fix. Synthetic/native checks cover captured
+  zero-origin mappings, pauses, jumps, reverse/nested clocks, source swaps,
+  repeated reads, invalid boundaries, storage bounds and diagnostic isolation.
+  Twenty focused clock tests passed at 10:52 on September 27; subsequent
+  nested-source and exact-boundary/debug-pause checks passed at 10:54/10:56.
+  Native effective rates remain independently checked against selected speed;
+  player stalls/jumps no longer imply unconditional wall-time progression,
+  while input/player and history assertions remain strict. The normal 10:57
+  build passed. Final independent review found no remaining actionable issue;
+  the full simulator suite is pending. This is not physical alignment sign-off
+  or a calibration change.
 - Curved draws no longer have a separate 1,024-segment cap. The public
   [DrawCurvedB contract](
   https://wiki.sonolus.com/engine-specs/functions/draw-curved-b) specifies the
