@@ -37,6 +37,39 @@ struct EmptyEngineRuntimeHost: EngineRuntimeHost {
   }
 }
 
+/// Fixed play-mode scratch space. Epochs discard callback-local values without
+/// allocating a dictionary or clearing all 4096 slots for every callback.
+struct EngineTemporaryMemory {
+  private struct Slot {
+    var generation: UInt64 = 0
+    var value: Double = 0
+  }
+
+  static let count = 4096
+  private var slots = [Slot](repeating: Slot(), count: count)
+  private var generation: UInt64
+
+  // An explicit generation also lets tests exercise the otherwise remote wrap.
+  init(generation: UInt64 = 1) {
+    precondition(generation > 0)
+    self.generation = generation
+  }
+
+  subscript(index: Int) -> Double {
+    get { slots[index].generation == generation ? slots[index].value : 0 }
+    set { slots[index] = Slot(generation: generation, value: newValue) }
+  }
+
+  mutating func clear() {
+    if generation == .max {
+      slots = [Slot](repeating: Slot(), count: Self.count)
+      generation = 1
+    } else {
+      generation += 1
+    }
+  }
+}
+
 final class EngineMemory {
   enum Callback: String, CaseIterable {
     case preprocess, spawnOrder, shouldSpawn, initialize
@@ -54,6 +87,12 @@ final class EngineMemory {
   // Indexed by public block ID: ~80 KB, shared by preparation snapshots.
   // Avoid another hash lookup in every interpreted memory read/write.
   private var lengths: [Int]?
+  private var temporary: EngineTemporaryMemory?
+
+  // Retain the sparse path for paired conformance/performance probes.
+  init(denseTemporaryMemory: Bool = true) {
+    temporary = denseTemporaryMemory ? EngineTemporaryMemory() : nil
+  }
 
   /// Install the play-mode layout after loading ROM and before preprocessing.
   /// Standalone memory tests can omit a layout; production runtimes cannot.
@@ -138,13 +177,14 @@ final class EngineMemory {
   /// A copy-on-write snapshot of preparation, including engine-owned data.
   /// The returned closure belongs to the runtime, not to this memory object.
   func makeRestorePoint() -> () -> Void {
-    { [rom, blocks, entityBlocks, entityKey, entityIndex, lengths] in
+    { [rom, blocks, entityBlocks, entityKey, entityIndex, lengths, temporary] in
       self.rom = rom
       self.blocks = blocks
       self.entityBlocks = entityBlocks
       self.entityKey = entityKey
       self.entityIndex = entityIndex
       self.lengths = lengths
+      self.temporary = temporary
     }
   }
 
@@ -169,6 +209,7 @@ final class EngineMemory {
     entityKey = key
     entityIndex = index
     blocks[10000] = nil
+    temporary?.clear()
   }
 
   func removeEntity(key: Int) {
@@ -191,6 +232,8 @@ final class EngineMemory {
 
   func value(block: Int, index: Int) -> Double {
     guard contains(block: block, index: index) else { return 0 }
+    if block == 10000, index < EngineTemporaryMemory.count,
+      let temporary { return temporary[index] }
     if block == 3000 { return rom.indices.contains(index) ? rom[index] : 0 }
     if let (array, offset) = arrayAddress(block: block, index: index) {
       return blocks[array]?[offset] ?? 0
@@ -204,6 +247,10 @@ final class EngineMemory {
   @discardableResult
   func set(block: Int, index: Int, value: Double) -> Double {
     guard contains(block: block, index: index), block != 3000 else { return value }
+    if block == 10000, index < EngineTemporaryMemory.count, temporary != nil {
+      temporary?[index] = value
+      return value
+    }
     if let (array, offset) = arrayAddress(block: block, index: index) {
       blocks[array, default: [:]][offset] = value
       return value

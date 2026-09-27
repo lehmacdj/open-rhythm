@@ -33,6 +33,31 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Scratch-memory performance follow-up (September 26, 2026): Temporary Memory
+now uses 4,096 dense value/epoch slots, eliminating per-access
+dictionary lookups while preserving the previous callback-clearing behavior,
+bounds, permissions and copy-on-write preparation snapshots. This is an
+implementation optimization, not a newly inferred API default: the public
+contract still leaves initial Temporary Memory values unpredictable.
+The original sparse implementation remains available to tests.
+
+Four focused synthetic checks passed on September 25, including epoch wrap,
+snapshot isolation, callback/entity changes, out-of-range accesses, and exact
+floating-point bit preservation. The six paired full cached-chart probes also
+passed, including repeated contacts on “shake it!” Hard 18 and both other
+cached engines. Independent review found no production defect and recommended
+stronger presentation-state comparisons and symmetric timing order. Both are
+now implemented and re-reviewed: runtime updates alternate adjacently before
+rendering, and comparisons include transforms, background/HUD memory, exports,
+accuracy score and the existing command/judgment/life snapshots.
+The September 26 22:45 full simulator run passed all 291 tests with no failures
+or skips; its completed report and TEST FINISHED marker confirmed success
+after the result-request timeout, without restarting it. The 22:54 normal app
+build passed. The revised paired probes show 5.0–10.6% lower mean runtime CPU
+time, including 10.2% for the repeated-contact “shake it!” case; the exact
+table is in COMPATIBILITY.md. These Debug CPU probes do not establish phone
+frame pacing, audio alignment, complete API coverage or physical sign-off.
+
 Intro-branch follow-up: fixed option/prepared-data selectors can now choose
 stage drawings through If and all four Switch variants without unnecessarily
 retaining the silent intro. All alternatives must be proven safe; mutable

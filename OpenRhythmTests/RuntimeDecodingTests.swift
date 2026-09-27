@@ -32,12 +32,25 @@ final class CachedEngineIntegrationTests: XCTestCase {
     try await checkChart(engineFolder: "nanaon", chart: "nanaon/level.gz")
   }
 
-  private struct Frame {
+  private struct Judgment: Equatable {
+    let entityIndex: Int
+    let grade: Int
+    let accuracyBits: UInt64
+    let haptic: EngineHaptic
+  }
+
+  private struct Frame: Equatable {
     let draws: [EngineDrawCommand]
     let particles: [Int: EngineParticleInstance]
     let audio: [EngineAudioCommand]
     let loops: [EngineLoopCommand]
     let resolved: Int
+    let judgments: [Judgment]
+    let score: EngineScoreSnapshot?
+    let accuracyScore: EngineScoreSnapshot?
+    let life: EngineLife
+    let presentationBits: [[UInt64]]
+    let exports: [Int: [Int: UInt64]]
 
     init(_ runtime: EnginePlayRuntime) {
       draws = runtime.host.draws
@@ -45,6 +58,20 @@ final class CachedEngineIntegrationTests: XCTestCase {
       audio = runtime.host.takeAudioCommands()
       loops = runtime.host.takeLoopCommands()
       resolved = runtime.resolvedInputCount
+      judgments = runtime.judgments.map {
+        Judgment(entityIndex: $0.entityIndex, grade: $0.grade,
+          accuracyBits: $0.accuracy.bitPattern, haptic: $0.haptic)
+      }
+      score = runtime.arcadeScore?.snapshot
+      accuracyScore = runtime.accuracyScore.snapshot(noteCount: runtime.inputCount)
+      life = runtime.life
+      // Include engine-owned transforms, background and HUD state; equal draw
+      // commands alone do not imply equal visible output. Keep NaN/-0 bits.
+      presentationBits = [(1000, 9), (1003, 16), (1004, 16), (1005, 8),
+        (1006, 80), (1007, 10), (2004, 12), (2005, 8)].map { block, count in
+        (0..<count).map { runtime.memory.value(block: block, index: $0).bitPattern }
+      }
+      exports = runtime.host.exports.mapValues { $0.mapValues(\.bitPattern) }
     }
   }
 
@@ -73,10 +100,15 @@ final class CachedEngineIntegrationTests: XCTestCase {
     let romURL = root.appendingPathComponent("rom.bin")
     let rom = FileManager.default.fileExists(atPath: romURL.path)
       ? try Data(contentsOf: romURL) : nil
-    let runtime = try EnginePlayRuntime(engine: engine, level: level,
-      options: assets.options, aspectRatio: 1.8,
-      skinSpriteIDs: Set(assets.skin.keys), effectClipIDs: audio.clipIDs,
-      particleEffectIDs: Set(assets.particles.keys), rom: rom)
+    func makeRuntime(dense: Bool) throws -> EnginePlayRuntime {
+      try EnginePlayRuntime(engine: engine, level: level,
+        options: assets.options, aspectRatio: 1.8,
+        skinSpriteIDs: Set(assets.skin.keys), effectClipIDs: audio.clipIDs,
+        particleEffectIDs: Set(assets.particles.keys), rom: rom,
+        denseTemporaryMemory: dense)
+    }
+    let runtime = try makeRuntime(dense: true)
+    let sparse = try makeRuntime(dense: false)
     XCTAssertGreaterThan(runtime.inputCount, 0)
     let wasIdleDisabled = UIApplication.shared.isIdleTimerDisabled
     UIApplication.shared.isIdleTimerDisabled = true
@@ -106,6 +138,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
     var firstResolutionFrame: Int?
     var durations = [Double]()
     var runtimeDurations = [Double](), spriteDurations = [Double]()
+    var sparseDurations = [Double]()
     var peaks = [String: (weight: Double, time: Double,
       draws: Int, segments: Int, particles: Int, sprites: [EngineRenderSprite])]()
     var lastTime = startTime
@@ -128,17 +161,35 @@ final class CachedEngineIntegrationTests: XCTestCase {
     for frame in 0..<18000 {
       lastTime = startTime + Double(frame) / 60
       let touches = contacts(frame, lastTime)
-      let started = ProcessInfo.processInfo.systemUptime
-      try runtime.update(at: lastTime, touches: touches)
-      let updated = ProcessInfo.processInfo.systemUptime
+      var runtimeDuration = 0.0
+      func updateDense() throws {
+        let started = ProcessInfo.processInfo.systemUptime
+        try runtime.update(at: lastTime, touches: touches)
+        runtimeDuration = ProcessInfo.processInfo.systemUptime - started
+      }
+      func updateSparse() throws {
+        let started = ProcessInfo.processInfo.systemUptime
+        try sparse.update(at: lastTime, touches: touches)
+        sparseDurations.append(ProcessInfo.processInfo.systemUptime - started)
+      }
+      // Alternate order to reduce systematic warm-cache/order bias. Timers
+      // exclude comparisons, presentation work and the other runtime's update.
+      if frame.isMultiple(of: 2) {
+        try updateSparse()
+        try updateDense()
+      } else {
+        try updateDense()
+        try updateSparse()
+      }
+      let renderStarted = ProcessInfo.processInfo.systemUptime
       let sprites = EngineRenderer.sprites(host: runtime.host, assets: assets)
-      let rendered = ProcessInfo.processInfo.systemUptime
-      durations.append(rendered - started)
-      runtimeDurations.append(updated - started)
-      spriteDurations.append(rendered - updated)
+      let spriteDuration = ProcessInfo.processInfo.systemUptime - renderStarted
+      durations.append(runtimeDuration + spriteDuration)
+      runtimeDurations.append(runtimeDuration)
+      spriteDurations.append(spriteDuration)
       let segments = runtime.host.draws.reduce(0) { $0 + ($1.curve?.segments ?? 0) }
-      for (name, weight) in [("runtime", updated - started),
-        ("sprites", rendered - updated), ("draws", Double(runtime.host.draws.count)),
+      for (name, weight) in [("runtime", runtimeDuration),
+        ("sprites", spriteDuration), ("draws", Double(runtime.host.draws.count)),
         ("curves", Double(segments)), ("particles", Double(runtime.host.particles.count))] {
         if weight > peaks[name]?.weight ?? -1 {
           peaks[name] = (weight, lastTime, runtime.host.draws.count, segments,
@@ -157,6 +208,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
           "Duplicate input resolution in \(chart): \(input.entityIndex)")
       }
       let snapshot = Frame(runtime)
+      XCTAssertEqual(snapshot, Frame(sparse), "\(chart), frame \(frame)")
       if firstResolutionFrame == nil, !runtime.judgments.isEmpty {
         firstResolutionFrame = frame
       }
@@ -180,19 +232,18 @@ final class CachedEngineIntegrationTests: XCTestCase {
       }
     }
     runtime.restart()
+    sparse.restart()
     var sample = 0
     for frame in 0...opening.last!.index {
       let time = startTime + Double(frame) / 60
       try runtime.update(at: time, touches: contacts(frame, time))
       let actual = Frame(runtime)
+      try sparse.update(at: time, touches: contacts(frame, time))
+      XCTAssertEqual(actual, Frame(sparse), "\(chart), restart frame \(frame)")
       try await yieldToDevice()
       guard frame == opening[sample].index else { continue }
       let expected = opening[sample].snapshot
-      XCTAssertEqual(actual.draws, expected.draws, chart)
-      XCTAssertEqual(actual.particles, expected.particles, chart)
-      XCTAssertEqual(actual.audio, expected.audio, chart)
-      XCTAssertEqual(actual.loops, expected.loops, chart)
-      XCTAssertEqual(actual.resolved, expected.resolved, chart)
+      XCTAssertEqual(actual, expected, chart)
       sample += 1
     }
     let sorted = durations.sorted()
@@ -212,6 +263,16 @@ final class CachedEngineIntegrationTests: XCTestCase {
       print("CPU PHASE \(chart) \(name): mean "
         + "\(values.reduce(0, +) * 1000 / Double(values.count)) ms, "
         + "p95 \(sorted[Int(Double(sorted.count) * 0.95)] * 1000) ms")
+    }
+    for (name, values) in [("sparse", sparseDurations),
+      ("dense", runtimeDurations)] {
+      let sorted = values.sorted()
+      print("TEMPORARY MEMORY \(chart) contacts=\(repeatedContacts) \(name): "
+        + "\(values.count) updates, mean "
+        + "\(values.reduce(0, +) * 1000 / Double(values.count)) ms, "
+        + "p95 \(sorted[Int(Double(sorted.count) * 0.95)] * 1000) ms, "
+        + "p99 \(sorted[Int(Double(sorted.count) * 0.99)] * 1000) ms; "
+        + "paired Debug CPU timings, not live FPS.")
     }
     guard let device = MTLCreateSystemDefaultDevice() else {
       XCTFail("Metal unavailable for cached frame profiling")
@@ -265,6 +326,80 @@ private struct DepthFixtureHost: EngineRuntimeHost {
 }
 
 final class RuntimeDecodingTests: XCTestCase {
+  func testTemporaryMemoryEpochWrapAndCopyOnWrite() {
+    var storage = EngineTemporaryMemory(generation: .max - 1)
+    storage[0] = 42
+    storage[4095] = -0.0
+    let prepared = storage
+    storage.clear()
+    XCTAssertEqual(storage[0], 0)
+    XCTAssertEqual(storage[4095].bitPattern, Double(0).bitPattern)
+    storage[17] = 8
+    storage.clear() // Wrap must not resurrect either generation's writes.
+    XCTAssertEqual(storage[0], 0)
+    XCTAssertEqual(storage[17], 0)
+    storage[0] = 99
+    XCTAssertEqual(prepared[0], 42)
+    XCTAssertEqual(prepared[4095].bitPattern, (-0.0 as Double).bitPattern)
+    storage = prepared
+    XCTAssertEqual(storage[0], 42)
+    storage.clear()
+    XCTAssertEqual(storage[0], 0)
+  }
+
+  func testDenseTemporaryMemoryMatchesSparseBoundsCallbacksAndRestore() throws {
+    for dense in [false, true] {
+      let memory = EngineMemory(denseTemporaryMemory: dense)
+      let samples: [Double] = [0, -0.0, 3.5, .infinity, -.infinity,
+        Double(bitPattern: 0x7ff8000000000042)]
+      let addresses = [0, 1, 17, 4095, 4096, Int.max]
+      // Standalone memory retains its sparse, unbounded test/host semantics.
+      for (index, value) in zip(addresses, samples) {
+        memory.set(block: 10000, index: index, value: value)
+        XCTAssertEqual(memory.value(block: 10000, index: index).bitPattern,
+          value.bitPattern)
+      }
+      let unbounded = memory.makeRestorePoint()
+      try memory.configurePlayBlocks(entityCount: 1, optionCount: 0,
+        bucketCount: 0, archetypeCount: 1)
+      XCTAssertEqual(memory.value(block: 10000, index: 4096), 0)
+      let bounded = memory.makeRestorePoint()
+      memory.selectEntity(key: 0, index: 0)
+      for callback in EngineMemory.Callback.allCases {
+        memory.callback = callback
+        for index in [0, 17, 4095] {
+          XCTAssertEqual(try memory.read(block: 10000, index: index), 0)
+          XCTAssertEqual(try memory.write(block: 10000, index: index,
+            value: 37), 37)
+          XCTAssertEqual(try memory.read(block: 10000, index: index), 37)
+        }
+        for index in [-1, 4096, Int.max] {
+          XCTAssertEqual(try memory.write(block: 10000, index: index,
+            value: 88), 88)
+          XCTAssertEqual(try memory.read(block: 10000, index: index), 0)
+        }
+        // Even a new callback on the same entity gets fresh scratch space.
+        memory.selectEntity(key: 0, index: 0)
+      }
+      memory.selectEntity(key: 1, index: nil) // Spawned entities have scratch too.
+      XCTAssertEqual(try memory.write(block: 10000, index: 4095, value: 7), 7)
+      XCTAssertEqual(try memory.read(block: 10000, index: 4095), 7)
+      for restore in [unbounded, bounded, unbounded] {
+        restore()
+        XCTAssertEqual(memory.value(block: 10000, index: 17), 3.5)
+        XCTAssertEqual(memory.value(block: 10000, index: 4095), .infinity)
+        memory.set(block: 10000, index: 17, value: 77)
+        memory.selectEntity(key: 0, index: 0)
+        XCTAssertEqual(memory.value(block: 10000, index: 17), 0)
+      }
+      unbounded()
+      XCTAssertEqual(memory.value(block: 10000, index: Int.max).bitPattern,
+        samples.last!.bitPattern)
+      bounded()
+      XCTAssertEqual(memory.value(block: 10000, index: Int.max), 0)
+    }
+  }
+
   @MainActor
   func testDeepDispatchFamiliesRespectDepthLimitWithoutNativeStackOverflow() {
     Self.checkDeepDispatchFamilies()

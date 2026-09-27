@@ -283,7 +283,8 @@ final class EnginePlayRuntime {
     audioOffset: Double = 0,
     debugMode: Bool = false,
     backgroundQuad: [Double]? = nil,
-    optimizeLiteralAddresses: Bool = true
+    optimizeLiteralAddresses: Bool = true,
+    denseTemporaryMemory: Bool = true
   ) throws {
     guard aspectRatio.isFinite, aspectRatio > 0,
       playbackSpeed.isFinite, (0.05...4).contains(playbackSpeed),
@@ -302,7 +303,7 @@ final class EnginePlayRuntime {
     guard missing.isEmpty else {
       throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
     }
-    memory = EngineMemory()
+    memory = EngineMemory(denseTemporaryMemory: denseTemporaryMemory)
     try memory.loadROM(rom)
     try memory.configurePlayBlocks(entityCount: level.entities.count,
       optionCount: options.count, bucketCount: engine.buckets.count,

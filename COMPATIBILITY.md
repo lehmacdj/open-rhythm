@@ -743,6 +743,53 @@ GPU submission, successful touches, Release performance or phone frame pacing.
 The address table adds approximately 1.65 MiB for SEKAI's 72,110 nodes on 64-bit
 hosts. An independent read-only review found no actionable correctness issues.
 
+## Temporary Memory storage optimization
+
+Play-mode Temporary Memory keeps 4,096 value/generation pairs instead of a
+dictionary of addressed cells. Callback selection advances the generation;
+wrap discards all slots before reusing generation 1. Bounds and callback
+permissions are still checked before access. Standalone memory without a
+declared play layout retains sparse storage for indices above 4,095. Restart
+snapshots capture both slot data and generation with copy-on-write semantics.
+This preserves the app's existing clearing policy; it does not redefine the
+public contract's unpredictable initial scratch values as guaranteed zeros.
+
+The dense buffer uses approximately 64 KiB per memory instance, plus another
+64 KiB when a write first separates it from a retained preparation snapshot.
+Ordinary callback clearing changes only a scalar, without copying the buffer.
+Four focused tests passed on September 25, covering callback/entity changes,
+bounds, sparse fallback, bit preservation, epoch wrap and snapshot isolation.
+All six full cached-chart paired probes also passed on that initial revision.
+
+Independent review found no production defect. Its two test recommendations
+are implemented: compare presentation-memory and exported-value bit patterns
+in addition to commands, judgments, life and scores, and alternate adjacent
+timed runtime updates before rendering. Comparisons and rendering are outside
+the runtime timing intervals. Runtime-plus-sprite CPU durations sum the two
+separately measured phases. Follow-up review found no further actionable issue.
+The six revised full-chart paired probes passed in the September 26 normal
+Debug simulator run (iPhone 17 Pro, iOS 26.5). Mean runtime-update CPU decreased
+5.0–10.6% with matching captured outputs on every simulated frame and restart.
+
+| Cached case | Frames | Sparse mean / p95 ms | Dense mean / p95 ms |
+| --- | ---: | ---: | ---: |
+| Eleventh Hard 16 | 6,062 | 7.404 / 13.333 | 6.628 / 11.882 |
+| 光 Hard 18 | 6,567 | 9.017 / 21.137 | 8.064 / 18.904 |
+| 22/7 Pro 4.9 | 8,108 | 1.283 / 2.009 | 1.218 / 1.908 |
+| “shake it!” Hard 18, no contacts | 8,054 | 6.163 / 13.554 | 5.548 / 12.184 |
+| “shake it!” Hard 18, repeated contacts | 8,046 | 9.327 / 16.994 | 8.378 / 15.215 |
+| SIF Custom Charts UNSTOPPABLE | 5,854 | 0.375 / 0.493 | 0.345 / 0.454 |
+
+The full 22:45 simulator run passed all 291 tests, with no failures or skips
+(`RunAllTests/4A218BE7-C614-44E3-B5CE-57AB5A4FB2B2.txt`). Its observer timed out
+after 300 seconds, but the same run's completed report and TEST FINISHED marker
+confirmed success; no replacement run was launched. The 22:54 normal app
+build passed (`BuildProject/BuildProject-Log-20260926-225454.txt`).
+The fixture runs use their existing options and independent random sources;
+future random-heavy fixtures need controlled randomness before exact paired
+equality can be asserted. These probes compare captured outputs, not native
+Sonolus semantics, complete memory histories or real-time device performance.
+
 ## Reproducible cached-chart device checks
 
 `CachedEngineIntegrationTests` uses an opt-in
