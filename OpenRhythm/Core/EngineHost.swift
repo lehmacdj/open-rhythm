@@ -36,6 +36,9 @@ struct EngineTextureRegion: Equatable, Sendable {
 }
 
 struct EngineDrawCommand: Equatable, Sendable {
+  // Host safety budget shared by ordinary draws and all curved strips, not
+  // a protocol-defined per-curve limit.
+  static let segmentLimitPerFrame = 16_384
   let spriteID: Int
   // Bottom-left, top-left, top-right, bottom-right, in engine coordinates.
   let points: [EnginePoint]
@@ -356,7 +359,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       let curve: EngineCurve?
       if let edge {
         let segments = try identifier(a[11], function: function)
-        guard (1...1024).contains(segments) else {
+        guard segments > 0 else {
           throw EngineInterpreterError.invalidArguments("\(function) segments")
         }
         curve = EngineCurve(edge: edge, segments: segments,
@@ -367,7 +370,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       let id = try identifier(a[0], function: function)
       guard skinSpriteIDs.contains(id) else { return 0 }
       let segments = curve?.segments ?? 1
-      guard drawSegmentCount <= commandLimit - segments else {
+      guard segments <= EngineDrawCommand.segmentLimitPerFrame - drawSegmentCount else {
         throw EngineInterpreterError.operationLimitExceeded
       }
       drawSegmentCount += segments

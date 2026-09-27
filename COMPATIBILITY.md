@@ -11,6 +11,31 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Curved draws no longer have a separate 1,024-segment cap. The public
+  [DrawCurvedB contract](
+  https://wiki.sonolus.com/engine-specs/functions/draw-curved-b) specifies the
+  segment count without that numerical restriction. All six edge variants
+  now accept positive integer counts within the existing shared 16,384-strip
+  frame safety budget; ordinary Draw commands consume that budget too. This
+  is a host work limit, not a claimed public/native maximum. Geometry applies
+  the same bound before allocating strips, and failed commands do not consume
+  the budget. A new regression failed on the old cap, then passed with exact
+  strip counts, shared endpoints and full contiguous texture coverage at
+  1,025, 4,096 and 16,384 segments. Four focused simulator tests pass, including
+  both Metal and software pixel checks with 1,025 strips, mixed-command budget
+  accounting and frame reset. Independent review found no actionable issue.
+  The normal build passed at 10:35 on September 27. The completed full run
+  (`RunAllTests/D9B6F8FB-86E3-4E0E-B845-9AFBC369A6DD.txt`) passed 286 of 292
+  tests, including the curve checks and all cached-chart probes. Six live
+  audio-clock tests failed to advance audio across an abnormally long run.
+  The isolated 10:33 rerun passed five; debug-pause playback still failed on
+  approximately 3 ms of historical input remapping and 33 ms of elapsed-time
+  disagreement (`RunSomeTests/9E9C31F7-0962-4527-BF5D-B1EBBCE3C0A8.txt`).
+  Audio I/O reconfiguration appears in that console, but is not a proven
+  explanation. No timing assertions or gameplay offsets were loosened. This
+  is not a green full suite or stable-push sign-off. The timing investigation
+  stays open in REQUESTS.md, separately from this tested curve compatibility
+  fix and from the deferred physical batch.
 - Intro stage classification now accepts If and all four Switch variants when
   the selector and case tests are fixed, side-effect-free expressions and every
   alternative contains only fixed expressions or proven stage drawings. It
@@ -555,8 +580,9 @@ integration probes, including successful inputs and restart/buffering paths.
   outliers, multiple judgments, and large result payloads.
 - All six DrawCurved edge variants, bilinear control coordinates, paired
   controls, corner-coupled skin transforms, captured runtime transforms,
-  optional depth keys, and contiguous texture slices. Commands accept 1–1024
-  integer segments within a shared 16,384-segment frame budget.
+  optional depth keys, and contiguous texture slices. Positive integer segment
+  counts share a 16,384-segment frame safety budget; the former separate
+  1,024-per-curve cap has been removed as described above.
 - Metal/software pixel comparisons for nearest/linear sampling, translucent
   textures and draw alpha, mirrored geometry, transparent texels, and genuine
   folded overlap. Software mesh frames share one texture cache and work budget;

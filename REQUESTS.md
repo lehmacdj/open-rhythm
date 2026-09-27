@@ -33,6 +33,26 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Long-curve compatibility follow-up (September 27, 2026): removed the app's
+undocumented 1,024-segment limit on individual curved draws. All six variants
+can now use the remaining shared frame drawing budget, with no reduction in
+the requested segment count. The existing 16,384-segment frame safety limit
+remains explicit host policy, not a Sonolus API maximum. The new regression
+failed before the fix and now preserves geometry/texture continuity at 1,025,
+4,096 and 16,384 segments. Four focused simulator tests pass, including
+1,025-strip Metal/software pixel comparisons and budget/reset checks.
+Independent review found no actionable issue; the 10:35 normal build passes.
+The full simulator run completed with 286/292 tests passing, including the
+curve checks and all cached charts. Six live audio-clock tests failed because
+audio did not advance; the run spanned an abnormally long wall-clock interval.
+An isolated 10:33 rerun passed five unchanged, while debug-pause playback
+reported a roughly 3 ms historical input-time remapping and a roughly 33 ms
+elapsed-time mismatch. Its console also records audio I/O reconfiguration;
+causality is not established. This is not a green full suite or stable push.
+The curve unit is retained separately; timing tolerances and production
+calibration are unchanged. Investigate the clock failure next. Physical checks
+remain deferred, and neither phone performance nor the API gate is signed off.
+
 Scratch-memory performance follow-up (September 26, 2026): Temporary Memory
 now uses 4,096 dense value/epoch slots, eliminating per-access
 dictionary lookups while preserving the previous callback-clearing behavior,
@@ -749,6 +769,14 @@ model level, checking that future judgments and spawned entities do not leak.
    Check calibration usability and alignment in the deferred device batch;
    resolve the public API's underdocumented audio-offset sign/unit convention
    without guessing a correction from the user's early/late distribution.
+6. Investigate the September 27 simulator live debug-pause clock failure before
+   treating the current build as stable. Five other live-clock tests recovered
+   unchanged after the long full run, but the isolated debug-pause case exposed
+   historical input remapping and elapsed-time disagreement during an audio
+   I/O reconfiguration. Distinguish sampling uncertainty, legitimate Core Media
+   clock changes and a client history defect; do not blindly loosen tolerances
+   or adjust input calibration to hide the observation. This simulator issue
+   does not reopen physical testing before the API-coverage gate.
 
 ## Deliberately not added / superseded requests
 

@@ -2986,13 +2986,74 @@ final class EngineHostTests: XCTestCase {
       XCTAssertEqual(draw.alpha, 0.5)
       XCTAssertThrowsError(try host.call(function: function, arguments: base + [0] + controls))
       XCTAssertThrowsError(try host.call(function: function, arguments: base + [0.5] + controls))
-      XCTAssertThrowsError(try host.call(function: function, arguments: base + [1025] + controls))
+      XCTAssertNoThrow(try host.call(function: function, arguments: base + [1025] + controls))
     }
     try host.beginFrame(at: 0)
     for _ in 0..<16 {
       _ = try host.call(function: "DrawCurvedB", arguments: base + [1024, 0, 0])
     }
     XCTAssertThrowsError(try host.call(function: "Draw", arguments: base))
+    try host.beginFrame(at: 1)
+    XCTAssertNoThrow(try host.call(function: "Draw", arguments: base))
+    XCTAssertThrowsError(try host.call(function: "DrawCurvedB",
+      arguments: base + [16_384, 0, 0]))
+    XCTAssertEqual(host.draws.count, 1, "Rejected work must not append a command")
+    XCTAssertNoThrow(try host.call(function: "DrawCurvedB",
+      arguments: base + [16_383, 0, 0]))
+    XCTAssertEqual(host.draws.count, 2)
+    try host.beginFrame(at: 2)
+    XCTAssertThrowsError(try host.call(function: "DrawCurvedB",
+      arguments: base + [16_385, 0, 0])) {
+      guard case EngineInterpreterError.operationLimitExceeded = $0 else {
+        return XCTFail("Expected shared work-budget error, got \($0)")
+      }
+    }
+  }
+
+  func testLongCurvesRetainEverySegmentWithinTheSharedFrameBudget() throws {
+    let host = makeHost()
+    let quad = [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
+      EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)]
+    let base: [Double] = [7, -1, -1, -1, 1, 1, 1, 1, -1, 0, 1]
+    for segments in [0, -1, 16_385, Int.max] {
+      XCTAssertTrue(EngineGeometry.curvedPatches(quad, curve: EngineCurve(
+        edge: .bottom, segments: segments,
+        controls: [EnginePoint(x: 0, y: 0)])).isEmpty)
+    }
+    for suffix in ["B", "T", "L", "R", "BT", "LR"] {
+      let controls: [Double] = suffix.count == 2 ? [0, 0, 0.5, 0.5] : [0, 0]
+      for segments in [1025, 4096, 16_384] {
+        try host.beginFrame(at: 0)
+        XCTAssertEqual(try host.call(function: "DrawCurved" + suffix,
+          arguments: base + [Double(segments)] + controls), 0)
+        guard let curve = host.draws.first?.curve else {
+          XCTFail("Missing curve: \(suffix), \(segments)")
+          continue
+        }
+        XCTAssertEqual(curve.segments, segments)
+        let patches = EngineGeometry.curvedPatches(quad, curve: curve)
+        XCTAssertEqual(patches.count, segments)
+        guard patches.count == segments else { continue }
+        let vertical = ["L", "R", "LR"].contains(suffix)
+        XCTAssertEqual(vertical ? patches[0].region.minV : patches[0].region.minU, 0)
+        XCTAssertEqual(vertical ? patches.last!.region.maxV : patches.last!.region.maxU, 1)
+        for index in 1..<patches.count {
+          let previous = patches[index - 1], current = patches[index]
+          XCTAssertEqual(vertical ? previous.region.maxV : previous.region.maxU,
+            vertical ? current.region.minV : current.region.minU)
+          XCTAssertEqual(previous.points[vertical ? 1 : 3], current.points[0])
+          XCTAssertEqual(previous.points[2], current.points[vertical ? 3 : 1])
+        }
+        // A regular Draw consumes one segment from the same budget.
+        if segments == 16_384 {
+          XCTAssertThrowsError(try host.call(function: "Draw", arguments: base)) {
+            guard case EngineInterpreterError.operationLimitExceeded = $0 else {
+              return XCTFail("Expected shared work-budget error, got \($0)")
+            }
+          }
+        }
+      }
+    }
     try host.beginFrame(at: 1)
     XCTAssertNoThrow(try host.call(function: "Draw", arguments: base))
   }
@@ -3062,9 +3123,11 @@ final class EngineHostTests: XCTestCase {
     let quad = [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
       EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)]
     let matrix: [Double] = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
-    for edge in [EngineCurve.Edge.leftRight, .bottomTop] {
+    for (edge, segments) in [EngineCurve.Edge.leftRight, .bottomTop].flatMap({ edge in
+      [8, 1025].map { (edge, $0) }
+    }) {
       let patches = EngineGeometry.curvedPatches(quad, curve: EngineCurve(
-        edge: edge, segments: 8, controls: [EnginePoint(x: 0, y: 0),
+        edge: edge, segments: segments, controls: [EnginePoint(x: 0, y: 0),
           EnginePoint(x: 0, y: 0)]))
       let sprites = patches.map {
         EngineRenderSprite(image: image, points: $0.points, matrix: matrix,

@@ -557,7 +557,8 @@ enum EngineGeometry {
 
   static func curvedPatches(_ quad: [EnginePoint], curve: EngineCurve)
     -> [(points: [EnginePoint], region: EngineTextureRegion)] {
-    guard quad.count == 4, (1...1024).contains(curve.segments),
+    guard quad.count == 4,
+      (1...EngineDrawCommand.segmentLimitPerFrame).contains(curve.segments),
       curve.controls.count == (curve.edge == .bottomTop || curve.edge == .leftRight ? 2 : 1)
     else { return [] }
     let controls = curve.controls.map {
