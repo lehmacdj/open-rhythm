@@ -1,6 +1,10 @@
 #import "EnginePCMVoice.h"
 #import "EnginePCMRender.h"
 
+#if !__has_feature(objc_arc)
+#error EnginePCMVoice requires ARC to retain PCM and release voice storage.
+#endif
+
 // Both the control object and node block retain this storage. The block uses
 // only its C ivar address, never Objective-C messaging. PCM remains immutable
 // and alive even if the control object is released while the node still exists.

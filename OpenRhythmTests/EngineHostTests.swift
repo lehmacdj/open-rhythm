@@ -570,6 +570,84 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testNativeVoiceAddedDuringPlaybackUsesExistingClockAndPreservesPeers() throws {
+    // Keep the graph stereo so AVAudioMixerNode does not introduce mono
+    // equal-power panning when it allocates a new input bus during playback.
+    let (engine, first, output) = try nativeEffectFixture(channels: 2)
+    defer { engine.stop() }
+    first.play(after: 0, looped: true)
+    for _ in 0..<6 {
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    }
+    let before = engine.manualRenderingSampleTime
+    let format = try XCTUnwrap(AVAudioFormat(
+      standardFormatWithSampleRate: 48000, channels: 2))
+    let source = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+      frameCapacity: 97))
+    source.frameLength = 97
+    for frame in 0..<97 {
+      source.floatChannelData![0][frame] = Float(frame + 1) / 8192
+      source.floatChannelData![1][frame] = -Float(frame + 1) / 8192
+    }
+    let added = NativeEffectVoice(engine: engine, buffer: source)
+    XCTAssertEqual(engine.manualRenderingSampleTime, before)
+    added.play(after: 513.0 / 48000, looped: true)
+    added.stop(after: 1537.0 / 48000)
+    for block in stride(from: 0, to: 2048, by: 512) {
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      let samples = output.floatChannelData![0]
+      XCTAssertTrue((0..<512).allSatisfy { index in
+        let frame = block + index
+        let peer = Float((Int(before) + frame) % 4096 + 1) / 8192
+        let extra: Float = (513..<1537).contains(frame)
+          ? Float((frame - 513) % 97 + 1) / 8192 : 0
+        return samples[index].isFinite && abs(samples[index] - (peer + extra)) < 1e-6
+          && abs(output.floatChannelData![1][index] + peer + extra) < 1e-6
+      }, "Adding a voice must not restart its clock or disrupt an existing loop")
+    }
+  }
+
+  @MainActor
+  func testNativeVoiceRetainsPCMThroughNodeLifetimeAndReleasesGraph() throws {
+    weak var weakPCM: AVAudioPCMBuffer?
+    weak var weakEngine: AVAudioEngine?
+    weak var weakVoice: NativeEffectVoice?
+    try autoreleasepool {
+      let engine = AVAudioEngine()
+      weakEngine = engine
+      let format = try XCTUnwrap(AVAudioFormat(
+        standardFormatWithSampleRate: 48000, channels: 1))
+      var voice: NativeEffectVoice? = try autoreleasepool {
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+          frameCapacity: 97))
+        buffer.frameLength = 97
+        for frame in 0..<97 { buffer.floatChannelData![0][frame] = 0.25 }
+        weakPCM = buffer
+        return NativeEffectVoice(engine: engine, buffer: buffer)
+      }
+      weakVoice = voice
+      XCTAssertNotNil(weakPCM, "The caller need not retain the source buffer")
+      try engine.enableManualRenderingMode(.offline, format: format,
+        maximumFrameCount: 512)
+      let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: 512))
+      try engine.start()
+      voice?.play(after: 0, looped: true)
+      voice = nil
+      XCTAssertNil(weakVoice)
+      XCTAssertNotNil(weakPCM, "An attached node must keep its PCM alive")
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      XCTAssertTrue((0..<512).allSatisfy {
+        output.floatChannelData![0][$0] == 0.25
+      })
+      engine.stop()
+    }
+    XCTAssertNil(weakVoice)
+    XCTAssertNil(weakEngine, "Voice storage must not retain the audio graph")
+    XCTAssertNil(weakPCM, "Tearing down the graph must release source PCM")
+  }
+
+  @MainActor
   func testNativeVoiceDenseShortLoopOfflineCost() throws {
     let format = try XCTUnwrap(AVAudioFormat(
       standardFormatWithSampleRate: 48000, channels: 2))

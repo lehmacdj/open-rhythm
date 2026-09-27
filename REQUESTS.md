@@ -61,8 +61,22 @@ A bounded 256-voice offline comparison measured roughly 0.09–0.10 ms median pe
 512-frame block for 97/4096-sample clips versus 0.08–0.09 ms for the old native
 player; one-sample loops were about 1.02 ms versus 1.40 ms. These simulator Debug
 measurements do not establish physical latency or full-game performance.
-Independent review found no remaining actionable issue and the final normal
-build passes at 11:55. Full-suite validation is still required before stable push.
+The 11:56 full simulator run completed at 12:05 with all 314 compiled tests
+passing and the final `TEST FINISHED` marker. A voice-growth test added after
+compilation was not part of those 314. That follow-up exposed a missed build
+integration prerequisite: Objective-C ARC was disabled, invalidating the PCM
+ownership assumptions and leaking native graph objects. ARC is now explicitly
+enabled in both Debug and Release, with a compile-time guard. New lifetime
+checks verify PCM survives caller/controller release and is released with the
+graph; stereo growth checks verify existing phase and new voice deadlines.
+The earlier ownership review is superseded by an independent review of the
+actual build settings and lifetime tests, with no remaining actionable finding.
+All 37 focused audio checks pass at 12:10 after the fix. Seven bounded checks
+also passed under Thread Sanitizer at 12:09 with no reported races; the build
+log confirms native `-fsanitize=thread` instrumentation. This is not exhaustive
+race proof. The temporary sanitizer setting is restored and the normal build
+passes at 12:10. A full-suite rerun after the ARC fix remains pending before
+stable push; the earlier 314-test result must not be treated as that rerun.
 
 Buffering-audio follow-up (September 27, 2026): buffering now uses the same
 sample-preserving pause path as explicit debug pause. Previously a reserved

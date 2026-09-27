@@ -26,8 +26,17 @@ integration probes, including successful inputs and restart/buffering paths.
   A bounded 256-voice offline Debug comparison measured 0.09–0.10 ms median for
   97/4096-frame clips (old native player 0.08–0.09 ms), and 1.02 ms for one-frame
   loops (old 1.40 ms). No physical/frame-rate guarantee is inferred. Independent
-  review found no remaining actionable issue. The final normal build passes at
-  11:55; full-suite validation remains pending before stable push.
+  review initially missed the target's disabled ARC setting. The full suite
+  passed 314 compiled tests at 12:05, but a subsequent voice-growth regression
+  exposed invalid PCM ownership and graph leaks. ARC is now enabled in both
+  Debug and Release and enforced with a source-level compile-time guard.
+  Explicit lifetime and stereo graph-growth tests now pass; independent review
+  of the build settings and these tests supersedes the earlier ownership review.
+  All 37 focused checks pass at 12:10. Seven bounded Thread Sanitizer checks
+  pass at 12:09 without reported races (native instrumentation verified in the
+  build log); this is not exhaustive proof. Temporary diagnostics are restored,
+  and the normal build passes at 12:10. Full-suite validation after the ARC fix
+  remains pending before stable push.
 - Buffering freezes active effect samples instead of restarting them. A due
   reserved one-shot is promoted once, preserving minimum-distance history;
   active loops retain their sample position and only future reservations are
