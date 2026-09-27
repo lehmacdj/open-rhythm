@@ -119,6 +119,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   let skinSpriteIDs: Set<Int>
   let effectClipIDs: Set<Int>
   let particleEffectIDs: Set<Int>
+  private let introStageSpriteIDs: Set<Int>
   let archetypeCount: Int
 
   private(set) var time: TimeInterval = 0
@@ -192,6 +193,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     effectClipIDs: Set<Int>,
     particleEffectIDs: Set<Int>,
     archetypeCount: Int,
+    introStageSpriteIDs: Set<Int> = [],
     streamEntryLimit: Int = 262_144,
     playbackSpeed: Double = 1
   ) {
@@ -201,6 +203,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     self.skinSpriteIDs = skinSpriteIDs
     self.effectClipIDs = effectClipIDs
     self.particleEffectIDs = particleEffectIDs
+    self.introStageSpriteIDs = introStageSpriteIDs
     self.archetypeCount = archetypeCount
     self.streamEntryLimit = max(0, streamEntryLimit)
     for block in [1003, 1004] {
@@ -380,6 +383,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
           + Array(repeating: 0, count: required + 3 - a.count),
         alpha: min(1, max(0, a[10])), transform: transform(block: 1003),
         curve: curve, isStaticIntroDecoration: staticIntroDrawing
+          && introStageSpriteIDs.contains(id)
       ))
       return 0
     case "Play", "PlayScheduled":

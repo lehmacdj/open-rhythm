@@ -311,7 +311,8 @@ final class EnginePlayRuntime {
     host = CommandEngineRuntimeHost(
       memory: memory, level: level, skinSpriteIDs: skinSpriteIDs,
       effectClipIDs: effectClipIDs, particleEffectIDs: particleEffectIDs,
-      archetypeCount: engine.archetypes.count, playbackSpeed: playbackSpeed
+      archetypeCount: engine.archetypes.count,
+      introStageSpriteIDs: engine.introStageSpriteIDs, playbackSpeed: playbackSpeed
     )
     interpreter = EngineInterpreter(
       nodes: engine.nodes, memory: memory, host: host,

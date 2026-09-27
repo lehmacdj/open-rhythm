@@ -11,6 +11,19 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Intro-stage candidates can use fixed computed sprite IDs. The graph proof
+  establishes stable, side-effect-free arguments and read-only lifecycle;
+  the host separately validates each emitted draw's resolved sprite ID against
+  unambiguous standard stage metadata. The shared gate covers all seven draw
+  families. Selected custom/ambiguous graphics remain non-static, absent
+  resources emit nothing, and unselected custom branches do not taint the
+  rendered stage branch. Three regressions failed before their fixes and now
+  cover prepared/imported IDs, unsafe expressions, branch selection, restart,
+  gameplay advancement and visual-change rewind. All 320 non-cached tests pass
+  at 12:48 September 27 and the normal build passes at 12:51. The six cached
+  integration tests were not repeated for this change. Independent final review
+  found no actionable issue; arbitrary dynamic-stage and physical parity remain
+  unproven.
 - Entity Memory reads can qualify as fixed intro-stage expressions only under
   the whole-archetype read-only proof. Block 4000 is entity-keyed and unaliased;
   preprocessing/spawn-order changes precede the prepared snapshot, and all

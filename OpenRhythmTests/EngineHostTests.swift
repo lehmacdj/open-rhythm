@@ -1310,6 +1310,16 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesComputedStageIDAndPreservesChanges() async throws {
+    let moveTimes: [Double?] = [nil, 0.25]
+    for movesAt in moveTimes {
+      try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+        earlyInput: true, preparedStage: true, stageMovesAt: movesAt,
+        computedStageSprite: true)
+    }
+  }
+
+  @MainActor
   func testGameplayIntroPassesFixedBranchSelectedStage() async throws {
     for branch in ["If", "Switch", "SwitchWithDefault", "SwitchInteger",
       "SwitchIntegerWithDefault"] {
@@ -1354,7 +1364,8 @@ final class EngineHostTests: XCTestCase {
     stagePureCallbacks: Bool = false,
     shiftedStageRead: Bool = false,
     stageResourceQuery: String? = nil,
-    stageMemoryBlock: Int = 2001) async throws {
+    stageMemoryBlock: Int = 2001,
+    computedStageSprite: Bool = false) async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -1409,11 +1420,17 @@ final class EngineHostTests: XCTestCase {
             b.value(Double($0)), b.value(1)])
           : b.call("Get", [b.value(Double(stageMemoryBlock)), b.value(Double($0))])
       }
-      let writes = quad.enumerated().map { index, value in
+      var writes = quad.enumerated().map { index, value in
         b.call("Set", [b.value(Double(stageMemoryBlock)), b.value(Double(index)),
           b.value(value)])
       }
-      var stage = b.call("Draw", [b.value(1)]
+      let stageID: Int
+      if computedStageSprite {
+        writes.append(b.call("Set", [b.value(Double(stageMemoryBlock)),
+          b.value(8), b.value(1)]))
+        stageID = b.call("Get", [b.value(Double(stageMemoryBlock)), b.value(8)])
+      } else { stageID = b.value(1) }
+      var stage = b.call("Draw", [stageID]
         + coordinates + [b.value(-1), b.value(1)])
       if let stageResourceQuery {
         // Skin is present, while effect/particle resources are absent. Both
@@ -1758,6 +1775,68 @@ final class EngineHostTests: XCTestCase {
     }
   }
 
+  func testComputedIntroStageIDsRetainResolvedSpriteClassification() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1)
+    let id = b.call("Get", [b.value(4001), zero])
+    let draw = b.call("Draw", [id] + quad.map(b.value) + [zero, one])
+    let engine = try b.engine(archetypes: [[
+      "name": "Stage", "hasInput": false,
+      "imports": [["name": "sprite", "index": 0]], "exports": [],
+      "updateParallel": ["index": draw]]], sprites: [
+        ["name": "#LANE", "id": 1], ["name": "READY", "id": 2],
+        ["name": "#LANE", "id": 3], ["name": "READY", "id": 3],
+        ["name": "#STAGE_MIDDLE", "id": 4]])
+    XCTAssertEqual(engine.staticIntroArchetypes, [0],
+      "A fixed computed ID is a candidate, not proof of its sprite name")
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: (1...4).map {
+        LevelEntity(archetype: "Stage", name: nil,
+          data: [LevelEntityData(name: "sprite", value: Double($0), ref: nil)])
+      }), options: [], aspectRatio: 2, skinSpriteIDs: [1, 2, 3],
+      effectClipIDs: [], particleEffectIDs: [])
+    for _ in 0..<2 {
+      try runtime.update(at: 0)
+      XCTAssertEqual(runtime.host.draws.map(\.spriteID), [1, 2, 3],
+        "Missing sprites remain unavailable, regardless of metadata")
+      XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration),
+        [true, false, false], "Custom and ambiguous IDs must remain visible effects")
+      runtime.restart()
+    }
+    let unsafeIDs = [b.call("Get", [b.value(1001), zero]),
+      b.call("Random", [one, b.value(2)]), draw,
+      b.call("Set", [b.value(4000), zero, one])]
+    let unsafe = try b.engine(archetypes: unsafeIDs.map { id in
+      ["name": "Dynamic", "hasInput": false, "imports": [], "exports": [],
+        "updateParallel": ["index": b.call("Draw",
+          [id] + quad.map(b.value) + [zero, one])]]
+    }, sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertTrue(unsafe.staticIntroArchetypes.isEmpty)
+  }
+
+  func testIntroBranchValidatesOnlyResolvedDrawIdentities() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1)
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, one])
+    let custom = b.call("Draw", [b.value(2)] + quad.map(b.value) + [zero, one])
+    let choice = b.call("Get", [b.value(4001), zero])
+    let engine = try b.engine(archetypes: [["name": "Choice", "hasInput": false,
+      "imports": [["name": "choice", "index": 0]], "exports": [],
+      "updateParallel": ["index": b.call("If", [choice, draw, custom])]]],
+      sprites: [["name": "#LANE", "id": 1], ["name": "READY", "id": 2]])
+    XCTAssertEqual(engine.staticIntroArchetypes, [0])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [1.0, 0].map {
+        LevelEntity(archetype: "Choice", name: nil,
+          data: [LevelEntityData(name: "choice", value: $0, ref: nil)])
+      }), options: [], aspectRatio: 2, skinSpriteIDs: [1, 2], effectClipIDs: [],
+      particleEffectIDs: [])
+    try runtime.update(at: 0)
+    XCTAssertEqual(runtime.host.draws.map(\.spriteID), [1, 2])
+    XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration), [true, false],
+      "An unselected custom branch is not visible; a selected one is an effect")
+  }
+
   func testStaticIntroProofClassifiesFixedSelectionBranches() throws {
     let b = RuntimeNodeBuilder()
     let zero = b.value(0), one = b.value(1)
@@ -1775,17 +1854,18 @@ final class EngineHostTests: XCTestCase {
     var valid = branches(fixed, draw)
     let nested = b.call("If", [fixed, valid[1], zero])
     valid.append(nested)
+    valid += branches(fixed, custom)
+      + [b.call("SwitchInteger", [zero, draw, custom])]
     let random = b.call("Random", [zero, one])
     let write = b.call("Set", [b.value(4000), zero, one])
     let invalid = branches(mutable, draw) + branches(draw, draw)
-      + branches(fixed, custom) + branches(fixed, mutable)
+      + branches(fixed, mutable)
       + branches(fixed, random) + branches(fixed, write) + [
         b.call("If", [nested, draw, zero]),
         b.call("Draw", [one] + quad.map(b.value) + [zero, nested]),
         b.call("Get", [b.value(2001), nested]),
         b.call("If", [one, draw, random]),
         b.call("SwitchWithDefault", [one, one, draw, write]),
-        b.call("SwitchInteger", [zero, draw, custom]),
         b.call("Switch", [fixed, draw, draw]),
         b.call("SwitchWithDefault", [fixed, draw, draw, zero]),
         b.call("If", [fixed, draw]), b.call("Switch", [fixed, draw]),
@@ -1934,10 +2014,10 @@ final class EngineHostTests: XCTestCase {
       sprites: [["name": "#LANE", "id": 1]])
     XCTAssertEqual(engine.staticIntroArchetypes, [0])
     XCTAssertTrue(try b.engine(archetypes: [base],
-      sprites: [["name": "READY", "id": 1]]).staticIntroArchetypes.isEmpty)
+      sprites: [["name": "READY", "id": 1]]).introStageSpriteIDs.isEmpty)
     XCTAssertTrue(try b.engine(archetypes: [base], sprites: [
       ["name": "#LANE", "id": 1], ["name": "READY", "id": 1]
-    ]).staticIntroArchetypes.isEmpty, "Ambiguous resource IDs are not proof")
+    ]).introStageSpriteIDs.isEmpty, "Ambiguous resource IDs are not proof")
   }
 
   func testStaticIntroProofSeparatesDrawEffectsAndBoundsGraphWork() throws {

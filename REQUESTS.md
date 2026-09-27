@@ -48,6 +48,21 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Resolved-sprite intro follow-up (September 27, 2026): fixed computed sprite
+IDs now qualify for stage classification, with identity checked on every
+emitted draw rather than inferred solely from literal graph nodes. All seven
+draw families require an unambiguous standard stage ID; selected custom or
+ambiguous sprites remain visible stopping conditions. Unselected custom
+branches no longer disqualify an otherwise fixed stage draw. Missing resources
+emit no draw. Every argument and later lifecycle callback still requires the
+existing stability and side-effect proof. Three new regressions failed before
+their fixes and now cover imported/prepared IDs, unsafe expressions, selected
+branches, restart, actual intro advancement and transform-change rewind.
+All 320 non-cached simulator tests pass at 12:48 and the normal build passes
+at 12:51; the six cached-chart tests were not repeated. Independent review of
+the final change found no actionable issue. General dynamic-stage safety and
+physical verification remain open.
+
 Read-only entity-memory intro follow-up (September 27, 2026): prepared local
 stage coordinates can now qualify for safe skipping through direct or shifted
 reads. Entity Memory has no cross-entity alias; this is a conditional proof,

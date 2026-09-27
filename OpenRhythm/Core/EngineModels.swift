@@ -124,10 +124,8 @@ struct EnginePlayData: Decodable, Sendable {
   let nodes: [EngineDataNode]
   let buckets: [EngineBucket]
 
-  /// Only persistent non-input entities with proven fixed stage draws
-  /// are exempt from the initial visual boundary. A sprite's name alone cannot
-  /// establish that it is static: engines can animate ordinary stage sprites.
-  var staticIntroArchetypes: Set<Int> {
+  /// Ambiguous aliases must not turn a custom effect into stage decoration.
+  var introStageSpriteIDs: Set<Int> {
     let stageNames: Set<String> = ["#STAGE_MIDDLE", "#STAGE_COVER", "#LANE",
       "#LANE_SEAMLESS", "#LANE_ALTERNATIVE", "#LANE_ALTERNATIVE_SEAMLESS",
       "#JUDGMENT_LINE", "#NOTE_SLOT", "#STAGE_LEFT_BORDER",
@@ -137,9 +135,15 @@ struct EnginePlayData: Decodable, Sendable {
       "#STAGE_TOP_LEFT_CORNER", "#STAGE_TOP_RIGHT_CORNER",
       "#STAGE_BOTTOM_LEFT_CORNER", "#STAGE_BOTTOM_RIGHT_CORNER"]
     let grouped = Dictionary(grouping: skin.sprites, by: \.id)
-    let stageIDs = Set(grouped.compactMap { id, sprites in
+    return Set(grouped.compactMap { id, sprites in
       sprites.allSatisfy { stageNames.contains($0.name) } ? id : nil
     })
+  }
+
+  /// Persistent non-input candidates with fixed draws and read-only callbacks.
+  /// Each actual draw must also resolve to an unambiguous stage sprite ID in
+  /// the host. Neither a fixed expression nor a stage name alone is sufficient.
+  var staticIntroArchetypes: Set<Int> {
     // Do not infer purity from supportedFunctions: streams and random values
     // can change even when their arguments are fixed. Drawing is a separate
     // proof result and must never qualify as a side-effect-free argument.
@@ -233,12 +237,14 @@ struct EnginePlayData: Decodable, Sendable {
           : function == "GetShifted" ? 4 : nil
         let fixedRead = readArity == node.arguments.count
           && first.map { fixedBlocks.contains($0) || $0 == 4000 } == true
-        let stageDraw = drawing.contains(function)
-          && first.flatMap(Int.init(exactly:)).map(stageIDs.contains) == true
+        // Identity is checked per emitted draw by the host, including literal
+        // IDs. An unselected custom draw must not taint a selected stage draw.
+        // Every draw argument still requires constant, side-effect-free proof.
+        let fixedDraw = drawing.contains(function) && !node.arguments.isEmpty
         let fixedResourceQuery = resourceQueries.contains(function)
           && node.arguments.count == 1
         guard pure.contains(function) || branching.contains(function)
-          || fixedRead || stageDraw || fixedResourceQuery
+          || fixedRead || fixedDraw || fixedResourceQuery
           || function == "Execute" || function == "Execute0" else {
           proofs[index] = .unsafe
           active.remove(index)
