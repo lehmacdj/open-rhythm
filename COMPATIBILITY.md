@@ -11,6 +11,17 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Static intro-stage proof accepts `GetShifted` over the same literal immutable
+  blocks as `Get`, with exact arity and fixed, side-effect-free address arguments.
+  The shift changes only the index, not the target block. `GetPointed` remains
+  excluded: immutable pointer storage can still point into mutable memory.
+  Regressions cover all four allowed blocks, mutable/drawing/random/writing
+  arguments, malformed arity, actual first-visible-note advancement and rewind
+  after another entity changes the stage transform. Both new tests failed
+  before the fix; all 312 non-cached tests pass at 12:26 September 27 and the
+  normal build passes at 12:27. Independent review found no actionable issue.
+  The six cached-chart tests passed in the preceding full 316-test run and were
+  not repeated for this follow-up. Unknown/dynamic stage policy stays open.
 - Native scheduled effect stops no longer depend on a main-actor timer. A C PCM
   source renderer gates samples against native host timestamps (sample time for
   offline rendering), using three preallocated command slots and lock-free

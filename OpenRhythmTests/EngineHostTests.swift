@@ -1276,6 +1276,16 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesShiftedFixedStageAndPreservesChanges() async throws {
+    let moveTimes: [Double?] = [nil, 0.25]
+    for movesAt in moveTimes {
+      try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+        earlyInput: true, preparedStage: true, stageMovesAt: movesAt,
+        shiftedStageRead: true)
+    }
+  }
+
+  @MainActor
   func testGameplayIntroPassesFixedBranchSelectedStage() async throws {
     for branch in ["If", "Switch", "SwitchWithDefault", "SwitchInteger",
       "SwitchIntegerWithDefault"] {
@@ -1317,7 +1327,8 @@ final class EngineHostTests: XCTestCase {
     resolvesFutureInput: Bool = true, lifeChangeAt: Double? = nil,
     preparedStage: Bool = false, stageMovesAt: Double? = nil,
     preparedBranch: String? = nil,
-    stagePureCallbacks: Bool = false) async throws {
+    stagePureCallbacks: Bool = false,
+    shiftedStageRead: Bool = false) async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -1367,7 +1378,10 @@ final class EngineHostTests: XCTestCase {
     var entities = [LevelEntity(archetype: "OpeningEffect", name: nil, data: [])]
     if preparedStage {
       let coordinates = quad.indices.map {
-        b.call("Get", [b.value(2001), b.value(Double($0))])
+        shiftedStageRead
+          ? b.call("GetShifted", [b.value(2001), b.value(0),
+            b.value(Double($0)), b.value(1)])
+          : b.call("Get", [b.value(2001), b.value(Double($0))])
       }
       let writes = quad.enumerated().map { index, value in
         b.call("Set", [b.value(2001), b.value(Double(index)), b.value(value)])
@@ -1564,6 +1578,40 @@ final class EngineHostTests: XCTestCase {
     try runtime.update(at: 0)
     XCTAssertEqual(runtime.host.draws, preparedDraws,
       "Prepared random values remain fixed across restart")
+  }
+
+  func testStaticIntroProofAcceptsOnlyImmutableShiftedReads() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1)
+    let fixedBlock = b.value(2001)
+    let fixedIndex = b.call("Get", [b.value(2002), zero])
+    let valid = [2001, 2002, 3000, 4001].map {
+      b.call("GetShifted", [b.value(Double($0)), zero, fixedIndex, one])
+    }
+    let mutable = b.call("Get", [b.value(1001), zero])
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, one])
+    var invalid = [1001, 1002, 1003, 2000, 4000, 4002, 4003, 4004,
+      4005, 4101, 4102, 4103, 10000].map {
+      b.call("GetShifted", [b.value(Double($0)), zero, zero, one])
+    }
+    for index in 1...3 {
+      for unsafe in [mutable, draw, b.call("Random", [zero, one]),
+        b.call("Set", [b.value(4000), zero, one])] {
+        var args = [fixedBlock, zero, zero, one]
+        args[index] = unsafe
+        invalid.append(b.call("GetShifted", args))
+      }
+    }
+    // Fixed pointer storage does not prove its target block is immutable.
+    invalid += [b.call("GetPointed", [fixedBlock, zero, zero]),
+      b.call("GetShifted", [fixedBlock, zero, zero]),
+      b.call("GetShifted", [fixedBlock, zero, zero, one, zero])]
+    let engine = try b.engine(archetypes: (valid + invalid).map { read in
+      let callback = b.call("Draw", [one] + quad.map(b.value) + [zero, read])
+      return ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
+        "updateParallel": ["index": callback]]
+    }, sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, Set(valid.indices))
   }
 
   func testStaticIntroProofClassifiesFixedSelectionBranches() throws {

@@ -43,6 +43,21 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Shifted-read intro follow-up (September 27, 2026): immutable stage coordinates
+read via `GetShifted` now qualify for the same fixed-stage proof as `Get`.
+The block must be a literal member of the existing immutable allowlist, the
+call must have exactly four arguments, and every address expression must be
+proven fixed and side-effect-free. Indirect pointers remain excluded because
+immutable pointer storage does not establish an immutable target. Two new
+regressions failed before the change, including gameplay stopping at zero
+instead of the first visible note at 0.5 seconds. They now pass, and a later
+stage-transform change still causes genuine simulation followed by rewind.
+All 312 non-cached simulator tests pass at 12:26; the six cached-chart tests
+passed in the preceding 316-test full run and were not repeated for this
+classifier-only follow-up. Independent review found no actionable issue; the
+normal build passes at 12:27. This broadens safe classification but does not
+claim arbitrary dynamic-stage classification or physical startup parity.
+
 Native scheduled-stop follow-up (September 27, 2026): effect voices now use a
 native C PCM renderer with replaceable start/stop gates instead of a main-actor
 timer. A queued silent-buffer prototype could stop precisely but could not

@@ -216,7 +216,12 @@ struct EnginePlayData: Decodable, Sendable {
         let first = node.arguments.first.flatMap {
           nodes.indices.contains($0) ? nodes[$0].value : nil
         }
-        let fixedRead = function == "Get" && node.arguments.count == 2
+        // Shifted addresses stay within the named block. All address
+        // expressions still require constant proof below. GetPointed is not
+        // equivalent: even fixed pointer storage can name a mutable block.
+        let readArity = function == "Get" ? 2
+          : function == "GetShifted" ? 4 : nil
+        let fixedRead = readArity == node.arguments.count
           && first.map(fixedBlocks.contains) == true
         let stageDraw = drawing.contains(function)
           && first.flatMap(Int.init(exactly:)).map(stageIDs.contains) == true
