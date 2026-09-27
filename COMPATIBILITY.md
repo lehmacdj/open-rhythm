@@ -31,9 +31,13 @@ integration probes, including successful inputs and restart/buffering paths.
   Native effective rates remain independently checked against selected speed;
   player stalls/jumps no longer imply unconditional wall-time progression,
   while input/player and history assertions remain strict. The normal 10:57
-  build passed. Final independent review found no remaining actionable issue;
-  the full simulator suite is pending. This is not physical alignment sign-off
-  or a calibration change.
+  build passed. Final independent review found no remaining actionable issue.
+  The full 10:57 simulator run finished at 11:06 with all 297 compiled tests
+  passing (`RunAllTests/E40E9225-05AF-4014-A70F-A7289EF4492C.txt`), including
+  all live clocks and cached charts. The completed report and TEST FINISHED
+  marker resolved the observer timeout without restarting. Three intro tests
+  added after compilation have no result in that run; they are excluded from
+  the 297. This is not physical alignment sign-off or a calibration change.
 - Curved draws no longer have a separate 1,024-segment cap. The public
   [DrawCurvedB contract](
   https://wiki.sonolus.com/engine-specs/functions/draw-curved-b) specifies the

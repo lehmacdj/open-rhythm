@@ -58,8 +58,12 @@ the captured zero-origin sequence, repeated reads, discontinuities, invalid
 boundaries, exact-timestamp ordering, nested parent changes and source swaps.
 Twenty clock tests passed at 10:52; the added nested-source test passed at
 10:54, and final boundary/debug-pause checks passed at 10:56. The normal build
-passed at 10:57. The full simulator suite is now running; not yet a stable-push
-sign-off. Independent review caught the exact-timestamp edge and it is fixed;
+passed at 10:57. The full 10:57 simulator run completed at 11:06 with all 297
+compiled tests passing, including cached charts and live clock checks. Its
+completed report and TEST FINISHED marker confirm success after the observer
+timeout; it was not restarted. Three intro tests added after compilation have
+no result in that run and are not included in the 297. Independent review
+caught the exact-timestamp edge and it is fixed;
 final follow-up review found no remaining actionable issue.
 
 Native playback stalls/jumps are distinguished from uninterrupted wall-time
@@ -805,14 +809,13 @@ model level, checking that future judgments and spawned entities do not leak.
    Check calibration usability and alignment in the deferred device batch;
    resolve the public API's underdocumented audio-offset sign/unit convention
    without guessing a correction from the user's early/late distribution.
-6. Finish full-suite validation and independent review of the September 27
-   clock-history fix before treating the current build as stable. The confirmed
-   affine-origin/history-boundary defect is fixed and focused checks pass;
-   the current full run has no result yet. Exact stopped-transition timing is
-   still bounded by observations, not independently established. Native player
-   re-anchors are not corrected by arbitrary calibration or relaxed alignment
-   tolerances. This simulator work does not reopen physical testing before the
-   API-coverage gate.
+6. Independently establish stopped-clock transition precision and physical
+   alignment in the deferred batch. The September 27 affine-origin history
+   defect is fixed, independently reviewed and verified by the 297-test full
+   simulator run. Exact stopped-transition timing is still bounded by
+   observations, not independently established. Native player re-anchors are
+   not corrected by arbitrary calibration or relaxed alignment tolerances.
+   This limitation does not reopen device testing before the API gate.
 
 ## Deliberately not added / superseded requests
 
