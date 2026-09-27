@@ -11,6 +11,22 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Static-intro analysis now allows lifecycle callbacks when each is proven
+  fixed and side-effect-free, rather than requiring all five slots to be absent.
+  Pure proof results remain distinct from stage-drawing results through shared
+  memoization and branches. Nonzero initialize/updateSequential/touch/terminate
+  returns do not retire an entity; EntityDespawn still controls that, while a
+  fixed false shouldSpawn retains the waiting queue's existing behavior.
+  Mutable reads, effects, writes and drawing in these lifecycle slots preserve
+  the intro. New regressions failed before the fix, including a model stuck at
+  zero instead of the first visible note at 0.5 seconds. All 25 intro tests pass
+  at 11:08 on September 27, including true/false spawning, preprocessing-set
+  despawn flags, actual touch callbacks, reverse memoization traversal and
+  cross-entity transformed-stage rewind. Independent review found no actionable
+  issue. Full-suite validation of this extension is pending; the earlier
+  297-test result below applies to the preceding clock/curve revision.
+  Broader dynamic/custom-stage classification and physical verification remain
+  open; these tests do not establish a Project SEKAI-specific timing change.
 - Playback clock history distinguishes an affine reference origin from its
   validity interval. Native simulator traces supplied host origin zero across
   stop/resume transitions; treating that as a boundary erased earlier mappings

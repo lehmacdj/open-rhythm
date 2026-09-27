@@ -752,6 +752,16 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesPureLifecycleStageAndPreservesChanges() async throws {
+    let moveTimes: [Double?] = [nil, 0.25]
+    for movesAt in moveTimes {
+      try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+        earlyInput: true, preparedStage: true, stageMovesAt: movesAt,
+        stagePureCallbacks: true)
+    }
+  }
+
+  @MainActor
   func testGameplayIntroFixedBranchStageStillPreservesVisibleChanges() async throws {
     for branch in ["If", "Switch", "SwitchWithDefault", "SwitchInteger",
       "SwitchIntegerWithDefault"] {
@@ -773,7 +783,8 @@ final class EngineHostTests: XCTestCase {
     resolveAt: Double? = nil, debugAtResolution: Bool = false,
     resolvesFutureInput: Bool = true, lifeChangeAt: Double? = nil,
     preparedStage: Bool = false, stageMovesAt: Double? = nil,
-    preparedBranch: String? = nil) async throws {
+    preparedBranch: String? = nil,
+    stagePureCallbacks: Bool = false) async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -846,6 +857,12 @@ final class EngineHostTests: XCTestCase {
         "imports": [], "exports": [],
         "preprocess": ["index": b.call("Execute0", writes)],
         "updateParallel": ["index": stage]])
+      if stagePureCallbacks {
+        for callback in ["shouldSpawn", "initialize", "updateSequential",
+          "touch", "terminate"] {
+          archetypes[archetypes.count - 1][callback] = ["index": selected]
+        }
+      }
       entities.append(LevelEntity(archetype: "Stage", name: nil, data: []))
     }
     if let stageMovesAt {
@@ -1056,6 +1073,86 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(engine.staticIntroArchetypes, Set(valid.indices))
   }
 
+  func testStaticIntroProofAcceptsOnlyPureLifecycleCallbacks() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1)
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, one])
+    let fixed = b.call("Get", [b.value(2002), zero])
+    let pure = b.call("If", [fixed, b.call("Add", [one, zero]), zero])
+    let unsafe = [draw,
+      b.call("Get", [b.value(1001), zero]),
+      b.call("Set", [b.value(4004), zero, one]),
+      b.call("Random", [zero, one]), b.call("Spawn", [zero]),
+      b.call("Play", [one, zero]),
+      b.call("If", [one, pure, draw])]
+    let callbacks = ["shouldSpawn", "initialize", "updateSequential",
+      "touch", "terminate"]
+    let base: [String: Any] = ["name": "Stage", "hasInput": false,
+      "imports": [], "exports": [], "updateParallel": ["index": draw]]
+    var archetypes = [[String: Any]]()
+    for callback in callbacks {
+      var candidate = base
+      candidate[callback] = ["index": pure]
+      archetypes.append(candidate)
+    }
+    var combined = base
+    for callback in callbacks { combined[callback] = ["index": pure] }
+    archetypes.append(combined)
+    let accepted = Set(archetypes.indices)
+    for callback in callbacks {
+      for expression in unsafe {
+        var candidate = combined
+        candidate[callback] = ["index": expression]
+        archetypes.append(candidate)
+      }
+    }
+    let engine = try b.engine(archetypes: archetypes,
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, accepted,
+      "Non-drawing callbacks require pure proof, not merely safe stage draws")
+    let reversed = try b.engine(archetypes: Array(archetypes.reversed()),
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(reversed.staticIntroArchetypes,
+      Set(accepted.map { archetypes.count - 1 - $0 }),
+      "Memoized draw proofs must stay distinct in either traversal order")
+  }
+
+  func testPureIntroCallbacksKeepSpawnAndDespawnSemantics() throws {
+    for shouldSpawn in [0.0, 1.0] {
+      for despawn in [0.0, 1.0] {
+        let b = RuntimeNodeBuilder()
+        let one = b.value(1), zero = b.value(0)
+        let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, one])
+        let engine = try b.engine(archetypes: [[
+          "name": "Stage", "hasInput": false, "imports": [], "exports": [],
+          "preprocess": ["index": b.call("Set",
+            [b.value(4004), zero, b.value(despawn)])],
+          "shouldSpawn": ["index": b.value(shouldSpawn)],
+          "initialize": ["index": one], "updateSequential": ["index": one],
+          "touch": ["index": one], "terminate": ["index": one],
+          "updateParallel": ["index": draw]]],
+          sprites: [["name": "#LANE", "id": 1]])
+        XCTAssertEqual(engine.staticIntroArchetypes, [0])
+        let runtime = try EnginePlayRuntime(engine: engine,
+          level: LevelData(bgmOffset: 0, entities: [
+            LevelEntity(archetype: "Stage", name: nil, data: [])]),
+          options: [], aspectRatio: 2, skinSpriteIDs: [1], effectClipIDs: [],
+          particleEffectIDs: [])
+        let origin = EnginePoint(x: 0, y: 0)
+        let touch = EngineTouch(id: 1, started: true, ended: false,
+          time: 0, startTime: 0, position: origin, startPosition: origin,
+          delta: origin)
+        try runtime.update(at: 0, touches: [touch])
+        XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration),
+          shouldSpawn == 0 ? [] : [despawn == 0])
+        try runtime.update(at: 0.5)
+        XCTAssertEqual(runtime.host.draws.map(\.isStaticIntroDecoration),
+          shouldSpawn == 0 || despawn != 0 ? [] : [true],
+          "Only the despawn block retires the stage, not pure callback returns")
+      }
+    }
+  }
+
   func testStaticIntroProofRejectsMutableArgumentExpressionsAndCycles() throws {
     let b = RuntimeNodeBuilder()
     let one = b.value(1)
@@ -1099,7 +1196,7 @@ final class EngineHostTests: XCTestCase {
     for callback in ["shouldSpawn", "initialize", "updateSequential", "touch",
       "terminate"] {
       var candidate = base
-      candidate[callback] = ["index": b.value(0)]
+      candidate[callback] = ["index": now]
       archetypes.append(candidate)
     }
     var input = base

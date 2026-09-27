@@ -162,13 +162,13 @@ struct EnginePlayData: Decodable, Sendable {
     enum Proof { case constant, drawing, unsafe }
     var proofs = [Int: Proof]()
     var remainingWork = 100_000
-    func isStaticDrawing(_ root: Int) -> Bool {
+    func proof(_ root: Int) -> Proof {
       var pending = [(index: root, expanded: false)]
       var active = Set<Int>()
       while let (index, expanded) = pending.popLast() {
         if proofs[index] != nil { continue }
         guard nodes.indices.contains(index), remainingWork > 0 else {
-          return false
+          return .unsafe
         }
         let node = nodes[index]
         let function = node.function ?? ""
@@ -202,7 +202,7 @@ struct EnginePlayData: Decodable, Sendable {
         }
         // Charge edges before allocating their traversal frames. Reuse results
         // across archetypes and shared DAGs, but reject gray (cyclic) nodes.
-        guard node.arguments.count < remainingWork else { return false }
+        guard node.arguments.count < remainingWork else { return .unsafe }
         remainingWork -= node.arguments.count + 1
         guard active.insert(index).inserted else {
           proofs[index] = .unsafe
@@ -230,14 +230,22 @@ struct EnginePlayData: Decodable, Sendable {
         pending.append((index, true))
         pending.append(contentsOf: node.arguments.map { ($0, false) })
       }
-      return proofs[root].map { $0 != .unsafe } ?? false
+      return proofs[root] ?? .unsafe
     }
     return Set(archetypes.indices.filter { index in
       let a = archetypes[index]
-      guard !a.hasInput, a.shouldSpawn == nil, a.initialize == nil,
-        a.updateSequential == nil, a.touch == nil, a.terminate == nil,
+      guard !a.hasInput,
         let update = a.updateParallel else { return false }
-      return isStaticDrawing(update.index)
+      // Compiler-generated callbacks may exist without changing anything.
+      // Their results must be fixed and side-effect-free, not merely safe
+      // stage drawings. Only shouldSpawn consumes their returned value;
+      // a fixed false result never introduces a later visual change.
+      let lifecycle = [a.shouldSpawn, a.initialize, a.updateSequential,
+        a.touch, a.terminate].compactMap { $0 }
+      guard lifecycle.allSatisfy({ proof($0.index) == .constant }) else {
+        return false
+      }
+      return proof(update.index) != .unsafe
     })
   }
 

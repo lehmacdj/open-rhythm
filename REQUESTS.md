@@ -39,6 +39,22 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Pure-lifecycle intro follow-up (September 27, 2026): the static-stage proof no
+longer rejects an archetype merely because compiler-generated lifecycle
+callbacks exist. Every present shouldSpawn/initialize/updateSequential/touch/
+terminate callback must instead be proven fixed and side-effect-free. Drawing
+is not a pure callback result, even in an unselected branch or a shared memoized
+node. Mutable reads, writes, random values, spawned entities and other effects
+remain disqualifying. Runtime visual-change and despawn safeguards still apply.
+Three new regressions failed before the change; the model then stopped at zero
+instead of reaching the first visible note at 0.5 seconds. All 25 intro checks
+now pass, including true/false spawning, ignored nonzero returns, touch calls,
+prepared despawn flags, transformed-stage rewind and dynamically spawned copies.
+Independent review found no actionable issue. Full-suite validation of this
+separate unit is next; the preceding 297-test run validated the clock/curve
+changes, not this extension. No new Project SEKAI startup or physical-device
+improvement is claimed from these synthetic checks.
+
 Clock-history follow-up (September 27, 2026): simulator traces reproduced a
 client defect independently of the reported acoustic bias. Core Media supplied
 host-relative affine anchors at zero; the history mistook those reference
@@ -130,8 +146,9 @@ Independent review found no actionable issue. The full 06:48 simulator run
 passed all 289 tests with no failures or skips; its completed report confirmed
 success after the observer timeout. The 06:53 normal build passed. The
 stack-reference dependency and deferred physical batch are unchanged.
-The cached SEKAI stage archetypes have additional lifecycle/touch callbacks
-and remain outside this proof; no SEKAI-specific startup improvement is claimed.
+At that checkpoint, cached SEKAI stage archetypes were excluded by their
+additional lifecycle/touch callbacks. The later pure-callback extension above
+does not establish a SEKAI-specific startup improvement.
 
 Stack evidence dependency: the public contracts still omit observable pointer
 initialization, addressing and frame layout. COMPATIBILITY.md now lists the
