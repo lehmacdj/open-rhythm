@@ -11,6 +11,16 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Resource-existence checks with fixed pure IDs qualify as constant expressions
+  in intro-stage proof. The host's skin/effect/particle availability sets are
+  immutable runtime inputs, unlike streams. Exact unary arity is required;
+  memoized drawing results and mutable/random/writing ID expressions stay
+  unsafe. New regressions failed before the change and now verify selected and
+  fallback stage alpha, intro advancement and restoration after a later stage
+  transform change. All 314 non-cached tests and the normal build pass at 12:32
+  September 27; the six cached-chart tests were not repeated for this follow-up.
+  Independent review found no actionable issue. This is not a general proof of
+  arbitrary dynamic-stage safety or physical presentation parity.
 - Static intro-stage proof accepts `GetShifted` over the same literal immutable
   blocks as `Get`, with exact arity and fixed, side-effect-free address arguments.
   The shift changes only the index, not the target block. `GetPointed` remains

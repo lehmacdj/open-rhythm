@@ -43,6 +43,20 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Resource-query intro follow-up (September 27, 2026): fixed unary
+`HasSkinSprite`, `HasEffectClip` and `HasParticleEffect` calls can now select
+static stage layouts. Their availability sets are immutable for each prepared
+runtime; restart retains them and a changed bundle/settings prepares a new
+runtime. Resource IDs must still be proven fixed and side-effect-free; wrong
+arity, mutable reads, drawing-valued arguments, randomness and writes are
+rejected. Two regressions failed before the change and now pass, including
+actual intro advancement and transform-change rewind. The gameplay checks
+assert the present-skin branch's alpha and the absent-resource fallback alpha,
+not only the skipped duration. All 314 non-cached simulator tests and the normal
+build pass at 12:32; the six cached-chart tests were not repeated. Independent
+review found no actionable issue. Unknown/dynamic stage classification and
+physical presentation checks remain open.
+
 Shifted-read intro follow-up (September 27, 2026): immutable stage coordinates
 read via `GetShifted` now qualify for the same fixed-stage proof as `Get`.
 The block must be a literal member of the existing immutable allowlist, the

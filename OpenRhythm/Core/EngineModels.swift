@@ -156,6 +156,10 @@ struct EnginePlayData: Decodable, Sendable {
       "DrawCurvedL", "DrawCurvedR", "DrawCurvedBT", "DrawCurvedLR"]
     let branching: Set<String> = ["If", "Switch", "SwitchWithDefault",
       "SwitchInteger", "SwitchIntegerWithDefault"]
+    // The host captures these availability sets once for the entire runtime.
+    // Unlike streams or random values, fixed IDs always yield fixed answers.
+    let resourceQueries: Set<String> = ["HasSkinSprite", "HasEffectClip",
+      "HasParticleEffect"]
     // These blocks cannot change after preprocessing, including writes via
     // Entity Data's array alias. Only level-backed entities receive the flag.
     let fixedBlocks: Set<Double> = [2001, 2002, 3000, 4001]
@@ -225,8 +229,10 @@ struct EnginePlayData: Decodable, Sendable {
           && first.map(fixedBlocks.contains) == true
         let stageDraw = drawing.contains(function)
           && first.flatMap(Int.init(exactly:)).map(stageIDs.contains) == true
+        let fixedResourceQuery = resourceQueries.contains(function)
+          && node.arguments.count == 1
         guard pure.contains(function) || branching.contains(function)
-          || fixedRead || stageDraw
+          || fixedRead || stageDraw || fixedResourceQuery
           || function == "Execute" || function == "Execute0" else {
           proofs[index] = .unsafe
           active.remove(index)

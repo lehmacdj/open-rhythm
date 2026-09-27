@@ -1286,6 +1286,18 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesResourceSelectedStageAndPreservesChanges() async throws {
+    for function in ["HasSkinSprite", "HasEffectClip", "HasParticleEffect"] {
+      let moveTimes: [Double?] = [nil, 0.25]
+      for movesAt in moveTimes {
+        try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+          earlyInput: true, preparedStage: true, stageMovesAt: movesAt,
+          stageResourceQuery: function)
+      }
+    }
+  }
+
+  @MainActor
   func testGameplayIntroPassesFixedBranchSelectedStage() async throws {
     for branch in ["If", "Switch", "SwitchWithDefault", "SwitchInteger",
       "SwitchIntegerWithDefault"] {
@@ -1328,7 +1340,8 @@ final class EngineHostTests: XCTestCase {
     preparedStage: Bool = false, stageMovesAt: Double? = nil,
     preparedBranch: String? = nil,
     stagePureCallbacks: Bool = false,
-    shiftedStageRead: Bool = false) async throws {
+    shiftedStageRead: Bool = false,
+    stageResourceQuery: String? = nil) async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("visual-intro-\(UUID().uuidString).caf")
     defer { try? FileManager.default.removeItem(at: url) }
@@ -1388,6 +1401,14 @@ final class EngineHostTests: XCTestCase {
       }
       var stage = b.call("Draw", [b.value(1)]
         + coordinates + [b.value(-1), b.value(1)])
+      if let stageResourceQuery {
+        // Skin is present, while effect/particle resources are absent. Both
+        // branches still draw a stage, exercising true and fallback layouts.
+        let fallback = b.call("Draw", [b.value(1)] + coordinates
+          + [b.value(-1), b.value(0.75)])
+        stage = b.call("If", [b.call(stageResourceQuery, [b.value(1)]),
+          stage, fallback])
+      }
       let selected = b.call("GreaterOr", [coordinates[0], b.value(-2)])
       switch preparedBranch {
       case "If": stage = b.call("If", [selected, stage, b.value(0)])
@@ -1492,6 +1513,13 @@ final class EngineHostTests: XCTestCase {
       accuracy: 1.0 / 60 + 1e-9,
       "Stop at visible content or 50 ms before the 2s audio onset")
     XCTAssertEqual(model.engineRuntime?.host.draws.count, preparedStage ? 2 : 1)
+    if let stageResourceQuery {
+      let stageDraws = try XCTUnwrap(model.engineRuntime).host.draws
+        .filter(\.isStaticIntroDecoration)
+      XCTAssertEqual(stageDraws.map(\.alpha),
+        [stageResourceQuery == "HasSkinSprite" ? 1 : 0.75],
+        "The present-resource or fallback branch must actually render")
+    }
     if earlyInput {
       let runtime = try XCTUnwrap(model.engineRuntime)
       XCTAssertTrue(runtime.hasActivatedInput)
@@ -1610,6 +1638,30 @@ final class EngineHostTests: XCTestCase {
       let callback = b.call("Draw", [one] + quad.map(b.value) + [zero, read])
       return ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
         "updateParallel": ["index": callback]]
+    }, sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, Set(valid.indices))
+  }
+
+  func testStaticIntroProofResourceQueriesRequireFixedPureIDs() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1)
+    let fixed = b.call("GetShifted", [b.value(2002), zero, zero, one])
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, one])
+    let mutable = b.call("Get", [b.value(1001), zero])
+    let unsafe = [mutable, draw, b.call("Random", [zero, one]),
+      b.call("Set", [b.value(4000), zero, one])]
+    var valid = [Int](), invalid = [Int]()
+    for function in ["HasSkinSprite", "HasEffectClip", "HasParticleEffect"] {
+      for id in [one, fixed] {
+        valid.append(b.call(function, [id]))
+      }
+      invalid += unsafe.map { b.call(function, [$0]) }
+      invalid += [b.call(function, []), b.call(function, [one, zero])]
+    }
+    let engine = try b.engine(archetypes: (valid + invalid).map { query in
+      ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
+        "shouldSpawn": ["index": query],
+        "updateParallel": ["index": b.call("If", [query, draw, zero])]]
     }, sprites: [["name": "#LANE", "id": 1]])
     XCTAssertEqual(engine.staticIntroArchetypes, Set(valid.indices))
   }
