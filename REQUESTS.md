@@ -62,6 +62,13 @@ All 320 non-cached simulator tests pass at 12:48 and the normal build passes
 at 12:51; the six cached-chart tests were not repeated. Independent review of
 the final change found no actionable issue. General dynamic-stage safety and
 physical verification remain open.
+The subsequent full simulator run completed at 13:02 with all 326 tests
+passing, zero failures or skips, and the final `TEST FINISHED` marker. It
+includes all six cached-chart lifecycle/restart and repeated-contact checks
+after the accumulated intro changes. The original process continued through
+the observer's five-minute timeout and was not restarted. The final normal
+build passes at 13:02. No device checks or song-server requests were used;
+these integration results do not establish acoustic or physical parity.
 
 Read-only entity-memory intro follow-up (September 27, 2026): prepared local
 stage coordinates can now qualify for safe skipping through direct or shifted

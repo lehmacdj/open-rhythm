@@ -24,6 +24,13 @@ integration probes, including successful inputs and restart/buffering paths.
   integration tests were not repeated for this change. Independent final review
   found no actionable issue; arbitrary dynamic-stage and physical parity remain
   unproven.
+  The subsequent full simulator suite completed at 13:02 September 27: all
+  326 tests passed, zero failures or skips, with `TEST FINISHED` confirmed in
+  the original run's console. All six cached integration checks were included;
+  assets were local and no song-server requests or physical tests were used.
+  The final normal build passes at 13:02. This supersedes the outstanding
+  cached-integration rerun for these intro-proof changes, not the API or
+  physical verification gaps below.
 - Entity Memory reads can qualify as fixed intro-stage expressions only under
   the whole-archetype read-only proof. Block 4000 is entity-keyed and unaliased;
   preprocessing/spawn-order changes precede the prepared snapshot, and all
