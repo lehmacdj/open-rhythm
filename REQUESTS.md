@@ -50,10 +50,12 @@ Three new regressions failed before the change; the model then stopped at zero
 instead of reaching the first visible note at 0.5 seconds. All 25 intro checks
 now pass, including true/false spawning, ignored nonzero returns, touch calls,
 prepared despawn flags, transformed-stage rewind and dynamically spawned copies.
-Independent review found no actionable issue. Full-suite validation of this
-separate unit is next; the preceding 297-test run validated the clock/curve
-changes, not this extension. No new Project SEKAI startup or physical-device
-improvement is claimed from these synthetic checks.
+Independent review found no actionable issue. The 11:09 normal build passed,
+and the full 11:09 simulator run completed at 11:18 with all 300 compiled tests
+passing. The final report and TEST FINISHED marker resolved the observer timeout
+without a restart. Three buffering regressions added after compilation have no
+result in that run and are excluded from the 300. No new Project SEKAI startup
+or physical-device improvement is claimed from these synthetic checks.
 
 Clock-history follow-up (September 27, 2026): simulator traces reproduced a
 client defect independently of the reported acoustic bias. Core Media supplied

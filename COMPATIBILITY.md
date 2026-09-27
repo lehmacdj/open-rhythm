@@ -23,8 +23,12 @@ integration probes, including successful inputs and restart/buffering paths.
   at 11:08 on September 27, including true/false spawning, preprocessing-set
   despawn flags, actual touch callbacks, reverse memoization traversal and
   cross-entity transformed-stage rewind. Independent review found no actionable
-  issue. Full-suite validation of this extension is pending; the earlier
-  297-test result below applies to the preceding clock/curve revision.
+  issue. The normal 11:09 build passed. The full 11:09 simulator run completed
+  at 11:18 with all 300 compiled tests passing
+  (`RunAllTests/4CCB1A77-4D51-4670-B0FD-63A5388A29A5.txt`). Its completed
+  report and TEST FINISHED marker resolved the observer timeout without a
+  restart. Three buffering tests added after compilation have no result in
+  that run and are excluded from the 300.
   Broader dynamic/custom-stage classification and physical verification remain
   open; these tests do not establish a Project SEKAI-specific timing change.
 - Playback clock history distinguishes an affine reference origin from its
