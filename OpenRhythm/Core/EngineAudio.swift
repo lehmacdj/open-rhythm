@@ -450,6 +450,10 @@ final class EngineAudioPlayback {
     guard commands.count <= 16_384 - pending.count else {
       throw EngineInterpreterError.operationLimitExceeded
     }
+    // Buffering is a pause in the BGM timeline, not a fresh playback. Promote
+    // reservations that already became due and freeze their sample positions;
+    // only future reservations need cancellation and re-scheduling.
+    if !advancing { pause(at: time) }
     let scheduled = Set(pending.map(\.id))
     for (id, player) in players where !scheduled.contains(id) && !player.voice.isPlaying {
       recycle(id)
@@ -466,19 +470,15 @@ final class EngineAudioPlayback {
     if isPaused {
       pausedLoopCommands.append(contentsOf: loopCommands)
       guard advancing else { return }
+      // Apply stopped/expired handles while voices are still silent. Resuming
+      // first could briefly replay a loop whose stop arrived during the pause.
+      try updateLoops(pausedLoopCommands, at: time, advancing: false)
+      pausedLoopCommands.removeAll(keepingCapacity: true)
+      effectiveLoopCommands = []
       try nativeBank?.start()
       for player in players.values { player.voice.resume() }
       for loop in loops.values { loop.voice?.resume() }
       isPaused = false
-      effectiveLoopCommands = pausedLoopCommands
-      pausedLoopCommands.removeAll(keepingCapacity: true)
-    }
-    if !advancing {
-      // Native audio clocks do not pause when AVPlayer buffers. Cancel future
-      // starts and retain their commands until the BGM clock resumes.
-      for event in pending { recycle(event.id, stop: true) }
-      try updateLoops(effectiveLoopCommands, at: time, advancing: false)
-      return
     }
     if let nativeBank, !nativeBank.engine.isRunning {
       // A route-format change can stop AVAudioEngine independently of BGM.
@@ -557,7 +557,7 @@ final class EngineAudioPlayback {
         loops[id] = nil
         continue
       }
-      if !advancing { releaseLoopVoice(id); continue }
+      if !advancing { continue }
       if let voice = loop.voice, loop.end <= time + 0.5,
         loop.scheduledEnd != loop.end {
         voice.stop(after: max(0, loop.end - time))

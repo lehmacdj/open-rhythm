@@ -11,6 +11,18 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Buffering freezes active effect samples instead of restarting them. A due
+  reserved one-shot is promoted once, preserving minimum-distance history;
+  active loops retain their sample position and only future reservations are
+  canceled/rebased. Queued expired loop stops are reconciled before native
+  engine/voice resume. Three regressions failed before the fix, including
+  actual offline-rendered PCM that skipped one-shot samples and restarted loops
+  at zero. Both now resume at sample 512 after repeated frozen frames. All 26
+  focused audio/pause-related tests pass at 11:21 September 27, including
+  full 256-voice pool replacement while paused; the normal build passes.
+  Independent review found no actionable issue. Full-suite validation of this
+  unit is next. The reported 光 sound has not been physically reproduced or
+  attributed to this code path; that check remains deferred.
 - Static-intro analysis now allows lifecycle callbacks when each is proven
   fixed and side-effect-free, rather than requiring all five slots to be absent.
   Pure proof results remain distinct from stage-drawing results through shared
@@ -970,6 +982,14 @@ is not progress toward resolving the layout.
 
 ## Remaining checks, including engines we have not sampled
 
+- [StopLoopedScheduled](
+  https://wiki.sonolus.com/engine-specs/functions/stop-looped-scheduled)
+  specifies precise stopping when scheduled at least 0.5 seconds ahead. The
+  current native voice uses a main-actor Task deadline, which cannot establish
+  that guarantee during main-thread stalls. Native audio-timeline interruption
+  needs implementation and offline sample-level checks for exact deadlines,
+  pauses, earlier replacement stops and generation-safe reuse. Mock stop-delay
+  values and the buffering PCM regression do not prove stop precision.
 - Fourteen play-capable stack entry points remain unimplemented: StackEnter,
   StackGet, StackGetFrame, StackGetFramePointer, StackGetPointer, StackGrow,
   StackInit, StackLeave, StackPop, StackPush, StackSet, StackSetFrame,

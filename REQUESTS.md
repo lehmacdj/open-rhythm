@@ -39,6 +39,21 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Buffering-audio follow-up (September 27, 2026): buffering now uses the same
+sample-preserving pause path as explicit debug pause. Previously a reserved
+one-shot that became due between display frames could be stopped and replayed,
+and active loops restarted from sample zero. Queued loop stops are now applied
+before voices resume, preventing a brief restart of an already-stopped loop.
+Three regressions failed before the fix, including native offline-rendered PCM:
+the one-shot skipped ahead and the loop restarted instead of resuming at sample
+512. They now resume at the expected sample and remain silent while frozen.
+All 26 focused audio/pause-related checks pass at 11:21, including repeated
+buffering, minimum-distance state, future reservations, and full 256-voice
+capacity replacement. The normal build passes; independent review found no
+actionable issue. Full-suite validation of this separate unit is next.
+These are reproducible client defects, not proof of the cause of the reported
+intermittent sound in 光. Physical reproduction stays in the deferred batch.
+
 Pure-lifecycle intro follow-up (September 27, 2026): the static-stage proof no
 longer rejects an archetype merely because compiler-generated lifecycle
 callbacks exist. Every present shouldSpawn/initialize/updateSequential/touch/
@@ -835,6 +850,13 @@ model level, checking that future judgments and spawned entities do not leak.
    observations, not independently established. Native player re-anchors are
    not corrected by arbitrary calibration or relaxed alignment tolerances.
    This limitation does not reopen device testing before the API gate.
+7. Complete native scheduled-loop-stop precision. StopLoopedScheduled currently
+   schedules a main-actor timer, so a busy renderer can delay the audible stop.
+   Replace that dependency with native audio-timeline scheduling and verify
+   exact interruption samples, pause/resume, earlier replacement stops and stale
+   completions before claiming the scheduled-stop contract is covered. This is
+   simulator/offline conformance work before the physical batch, not a request
+   to infer a calibration adjustment or claim acoustic parity.
 
 ## Deliberately not added / superseded requests
 

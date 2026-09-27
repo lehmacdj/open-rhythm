@@ -478,6 +478,126 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testBufferingDoesNotReplayDueReservationsOrActiveLoops() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([EngineAudioCommand(clipID: 1, time: 0.04,
+      minimumDistance: 0.1)], at: 0, loopCommands: [
+        .start(id: 1, clipID: 1, time: 0), .stop(id: 1, time: 0.3)])
+    let effect = try XCTUnwrap(voices.first { $0.looping == [false] })
+    let loop = try XCTUnwrap(voices.first { $0.looping == [true] })
+    for _ in 0..<3 { try audio.update([], at: 0.05, advancing: false) }
+    XCTAssertEqual(effect.stopCount, 0)
+    XCTAssertEqual(loop.stopCount, 0)
+    XCTAssertEqual(effect.pauseCount, 1)
+    XCTAssertEqual(loop.pauseCount, 1)
+    try audio.update([EngineAudioCommand(clipID: 1, time: 0.06,
+      minimumDistance: 0.1)], at: 0.05)
+    XCTAssertEqual(effect.resumeCount, 1)
+    XCTAssertEqual(loop.resumeCount, 1)
+    XCTAssertEqual(effect.delays, [0.04],
+      "An already-started reservation must not play again on buffer recovery")
+    XCTAssertEqual(loop.delays, [0], "A held effect retains its sample phase")
+    XCTAssertEqual(voices.flatMap(\.delays).count, 2,
+      "Recovering a due reservation must also preserve minimum-distance state")
+    XCTAssertEqual(loop.stopDelays, [0.3, 0.25],
+      "The stop deadline must be rebased after the frozen interval")
+    audio.stop()
+  }
+
+  @MainActor
+  func testPausedLoopStopsAreAppliedBeforeResumingVoice() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([], at: 0, loopCommands: [
+      .start(id: 1, clipID: 1, time: 0)])
+    let loop = try XCTUnwrap(voices.first { $0.looping == [true] })
+    audio.pause(at: 0.05)
+    try audio.update([], at: 0.05, advancing: false,
+      loopCommands: [.stop(id: 1, time: 0.05)])
+    try audio.update([], at: 0.05)
+    XCTAssertEqual(loop.stopCount, 1)
+    XCTAssertEqual(loop.resumeCount, 0,
+      "A stopped loop must not briefly restart before its queued stop is applied")
+    XCTAssertEqual(loop.delays, [0])
+    audio.stop()
+  }
+
+  @MainActor
+  func testPausedLoopReplacementReclaimsFullVoicePoolBeforeResume() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([], at: 0, loopCommands: (1...256).map {
+      .start(id: $0, clipID: 1, time: 0)
+    })
+    XCTAssertEqual(audio.allocatedVoiceCount, 256)
+    audio.pause(at: 0.1)
+    try audio.update([], at: 0.1, advancing: false, loopCommands: [
+      .stop(id: 1, time: 0.1), .start(id: 257, clipID: 1, time: 0.1)])
+    try audio.update([], at: 0.1)
+    XCTAssertEqual(audio.allocatedVoiceCount, 256)
+    XCTAssertEqual(voices.filter(\.isPlaying).count, 256)
+    XCTAssertEqual(voices.reduce(0) { $0 + $1.resumeCount }, 255)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 257)
+    audio.stop()
+  }
+
+  @MainActor
+  func testNativeBufferingRetainsActiveEffectSamplePosition() throws {
+    for looped in [false, true] {
+      let engine = AVAudioEngine()
+      defer { engine.stop() }
+      let format = try XCTUnwrap(AVAudioFormat(
+        standardFormatWithSampleRate: 48000, channels: 1))
+      let source = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: 4096))
+      source.frameLength = 4096
+      for frame in 0..<4096 {
+        source.floatChannelData![0][frame] = Float(frame) / 8192
+      }
+      let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+        NativeEffectVoice(engine: engine, buffer: source)
+      }
+      defer { audio.stop() }
+      try engine.enableManualRenderingMode(.offline, format: format,
+        maximumFrameCount: 512)
+      let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: 512))
+      try engine.start()
+      try audio.update(looped ? [] : [EngineAudioCommand(clipID: 1,
+        time: 0, minimumDistance: 0)], at: 0,
+        loopCommands: looped ? [.start(id: 1, clipID: 1, time: 0)] : [])
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      XCTAssertEqual(output.floatChannelData![0][511], Float(511) / 8192,
+        accuracy: 1e-6)
+      let pausedTime = 512.0 / 48000
+      for _ in 0..<3 {
+        try audio.update([], at: pausedTime, advancing: false)
+        XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+        XCTAssertTrue((0..<512).allSatisfy {
+          abs(output.floatChannelData![0][$0]) < 1e-6
+        }, "A frozen BGM clock must freeze the active effect too")
+      }
+      try audio.update([], at: pausedTime)
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      XCTAssertEqual(output.floatChannelData![0][0], Float(512) / 8192,
+        accuracy: 1e-6, "Buffer recovery must neither replay nor skip samples")
+    }
+  }
+
+  @MainActor
   func testDebugPausePreservesActiveSamplesAndReschedulesFutureAudio() throws {
     var voices = [MockEffectVoice]()
     let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
@@ -3643,8 +3763,13 @@ final class EngineHostTests: XCTestCase {
     let second = try XCTUnwrap(voices.first { $0 !== first && $0.isPlaying })
     XCTAssertEqual(second.delays.last ?? -1, 0.4, accuracy: 0.000001)
     try audio.update([], at: 0.7, advancing: false)
-    XCTAssertTrue(voices.allSatisfy { !$0.isPlaying })
+    XCTAssertEqual(first.pauseCount, 1)
+    XCTAssertEqual(first.stopCount, 0)
+    XCTAssertEqual(second.stopCount, 1,
+      "Only the not-yet-started loop must cancel its native reservation")
     try audio.update([], at: 0.7)
+    XCTAssertEqual(first.resumeCount, 1)
+    XCTAssertEqual(first.delays, [0], "An active loop must not restart")
     XCTAssertEqual(voices.filter(\.isPlaying).count, 2)
     try audio.update([], at: 1.6)
     XCTAssertTrue(voices.contains { abs(($0.stopDelays.last ?? -1) - 0.4) < 0.000001 })
