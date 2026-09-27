@@ -418,6 +418,57 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testNativeScheduledBufferInterruptionUsesExactPlayerSample() throws {
+    // Native API capability probe, not yet the production stop implementation.
+    // No suspension: audible stopping cannot depend on servicing the main actor.
+    for replaceEarlier in [false, true] {
+      let engine = AVAudioEngine()
+      defer { engine.stop() }
+      let format = try XCTUnwrap(AVAudioFormat(
+        standardFormatWithSampleRate: 48000, channels: 1))
+      let source = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: 4096))
+      source.frameLength = 4096
+      for frame in 0..<4096 { source.floatChannelData![0][frame] = 0.25 }
+      let silence = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: 1))
+      silence.frameLength = 1
+      silence.floatChannelData![0][0] = 0
+      let player = AVAudioPlayerNode()
+      engine.attach(player)
+      engine.connect(player, to: engine.mainMixerNode, format: format)
+      try engine.enableManualRenderingMode(.offline, format: format,
+        maximumFrameCount: 512)
+      let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: 512))
+      try engine.start()
+      player.scheduleBuffer(source, at: nil, options: .loops)
+      player.play()
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      player.scheduleBuffer(silence,
+        at: AVAudioTime(sampleTime: 32769, atRate: 48000), options: .interrupts)
+      let end = replaceEarlier ? 24577 : 32769
+      if replaceEarlier {
+        player.scheduleBuffer(silence,
+          at: AVAudioTime(sampleTime: AVAudioFramePosition(end), atRate: 48000),
+          options: .interrupts)
+      }
+      for start in stride(from: 512, to: 33792, by: 512) {
+        XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+        let samples = output.floatChannelData![0]
+        let mismatch = (0..<512).first {
+          !samples[$0].isFinite
+            || abs(samples[$0] - (start + $0 < end ? 0.25 : 0)) > 1e-6
+        }
+        XCTAssertNil(mismatch,
+          "Wrong interrupt sample near \(start), earlier=\(replaceEarlier)")
+        if mismatch != nil { break }
+      }
+      player.stop()
+    }
+  }
+
+  @MainActor
   func testNativeEffectPauseRetainsSamplePosition() throws {
     for looped in [false, true] {
       let engine = AVAudioEngine()
