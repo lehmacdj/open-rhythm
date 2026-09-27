@@ -20,9 +20,12 @@ integration probes, including successful inputs and restart/buffering paths.
   at zero. Both now resume at sample 512 after repeated frozen frames. All 26
   focused audio/pause-related tests pass at 11:21 September 27, including
   full 256-voice pool replacement while paused; the normal build passes.
-  Independent review found no actionable issue. Full-suite validation of this
-  unit is next. The reported 光 sound has not been physically reproduced or
-  attributed to this code path; that check remains deferred.
+  Independent review found no actionable issue. The full simulator suite then
+  passed all 304 compiled tests at 11:32, zero failures/skips, with the final
+  `TEST FINISHED` marker. The native-stop capability probe added after compilation
+  has no result in that run and is excluded from the 304. The reported 光 sound
+  has not been physically reproduced or attributed to this code path; that
+  check remains deferred.
 - Static-intro analysis now allows lifecycle callbacks when each is proven
   fixed and side-effect-free, rather than requiring all five slots to be absent.
   Pure proof results remain distinct from stage-drawing results through shared
@@ -990,6 +993,19 @@ is not progress toward resolving the layout.
   needs implementation and offline sample-level checks for exact deadlines,
   pauses, earlier replacement stops and generation-safe reuse. Mock stop-delay
   values and the buffering PCM regression do not prove stop precision.
+  In particular, test buffering detected after native audio advanced beyond the
+  frozen chart time: the rebased deadline can move later. AVAudioPlayerNode has
+  no documented selective buffer cancellation; scheduling a later silent
+  interrupt does not establish that an earlier queued interrupt was removed.
+  Missing player-time anchors before rendering or while paused must not be
+  mistaken for sample zero, especially for pre-started pooled voices.
+  A separate native offline capability probe passed at 11:32 September 27:
+  future sample-timestamped silent buffers interrupt exactly at sample 32,769,
+  or 24,577 for an earlier replacement, without main-actor suspension. Cutoffs
+  occur inside a render block, not merely at its boundary. This does not yet
+  exercise the production stop adapter, host-time conversion or pause rebasing.
+  Independent review tightened the oracle to reject nonfinite PCM samples; the
+  updated probe passes at 11:34. The 11:33 normal simulator build also passes.
 - Fourteen play-capable stack entry points remain unimplemented: StackEnter,
   StackGet, StackGetFrame, StackGetFramePointer, StackGetPointer, StackGrow,
   StackInit, StackLeave, StackPop, StackPush, StackSet, StackSetFrame,

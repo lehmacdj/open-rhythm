@@ -25,6 +25,10 @@ the 14 unimplemented stack functions and remaining semantic conformance gaps
 must not be waived to resume phone testing. Simulator audio-clock investigation
 can continue without reopening the physical-device queue.
 
+Before scheduling the batch, explicitly review the remaining API checklist and
+record its closure. Keep each deferred device check tied to its originating
+request, so batching does not drop earlier timing, input or performance reports.
+
 Keep the physical checks below open and label them deferred, not passed or
 blocked on an immediate phone unlock. Existing device evidence remains useful
 but does not substitute for the eventual batch. The stable-build push
@@ -50,7 +54,10 @@ the one-shot skipped ahead and the loop restarted instead of resuming at sample
 All 26 focused audio/pause-related checks pass at 11:21, including repeated
 buffering, minimum-distance state, future reservations, and full 256-voice
 capacity replacement. The normal build passes; independent review found no
-actionable issue. Full-suite validation of this separate unit is next.
+actionable issue. The full simulator run then passed all 304 compiled tests at
+11:32 with zero failures or skips and the final `TEST FINISHED` marker. The
+separate native-stop capability probe was added after that run compiled and
+has no result in it; it is not included in the 304.
 These are reproducible client defects, not proof of the cause of the reported
 intermittent sound in 光. Physical reproduction stays in the deferred batch.
 
@@ -854,9 +861,19 @@ model level, checking that future judgments and spawned entities do not leak.
    schedules a main-actor timer, so a busy renderer can delay the audible stop.
    Replace that dependency with native audio-timeline scheduling and verify
    exact interruption samples, pause/resume, earlier replacement stops and stale
-   completions before claiming the scheduled-stop contract is covered. This is
+   completions before claiming the scheduled-stop contract is covered. Include
+   asymmetric pauses: native audio can advance beyond the frozen chart before
+   buffering is detected, requiring a later rebased deadline. A queued earlier
+   interruption must not survive that rebase or voice reuse. This is
    simulator/offline conformance work before the physical batch, not a request
    to infer a calibration adjustment or claim acoustic parity.
+   A direct AVAudioPlayerNode offline probe passed at 11:32 September 27:
+   sample-timestamped silent interruptions stop exactly at samples 32,769 and
+   24,577 (earlier replacement), including a cutoff inside a render block,
+   without servicing the main actor. This establishes a native API capability,
+   not an implemented production stop or correct cancellation during rebasing.
+   Independent review requested rejection of nonfinite PCM samples; that oracle
+   check is added and the probe passes again at 11:34. Normal build passes.
 
 ## Deliberately not added / superseded requests
 
