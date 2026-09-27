@@ -11,6 +11,23 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Native scheduled effect stops no longer depend on a main-actor timer. A C PCM
+  source renderer gates samples against native host timestamps (sample time for
+  offline rendering), using three preallocated command slots and lock-free
+  atomic ownership transfer. Deadlines can move later after buffering without
+  losing phase or leaving old queued interruptions. The original timer backend
+  fails the new regression at sample 24,577. A reviewer-found resume race is
+  fixed by arming while paused and publishing the rebased end with unpausing.
+  All 35 focused audio-related tests pass at 11:54 September 27: exact cutoffs
+  within render blocks, earlier/later stops, expired-gate recovery, coalesced
+  pause/resume, generation-safe reuse, stereo, 44.1-to-48 kHz conversion, and
+  host-time kernel boundaries at large uptime with invalid-timestamp rejection.
+  Concurrent stress is supplementary evidence, not exhaustive race detection.
+  A bounded 256-voice offline Debug comparison measured 0.09–0.10 ms median for
+  97/4096-frame clips (old native player 0.08–0.09 ms), and 1.02 ms for one-frame
+  loops (old 1.40 ms). No physical/frame-rate guarantee is inferred. Independent
+  review found no remaining actionable issue. The final normal build passes at
+  11:55; full-suite validation remains pending before stable push.
 - Buffering freezes active effect samples instead of restarting them. A due
   reserved one-shot is promoted once, preserving minimum-distance history;
   active loops retain their sample position and only future reservations are
@@ -987,25 +1004,15 @@ is not progress toward resolving the layout.
 
 - [StopLoopedScheduled](
   https://wiki.sonolus.com/engine-specs/functions/stop-looped-scheduled)
-  specifies precise stopping when scheduled at least 0.5 seconds ahead. The
-  current native voice uses a main-actor Task deadline, which cannot establish
-  that guarantee during main-thread stalls. Native audio-timeline interruption
-  needs implementation and offline sample-level checks for exact deadlines,
-  pauses, earlier replacement stops and generation-safe reuse. Mock stop-delay
-  values and the buffering PCM regression do not prove stop precision.
-  In particular, test buffering detected after native audio advanced beyond the
-  frozen chart time: the rebased deadline can move later. AVAudioPlayerNode has
-  no documented selective buffer cancellation; scheduling a later silent
-  interrupt does not establish that an earlier queued interrupt was removed.
-  Missing player-time anchors before rendering or while paused must not be
-  mistaken for sample zero, especially for pre-started pooled voices.
-  A separate native offline capability probe passed at 11:32 September 27:
-  future sample-timestamped silent buffers interrupt exactly at sample 32,769,
-  or 24,577 for an earlier replacement, without main-actor suspension. Cutoffs
-  occur inside a render block, not merely at its boundary. This does not yet
-  exercise the production stop adapter, host-time conversion or pause rebasing.
-  Independent review tightened the oracle to reject nonfinite PCM samples; the
-  updated probe passes at 11:34. The 11:33 normal simulator build also passes.
+  specifies precise stopping when scheduled at least 0.5 seconds ahead. The new
+  native PCM adapter implements timer-independent stops, including later
+  rebasing after asymmetric buffering; full-suite validation remains pending.
+  The earlier silent-buffer prototype was rejected after a native probe proved
+  that an earlier queued interruption survived a later replacement. The new
+  gates do not rely on selective unscheduling or missing player-time anchors.
+  Immediate pause still has ordinary command-publication/render-quantum latency,
+  distinct from pre-scheduled sample cutoffs. Acoustic/hardware integration
+  remains deferred; the host-time kernel test is not a microphone measurement.
 - Fourteen play-capable stack entry points remain unimplemented: StackEnter,
   StackGet, StackGetFrame, StackGetFramePointer, StackGetPointer, StackGrow,
   StackInit, StackLeave, StackPop, StackPush, StackSet, StackSetFrame,

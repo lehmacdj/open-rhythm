@@ -43,6 +43,27 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Native scheduled-stop follow-up (September 27, 2026): effect voices now use a
+native C PCM renderer with replaceable start/stop gates instead of a main-actor
+timer. A queued silent-buffer prototype could stop precisely but could not
+cancel an earlier stop when buffering required a later deadline; it was not
+used in production. A three-slot atomic ownership exchange publishes complete
+commands without render-thread locks, allocation, task dispatch or Swift calls.
+Phase tracks emitted samples, including when an already-ended native loop must
+resume after a chart-relative rebase. Independent review caught and helped close
+a resume-order race: the rebased stop and unpaused state are now published
+together. The original timer backend fails at sample 24,577 in the new regression.
+All 35 focused audio-related tests pass at 11:54, including exact native PCM,
+earlier/later replacements, coalesced pauses, reuse, stereo/rate conversion,
+large-uptime host-timestamp gates and concurrent publication stress. The stress
+test is not exhaustive race proof; slot ownership provides snapshot coherence.
+A bounded 256-voice offline comparison measured roughly 0.09–0.10 ms median per
+512-frame block for 97/4096-sample clips versus 0.08–0.09 ms for the old native
+player; one-sample loops were about 1.02 ms versus 1.40 ms. These simulator Debug
+measurements do not establish physical latency or full-game performance.
+Independent review found no remaining actionable issue and the final normal
+build passes at 11:55. Full-suite validation is still required before stable push.
+
 Buffering-audio follow-up (September 27, 2026): buffering now uses the same
 sample-preserving pause path as explicit debug pause. Previously a reserved
 one-shot that became due between display frames could be stopped and replayed,
@@ -857,23 +878,12 @@ model level, checking that future judgments and spawned entities do not leak.
    observations, not independently established. Native player re-anchors are
    not corrected by arbitrary calibration or relaxed alignment tolerances.
    This limitation does not reopen device testing before the API gate.
-7. Complete native scheduled-loop-stop precision. StopLoopedScheduled currently
-   schedules a main-actor timer, so a busy renderer can delay the audible stop.
-   Replace that dependency with native audio-timeline scheduling and verify
-   exact interruption samples, pause/resume, earlier replacement stops and stale
-   completions before claiming the scheduled-stop contract is covered. Include
-   asymmetric pauses: native audio can advance beyond the frozen chart before
-   buffering is detected, requiring a later rebased deadline. A queued earlier
-   interruption must not survive that rebase or voice reuse. This is
-   simulator/offline conformance work before the physical batch, not a request
-   to infer a calibration adjustment or claim acoustic parity.
-   A direct AVAudioPlayerNode offline probe passed at 11:32 September 27:
-   sample-timestamped silent interruptions stop exactly at samples 32,769 and
-   24,577 (earlier replacement), including a cutoff inside a render block,
-   without servicing the main actor. This establishes a native API capability,
-   not an implemented production stop or correct cancellation during rebasing.
-   Independent review requested rejection of nonfinite PCM samples; that oracle
-   check is added and the probe passes again at 11:34. Normal build passes.
+7. Finish full-suite validation of the new native scheduled-stop implementation.
+   The main-actor timer is replaced, with exact PCM and host-timestamp kernel
+   tests, asymmetric pause rebasing, earlier/later stops, voice reuse and the
+   controller resume-order race covered. The final normal build passes; full-suite
+   validation remains pending. Acoustic parity and hardware interruptions stay in
+   the deferred physical batch. Do not infer calibration from these checks.
 
 ## Deliberately not added / superseded requests
 

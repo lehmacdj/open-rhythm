@@ -219,65 +219,21 @@ protocol EngineEffectVoice: AnyObject {
 
 @MainActor
 final class NativeEffectVoice: EngineEffectVoice {
-  private let player = AVAudioPlayerNode()
-  private let buffer: AVAudioPCMBuffer
-  private var generation = 0
-  private var stopTask: Task<Void, Never>?
-  private(set) var isPlaying = false
+  private let native: ORPCMVoice
+  var isPlaying: Bool { native.playing }
 
   init(engine: AVAudioEngine, buffer: AVAudioPCMBuffer) {
-    self.buffer = buffer
-    engine.attach(player)
-    engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
+    native = ORPCMVoice(engine: engine, buffer: buffer)
   }
 
   func play(after delay: Double, looped: Bool) {
-    stopTask?.cancel()
-    generation += 1
-    let current = generation
-    isPlaying = true
-    let time = delay > 0 ? AVAudioTime(hostTime: mach_absolute_time()
-      + AVAudioTime.hostTime(forSeconds: delay)) : nil
-    player.scheduleBuffer(buffer, at: time, options: looped ? [.loops] : [],
-      completionCallbackType: .dataPlayedBack) {
-      [weak self] _ in
-      Task { @MainActor [weak self] in
-        guard let self, self.generation == current, !looped else { return }
-        self.isPlaying = false
-      }
-    }
-    start()
+    native.play(after: delay, looped: looped)
   }
 
-  func start() { if !player.isPlaying { player.play() } }
-
-  func pause() {
-    stopTask?.cancel()
-    stopTask = nil
-    player.pause()
-  }
-
-  func resume() { if isPlaying { start() } }
-
-  func stop(after delay: Double) {
-    stopTask?.cancel()
-    if delay <= 0 { stop(); return }
-    let current = generation
-    stopTask = Task { [weak self] in
-      do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-      guard !Task.isCancelled, let self,
-        self.generation == current else { return }
-      self.stop()
-    }
-  }
-
-  func stop() {
-    stopTask?.cancel()
-    stopTask = nil
-    generation += 1
-    isPlaying = false
-    player.stop()
-  }
+  func pause() { native.pause() }
+  func resume() { native.resume() }
+  func stop(after delay: Double) { native.stop(after: delay) }
+  func stop() { native.stop() }
 }
 
 @MainActor
@@ -331,7 +287,6 @@ private final class NativeEffectBank {
     guard !buffers.isEmpty, !engine.isRunning else { return }
     engine.prepare()
     try engine.start()
-    for voice in voices { voice.start() }
   }
 }
 
@@ -557,12 +512,14 @@ final class EngineAudioPlayback {
         loops[id] = nil
         continue
       }
-      if !advancing { continue }
       if let voice = loop.voice, loop.end <= time + 0.5,
         loop.scheduledEnd != loop.end {
+        // Re-arm surviving deadlines while paused, before resume can publish
+        // an audible voice to a concurrent native render callback.
         voice.stop(after: max(0, loop.end - time))
         loops[id]?.scheduledEnd = loop.end
       }
+      if !advancing { continue }
       guard loop.voice == nil, loop.start <= time + 0.5,
         let bytes = clips[loop.clipID] else { continue }
       let voice: any EngineEffectVoice

@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		0349A42F30663AA7009BC642 /* PlaybackTimingDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0349A42E30663AA7009BC642 /* PlaybackTimingDiagnostics.swift */; };
 		0349A43130663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */; };
+		0349A4343069704C009BC642 /* EnginePCMVoice.m in Sources */ = {isa = PBXBuildFile; fileRef = 0349A4333069704C009BC642 /* EnginePCMVoice.m */; };
+		0349A437306972F8009BC642 /* EnginePCMKernelTests.m in Sources */ = {isa = PBXBuildFile; fileRef = 0349A436306972F8009BC642 /* EnginePCMKernelTests.m */; };
 		A00000000000000000000001 /* OpenRhythmApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* OpenRhythmApp.swift */; };
 		A00000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* ContentView.swift */; };
 		A00000000000000000000003 /* ServerDescriptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* ServerDescriptor.swift */; };
@@ -66,6 +68,10 @@
 /* Begin PBXFileReference section */
 		0349A42E30663AA7009BC642 /* PlaybackTimingDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackTimingDiagnostics.swift; sourceTree = "<group>"; };
 		0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackTimingDiagnosticsTests.swift; sourceTree = "<group>"; };
+		0349A4323069704A009BC642 /* EnginePCMVoice.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EnginePCMVoice.h; sourceTree = "<group>"; };
+		0349A4333069704C009BC642 /* EnginePCMVoice.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = EnginePCMVoice.m; sourceTree = "<group>"; };
+		0349A435306972F6009BC642 /* EnginePCMRender.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EnginePCMRender.h; sourceTree = "<group>"; };
+		0349A436306972F8009BC642 /* EnginePCMKernelTests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = EnginePCMKernelTests.m; sourceTree = "<group>"; };
 		A10000000000000000000001 /* OpenRhythmApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenRhythmApp.swift; sourceTree = "<group>"; };
 		A10000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A10000000000000000000003 /* ServerDescriptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerDescriptor.swift; sourceTree = "<group>"; };
@@ -189,6 +195,9 @@
 				A10000000000000000000021 /* EngineSoftwareRenderer.swift */,
 				A10000000000000000000022 /* EngineBackground.swift */,
 				0349A42E30663AA7009BC642 /* PlaybackTimingDiagnostics.swift */,
+				0349A4323069704A009BC642 /* EnginePCMVoice.h */,
+				0349A4333069704C009BC642 /* EnginePCMVoice.m */,
+				0349A435306972F6009BC642 /* EnginePCMRender.h */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -224,6 +233,7 @@
 				B10000000000000000000007 /* EngineHostTests.swift */,
 				B10000000000000000000006 /* ResultStoreTests.swift */,
 				0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */,
+				0349A436306972F8009BC642 /* EnginePCMKernelTests.m */,
 			);
 			path = OpenRhythmTests;
 			sourceTree = "<group>";
@@ -356,6 +366,7 @@
 			files = (
 				A00000000000000000000001 /* OpenRhythmApp.swift in Sources */,
 				A00000000000000000000002 /* ContentView.swift in Sources */,
+				0349A4343069704C009BC642 /* EnginePCMVoice.m in Sources */,
 				A00000000000000000000003 /* ServerDescriptor.swift in Sources */,
 				A00000000000000000000004 /* LocalizedText.swift in Sources */,
 				A00000000000000000000005 /* SonolusModels.swift in Sources */,
@@ -401,6 +412,7 @@
 				B00000000000000000000008 /* PlaybackClockTests.swift in Sources */,
 				B00000000000000000000004 /* OfflineStoreTests.swift in Sources */,
 				B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */,
+				0349A437306972F8009BC642 /* EnginePCMKernelTests.m in Sources */,
 				B00000000000000000000007 /* EngineHostTests.swift in Sources */,
 				B00000000000000000000006 /* ResultStoreTests.swift in Sources */,
 			);
@@ -436,6 +448,7 @@
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = is.devin.OpenRhythm;
 				PRODUCT_NAME = OpenRhythm;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/OpenRhythm/Core/EnginePCMVoice.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -459,6 +472,7 @@
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = is.devin.OpenRhythm;
 				PRODUCT_NAME = OpenRhythm;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/OpenRhythm/Core/EnginePCMVoice.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

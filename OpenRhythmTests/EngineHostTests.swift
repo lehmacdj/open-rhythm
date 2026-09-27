@@ -418,10 +418,282 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  private func nativeEffectFixture(rate: Double = 48000,
+    outputRate: Double = 48000, channels: AVAudioChannelCount = 1,
+    constant: Bool = false
+  ) throws -> (AVAudioEngine, NativeEffectVoice, AVAudioPCMBuffer) {
+    let engine = AVAudioEngine()
+    let format = try XCTUnwrap(AVAudioFormat(
+      standardFormatWithSampleRate: rate, channels: channels))
+    let source = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+      frameCapacity: 4096))
+    source.frameLength = 4096
+    for channel in 0..<Int(channels) {
+      for frame in 0..<4096 {
+        let value = constant ? 0.25 : Float(frame + 1) / 8192
+        source.floatChannelData![channel][frame] = channel == 0 ? value : -value
+      }
+    }
+    let voice = NativeEffectVoice(engine: engine, buffer: source)
+    let outputFormat = try XCTUnwrap(AVAudioFormat(
+      standardFormatWithSampleRate: outputRate, channels: channels))
+    try engine.enableManualRenderingMode(.offline, format: outputFormat,
+      maximumFrameCount: 512)
+    let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: outputFormat,
+      frameCapacity: 512))
+    try engine.start()
+    return (engine, voice, output)
+  }
+
+  @MainActor
+  func testNativeVoiceScheduledStartStopAndReplacementAreSampleAccurate() throws {
+    let schedules = [0, 1025].flatMap { start in
+      [24577, 32769, 40961].map { (start, $0) }
+    }
+    for (start, replacement) in schedules {
+      let (engine, voice, output) = try nativeEffectFixture(channels: 2)
+      defer { engine.stop() }
+      voice.play(after: Double(start) / 48000, looped: true)
+      voice.stop(after: 32769.0 / 48000)
+      voice.stop(after: Double(replacement) / 48000)
+      for block in stride(from: 0, to: 41984, by: 512) {
+        XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+        for channel in 0..<2 {
+          let pcm = output.floatChannelData![channel]
+          let mismatch = (0..<512).first { index in
+            let frame = block + index
+            let value: Float = frame >= start && frame < replacement
+              ? Float((frame - start) % 4096 + 1) / 8192 : 0
+            let expected = channel == 0 ? value : -value
+            return !pcm[index].isFinite || abs(pcm[index] - expected) > 1e-6
+          }
+          XCTAssertNil(mismatch,
+            "Block \(block), stop \(replacement), channel \(channel)")
+          if mismatch != nil { return }
+        }
+      }
+    }
+  }
+
+  @MainActor
+  func testNativeVoiceRebasesEvenAfterOldStopWithoutResettingPhase() throws {
+    for renderPause in [false, true] {
+      let (engine, voice, output) = try nativeEffectFixture()
+      defer { engine.stop() }
+      voice.play(after: 0, looped: true)
+      voice.stop(after: 1025.0 / 48000)
+      for _ in 0..<3 {
+        XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      }
+      XCTAssertEqual(output.floatChannelData![0][0], 1025.0 / 8192,
+        accuracy: 1e-6)
+      XCTAssertEqual(output.floatChannelData![0][1], 0)
+      // Native output passed the old deadline before BGM buffering was noticed.
+      // Its later chart-relative rebase must also work if pause/resume coalesce.
+      voice.pause()
+      if renderPause {
+        XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+        XCTAssertTrue((0..<512).allSatisfy {
+          output.floatChannelData![0][$0] == 0
+        })
+      }
+      voice.resume()
+      voice.stop(after: 1025.0 / 48000)
+      for block in stride(from: 0, to: 1536, by: 512) {
+        XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+        let pcm = output.floatChannelData![0]
+        XCTAssertTrue((0..<512).allSatisfy { index in
+          let frame = block + index
+          let expected: Float = frame < 1025 ? Float(frame + 1026) / 8192 : 0
+          return pcm[index].isFinite && abs(pcm[index] - expected) < 1e-6
+        }, "Rebase must retain phase through the expired native stop")
+      }
+    }
+  }
+
+  @MainActor
+  func testNativeVoiceReuseDiscardsPriorDeadlineAndCompletion() throws {
+    let (engine, voice, output) = try nativeEffectFixture()
+    defer { engine.stop() }
+    voice.play(after: 0, looped: false)
+    for _ in 0..<8 {
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    }
+    XCTAssertFalse(voice.isPlaying)
+    // Many publications with no render use bounded storage, not queued tasks.
+    for _ in 0..<1000 {
+      voice.play(after: 0, looped: true)
+      voice.stop(after: 1.0 / 48000)
+      voice.stop()
+    }
+    voice.play(after: 0, looped: false)
+    XCTAssertTrue(voice.isPlaying, "Old completion cannot retire a reused voice")
+    XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    XCTAssertEqual(output.floatChannelData![0][0], 1.0 / 8192, accuracy: 1e-6)
+    XCTAssertEqual(output.floatChannelData![0][511], 512.0 / 8192, accuracy: 1e-6)
+    XCTAssertTrue(voice.isPlaying, "No old stop may leak into this generation")
+  }
+
+  @MainActor
+  func testNativeResumePublishesRebasedStopInSameSnapshot() throws {
+    let (engine, voice, output) = try nativeEffectFixture()
+    defer { engine.stop() }
+    voice.play(after: 0, looped: true)
+    XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    voice.pause()
+    voice.stop(after: 1.0 / 48000)
+    // An audio callback can run after re-arming but before the main actor resumes.
+    XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    voice.resume()
+    XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    XCTAssertEqual(output.floatChannelData![0][0], 513.0 / 8192, accuracy: 1e-6)
+    XCTAssertTrue((1..<512).allSatisfy { output.floatChannelData![0][$0] == 0 },
+      "The first resumed callback must already contain the rebased deadline")
+  }
+
+  @MainActor
+  func testLoopControllerArmsFutureStopsBeforeResuming() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([], at: 0, loopCommands: [
+      .start(id: 1, clipID: 1, time: 0), .stop(id: 1, time: 0.2)])
+    let loop = try XCTUnwrap(voices.first { $0.looping == [true] })
+    audio.pause(at: 0.1)
+    loop.events.removeAll()
+    try audio.update([], at: 0.1)
+    XCTAssertEqual(loop.events, ["scheduledStop", "resume"])
+    audio.stop()
+  }
+
+  @MainActor
+  func testNativeVoiceDenseShortLoopOfflineCost() throws {
+    let format = try XCTUnwrap(AVAudioFormat(
+      standardFormatWithSampleRate: 48000, channels: 2))
+    for length in [1, 97, 4096] {
+      for sourceNode in [false, true] {
+        let engine = AVAudioEngine()
+        defer { engine.stop() }
+        let source = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+          frameCapacity: AVAudioFrameCount(length)))
+        source.frameLength = AVAudioFrameCount(length)
+        for channel in 0..<2 {
+          for frame in 0..<length { source.floatChannelData![channel][frame] = 0.0001 }
+        }
+        var native = [NativeEffectVoice]()
+        var players = [AVAudioPlayerNode]()
+        for _ in 0..<256 {
+          if sourceNode { native.append(NativeEffectVoice(engine: engine, buffer: source)) }
+          else {
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: format)
+            players.append(player)
+          }
+        }
+        try engine.enableManualRenderingMode(.offline, format: format,
+          maximumFrameCount: 512)
+        let output = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+          frameCapacity: 512))
+        try engine.start()
+        for voice in native { voice.play(after: 0, looped: true) }
+        for player in players {
+          player.scheduleBuffer(source, at: nil, options: .loops)
+          player.play()
+        }
+        var elapsed = [Double]()
+        for block in 0..<72 {
+          let begin = ProcessInfo.processInfo.systemUptime
+          XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+          let duration = ProcessInfo.processInfo.systemUptime - begin
+          if block >= 8 { elapsed.append(duration) }
+          for channel in 0..<2 {
+            XCTAssertTrue((0..<512).allSatisfy {
+              let sample = output.floatChannelData![channel][$0]
+              return sample.isFinite && abs(sample - 0.0256) < 1e-5
+            })
+          }
+        }
+        elapsed.sort()
+        print("PCM_COST source=\(sourceNode) length=\(length) voices=256 "
+          + "median_ms=\(elapsed[32] * 1000) p95_ms=\(elapsed[60] * 1000)")
+      }
+    }
+  }
+
+  @MainActor
+  func testNativeVoiceConcurrentPublicationRemainsFiniteAndReusable() async throws {
+    let (engine, voice, output) = try nativeEffectFixture(channels: 2,
+      constant: true)
+    defer { engine.stop() }
+    voice.play(after: 0, looped: true)
+    let rendering = Task.detached { () throws -> Int in
+      var invalid = 0
+      for iteration in 0..<2000 {
+        if try engine.renderOffline(512, to: output) != .success { invalid += 1 }
+        let left = output.floatChannelData![0]
+        let right = output.floatChannelData![1]
+        if (0..<512).contains(where: {
+          !left[$0].isFinite || !right[$0].isFinite
+            || (left[$0] != 0 && left[$0] != 0.25)
+            || right[$0] != -left[$0]
+        }) { invalid += 1 }
+        if iteration.isMultiple(of: 16) { await Task.yield() }
+      }
+      return invalid
+    }
+    // Race complete generations/deadlines against native consumption. There
+    // must never be partially published stereo PCM or an unbounded work queue.
+    for iteration in 0..<4000 {
+      voice.play(after: 0, looped: true)
+      voice.stop(after: 0.5)
+      voice.pause()
+      voice.resume()
+      if iteration.isMultiple(of: 3) { voice.stop() }
+      if iteration.isMultiple(of: 16) { await Task.yield() }
+    }
+    let invalid = try await rendering.value
+    XCTAssertEqual(invalid, 0)
+    voice.stop()
+    voice.play(after: 0, looped: false)
+    XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    XCTAssertTrue((0..<512).allSatisfy { output.floatChannelData![0][$0] == 0.25 })
+    XCTAssertTrue(voice.isPlaying)
+  }
+
+  @MainActor
+  func testNativeVoiceCrossRateStereoScheduling() throws {
+    let (engine, voice, output) = try nativeEffectFixture(rate: 44100,
+      outputRate: 48000, channels: 2, constant: true)
+    defer { engine.stop() }
+    voice.play(after: 0.1, looped: true)
+    voice.stop(after: 0.7)
+    for block in stride(from: 0, to: 38912, by: 512) {
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      for channel in 0..<2 {
+        let pcm = output.floatChannelData![channel]
+        // The mixer resampler has filter tails around each transition. Verify
+        // the timing domain away from those tails, not falsely sample-exact SRC.
+        XCTAssertTrue((0..<512).allSatisfy { index in
+          let frame = block + index
+          guard frame < 4600 || (5000..<33000).contains(frame)
+            || frame > 34200 else { return pcm[index].isFinite }
+          let expected: Float = (5000..<33000).contains(frame)
+            ? (channel == 0 ? 0.25 : -0.25) : 0
+          return pcm[index].isFinite && abs(pcm[index] - expected) < 1e-5
+        }, "Source timestamps must use the clip's rate, not the mixer's")
+      }
+    }
+  }
+
+  @MainActor
   func testNativeScheduledBufferInterruptionUsesExactPlayerSample() throws {
     // Native API capability probe, not yet the production stop implementation.
     // No suspension: audible stopping cannot depend on servicing the main actor.
-    for replaceEarlier in [false, true] {
+    for replacement: Int? in [nil, 24577, 40961] {
       let engine = AVAudioEngine()
       defer { engine.stop() }
       let format = try XCTUnwrap(AVAudioFormat(
@@ -447,13 +719,16 @@ final class EngineHostTests: XCTestCase {
       XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
       player.scheduleBuffer(silence,
         at: AVAudioTime(sampleTime: 32769, atRate: 48000), options: .interrupts)
-      let end = replaceEarlier ? 24577 : 32769
-      if replaceEarlier {
+      // A later enqueue does not cancel the original earlier interruption.
+      let requestedEnd = replacement ?? 32769
+      let end = min(requestedEnd, 32769)
+      if replacement != nil {
         player.scheduleBuffer(silence,
-          at: AVAudioTime(sampleTime: AVAudioFramePosition(end), atRate: 48000),
+          at: AVAudioTime(sampleTime: AVAudioFramePosition(requestedEnd),
+            atRate: 48000),
           options: .interrupts)
       }
-      for start in stride(from: 512, to: 33792, by: 512) {
+      for start in stride(from: 512, to: 41984, by: 512) {
         XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
         let samples = output.floatChannelData![0]
         let mismatch = (0..<512).first {
@@ -461,7 +736,7 @@ final class EngineHostTests: XCTestCase {
             || abs(samples[$0] - (start + $0 < end ? 0.25 : 0)) > 1e-6
         }
         XCTAssertNil(mismatch,
-          "Wrong interrupt sample near \(start), earlier=\(replaceEarlier)")
+          "Wrong interrupt sample near \(start), requested end=\(end)")
         if mismatch != nil { break }
       }
       player.stop()
@@ -629,7 +904,8 @@ final class EngineHostTests: XCTestCase {
       try engine.start()
       try audio.update(looped ? [] : [EngineAudioCommand(clipID: 1,
         time: 0, minimumDistance: 0)], at: 0,
-        loopCommands: looped ? [.start(id: 1, clipID: 1, time: 0)] : [])
+        loopCommands: looped ? [.start(id: 1, clipID: 1, time: 0),
+          .stop(id: 1, time: 0.03)] : [])
       XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
       XCTAssertEqual(output.floatChannelData![0][511], Float(511) / 8192,
         accuracy: 1e-6)
@@ -645,6 +921,14 @@ final class EngineHostTests: XCTestCase {
       XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
       XCTAssertEqual(output.floatChannelData![0][0], Float(512) / 8192,
         accuracy: 1e-6, "Buffer recovery must neither replay nor skip samples")
+      if looped {
+        XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+        XCTAssertTrue((0..<512).allSatisfy { index in
+          let expected: Float = index < 416 ? Float(1024 + index) / 8192 : 0
+          let sample = output.floatChannelData![0][index]
+          return sample.isFinite && abs(sample - expected) < 1e-6
+        }, "The chart owner must rebase its actual native stop after buffering")
+      }
     }
   }
 
@@ -4570,9 +4854,10 @@ private final class MockEffectVoice: EngineEffectVoice {
   var stopCount = 0
   var pauseCount = 0
   var resumeCount = 0
+  var events = [String]()
 
   func pause() { pauseCount += 1 }
-  func resume() { resumeCount += 1 }
+  func resume() { resumeCount += 1; events.append("resume") }
 
   func play(after delay: Double, looped: Bool) {
     delays.append(delay)
@@ -4581,6 +4866,7 @@ private final class MockEffectVoice: EngineEffectVoice {
   }
 
   func stop(after delay: Double) {
+    events.append("scheduledStop")
     stopDelays.append(delay)
     if delay <= 0 { stop() }
   }
