@@ -4,7 +4,7 @@ This ledger distinguishes implemented behavior from remaining compatibility
 work and device verification. Passing simulator tests does not establish that
 phone audio alignment, touch handling, or frame pacing is correct.
 
-## Current verification order — September 25, 2026
+## Current verification order — reaffirmed September 27, 2026
 
 Per the user's latest direction, postpone real-device testing until Sonolus
 API coverage is complete, then perform the outstanding physical checks in one
@@ -19,6 +19,12 @@ conformance tests, using simulator tests and builds while that work proceeds.
 The gate is closure of the API contract gaps tracked in COMPATIBILITY.md, not
 merely passing the sampled engines or the current test suite. Collect remaining
 physical checks into the batch as implementation proceeds.
+
+Current batch status: deferred; the API gate has not been met. In particular,
+the 14 unimplemented stack functions and remaining semantic conformance gaps
+must not be waived to resume phone testing. Simulator audio-clock investigation
+can continue without reopening the physical-device queue.
+
 Keep the physical checks below open and label them deferred, not passed or
 blocked on an immediate phone unlock. Existing device evidence remains useful
 but does not substitute for the eventual batch. The stable-build push
