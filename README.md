@@ -54,6 +54,9 @@ Difficulty discovery searches for the selected song and pages only that result
 set, with a safety limit if a server ignores search. Repeated downloads reuse
 valid bundles and shared assets. Development regression tests use mocked servers
 and local fixtures, not a full milkbun catalog crawl.
+Starting an online chart also fetches and pins its BGM through the shared cache
+after engine validation. That upfront preparation lets online and offline plays
+use the same local audio clock and silence analysis; it is not a catalog crawl.
 
 ## Building
 
@@ -85,24 +88,29 @@ flow, all 36 named easing functions, drawing, judging, scheduled/looped audio,
 particles, BPM/time-scale conversion, dynamic spawning, resource availability,
 streams, and exports. Metal renders engine sprite geometry with a software
 fallback. Engine score and life configuration is consumed after preprocessing.
-The simpler chart adapter remains for bundles without presentation resources.
-No music, charts, artwork, or third-party application code is bundled here.
+Server playback requires engine configuration and always executes the engine;
+missing presentation resources never silently select the basic-lane adapter.
+No music, charts or artwork is bundled here. The attributed public protocol
+label table described above is included for offline settings display.
 
 Before play, a callback-graph scan reports unsupported functions, including
 those in lazy successful-hit branches and dynamically spawnable archetypes.
 This is a capability check, not proof of semantic conformance or playability.
 
-General third-party engine compatibility is **not yet guaranteed**. Known gaps
-include stack functions, full skin render-mode
-semantics, error-heatmap HUD metrics, and timing-indicator
-styles beyond Early/Late text. The native
-exit/restart menu remains app-positioned. Unknown metric names display a dash,
-not a substituted score. Engines can also contain editor-only entities with no
-matching play archetype; these remain non-executing metadata. Resource
-optionality, callback access restrictions, and non-play modes need further
-conformance work. Paint and Print belong to tutorial and preview modes, not
-play-mode runtime gaps. Do not infer arbitrary-engine support from sampled
-engine families. See [the conformance checklist](COMPATIBILITY.md).
+General third-party engine compatibility is **not yet guaranteed**. Fourteen
+stack functions remain unimplemented pending their observable memory/frame
+contract. Skin render modes, error-heatmap HUD metrics and documented timing
+indicator styles are implemented, but exact native rendering parity is not
+claimed. Unsupported presentation enums fail before gameplay; they are not
+silently replaced with a different score or layout. The exit/restart menu
+remains app-positioned. Editor-only entities without a matching play archetype
+remain non-executing metadata. Public play-memory access restrictions are
+enforced; underdocumented resource defaults and audio-offset conventions still
+need independent evidence. Paint, Print and non-play modes have separate scope.
+Do not infer arbitrary-engine support from sampled engine families. See
+[the conformance checklist](COMPATIBILITY.md) and [request audit](REQUESTS.md).
+Physical-device checks are deferred until that API gate is complete, unless
+the user explicitly requests an earlier check of a particular issue.
 
 Bounded compatibility checks on September 10, 2026 used one catalog page and one
 chart per candidate server. Both Project SEKAI and SIF Custom Charts returned
@@ -156,12 +164,20 @@ judgment-colored mass, narrow isolated modes, and bounded rendering work.
 
 Native and fallback inputs map UIKit event timestamps through the audio
 timebase, retaining rate-transition history for queued touches across stalls.
-No calibration offset was added. Local songs can skip verified leading silence,
-stopping conservatively at the first engine input activation or engine sound.
-The exact advanced runtime is retained and audio seeks to the corresponding
-media time; streamed intros remain untrimmed when silence cannot be verified.
-Cached Hikari starts at chart -2 seconds instead of -9, with first hold inputs
-judged Perfect on two runs; physical-device audio/touch alignment is unverified.
+No empirical timing correction is imposed. Optional per-engine input and visual
+calibration settings preserve an explicit override for the player. Online and
+offline prepared playback both use local music before play. Online preparation
+pins a cached download; offline playback reuses its stored file. Upfront
+preparation enables a shared PCM silence scan and audio timebase. Prepared songs
+can skip verified leading silence, stopping at audio or observable engine
+presentation, including count-ins and effects. Proven static stage decoration
+can be skipped; unknown or dynamic drawings stop conservatively. Input
+activation alone is not a stopping condition, but crossing an unseen judgment
+rewinds the probe. The exact advanced runtime is retained and audio seeks to
+the corresponding media time. When silence cannot be verified, intros remain
+untrimmed. Existing physical XCTest/offscreen evidence does not establish
+interactive touch behavior, acoustic alignment or gameplay frame pacing;
+those checks remain deferred to the device batch.
 
 The curved-drawing pass implements all six DrawCurved variants using the
 [public Bézier/control-coordinate contract](
