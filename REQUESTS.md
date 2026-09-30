@@ -48,6 +48,48 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
 
 ## Breadth-first triage — September 30, 2026
 
+Sixth bounded discovery pass: rechecked UIKit touch cancellation/coalescing,
+host draw/audio/spawn limits, software frame budgets and effect preparation.
+No new input/lifecycle defect was established in that spot check. It confirmed
+BF-12 across actual resource and queued-work paths: errors there misleadingly
+blame one callback's operation count. Some allocation failures also use that
+same error. Select this confirmed diagnostic defect next; retain numerical
+budgets and control flow, distinguish resource/work limits from allocation
+failure and true callback execution limits, and test real throwing paths.
+BF-11 remains a higher-impact but unproven memory-risk diagnostic; this pass
+adds no crash evidence or authority for an arbitrary tighter atlas limit.
+Stack and physical timing/input dependencies are unchanged.
+
+Follow-up resource lookup discovery during verification: runtime references
+retain URLs but discard advertised resource hashes, and online resource reads
+use the ordinary ten-minute URL response cache. Required hash-only locators
+are rejected before cache lookup. The public
+[SRL contract](https://wiki.sonolus.com/custom-server-specs/misc/srl) permits
+omitted URLs and calls for immediate reuse of cached matching hashes. This is
+a new concrete compatibility gap, not a reason to reopen URL path resolution.
+
+| ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
+| --- | --- | --- | --- |
+| BF-14 / P1 — reproduce next | `RuntimeResourceReferences.resource` requires a URL and loses the locator hash; `RuntimeBundleLoader` passes only URLs to `SonolusClient.resource`. Cached bytes are returned by URL for ten minutes without comparing the new expected hash. | Source-confirmed missing hash-aware runtime path. Inference: freshly fetched metadata changing a hash at the same resource URL can still play old cached bytes, while hash-only resources cannot reuse available content. Offline download integrity checks are separate and already exist. No affected production chart or executable stale-content reproduction yet. | Use isolated local cache/mock responses to reproduce changed-hash/same-URL reuse, unchanged-hash reuse across URLs and hash-only cached/missing cases. Then implement verified content-addressed resolution shared by online playback and downloads without server probing or relaxing integrity. |
+
+Re-triage selects BF-14 ahead of further diagnostics/resource polish once the
+verified BF-12 unit is complete. Silent stale chart/engine
+data and broken hash-only resources have greater gameplay/compatibility reach
+than the remaining error text or unproven allocation-growth follow-ups.
+
+BF-12 verification: a new regression failed before implementation on stream,
+draw, loop, audio queue, effect clip and software-size errors:
+`RunSomeTests/08B1937A-DACE-4674-AB3E-78722DE8686D.txt`.
+Resource/work guards now report their subsystem, allocation/preparation failures
+have a separate description, and interpreter execution exhaustion still names
+the callback. Existing software pixel-work and ZIP entry-limit fixtures also
+assert the correct messages. Numerical budgets and short-circuit allocation
+order are unchanged. All 371 non-cached simulator tests passed:
+`RunSomeTests/B4CAA129-6935-4BCE-BE54-BE1B928FDF26.txt`.
+Normal build passed: `BuildProject/BuildProject-Log-20260930-032515.txt`.
+Independent review found no actionable issue. No allocation-to-failure,
+cached full-chart replay or physical run was performed for error remapping.
+
 Fifth bounded discovery pass: checked event-time mapping/stopped-clock guards,
 result index/payload replacement, online page invalidation, offline list reads,
 per-engine preference restoration, and resource URL resolution. No new timing,
@@ -156,7 +198,7 @@ code is open. The stack contract and physical-device gates remain unchanged.
 
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
-| BF-12 / P3 — queued | `operationLimitExceeded` says a callback exceeded its instruction budget, but the same case is used for audio archive/PCM size, sprite rasterization and other resource limits. | Source-confirmed misleading diagnosis on those exceptional paths; normal playback is unaffected. Metal's new budget errors are already distinct. | Separate resource-budget descriptions from actual callback instruction exhaustion, with focused error-message tests. Do not change budgets or runtime behavior while improving diagnostics. Lower priority than the preparation allocation path. |
+| BF-12 / P3 — fixed | Audio, particle, entity, rendering and queued-work limits now identify their actual subsystem instead of blaming callback execution. Allocation/preparation failure is distinct from exceeding a budget. | Before-fix regression reproduced misleading messages; all 371 non-cached tests, normal build and independent review pass. Actual OOM failures were not induced. | Bounded diagnostics unit complete; numerical limits and normal behavior unchanged. Re-triage selects the new BF-14 hash-aware resource gap, not further message polish. |
 
 Third bounded discovery pass covered random-function ranges, BPM/time-scale
 mapping, scheduled effect pause/resume and sprite preparation/upload.

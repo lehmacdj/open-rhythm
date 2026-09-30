@@ -17,7 +17,7 @@ enum EngineSoftwareRenderer {
       let width = width, height = height
       guard width > 0, height > 0, width <= 8192, height <= 8192,
         width * height <= 8_000_000 else {
-        throw EngineInterpreterError.operationLimitExceeded
+        throw EngineInterpreterError.resourceLimitExceeded("software texture size")
       }
       var bytes = [UInt8](repeating: 0, count: width * height * 4)
       let decoded = bytes.withUnsafeMutableBytes { storage -> Bool in
@@ -30,7 +30,7 @@ enum EngineSoftwareRenderer {
         return true
       }
       guard decoded else {
-        throw EngineInterpreterError.operationLimitExceeded
+        throw EngineInterpreterError.resourcePreparationFailed("a software texture")
       }
       self.bytes = bytes
     }
@@ -66,7 +66,9 @@ enum EngineSoftwareRenderer {
     let w = ceil(size.width * scale)
     let h = ceil(size.height * scale)
     guard w.isFinite, h.isFinite, w > 0, h > 0, w <= 16384, h <= 16384,
-      w * h <= 8_000_000 else { throw EngineInterpreterError.operationLimitExceeded }
+      w * h <= 8_000_000 else {
+      throw EngineInterpreterError.resourceLimitExceeded("software render size")
+    }
     let width = Int(w), height = Int(h)
     var pixels = [UInt8](repeating: 0, count: width * height * 4)
     var textures = [ObjectIdentifier: Texture]()
@@ -77,7 +79,7 @@ enum EngineSoftwareRenderer {
       let mesh = EngineMetalRenderer.vertices(for: sprite, size: size)
       guard !mesh.isEmpty, let image = sprite.image.cgImage else { continue }
       guard mesh.count <= 1_000_000 - vertexCount else {
-        throw EngineInterpreterError.operationLimitExceeded
+        throw EngineInterpreterError.resourceLimitExceeded("render vertices per frame")
       }
       vertexCount += mesh.count
       let key = ObjectIdentifier(sprite.image)
@@ -86,7 +88,7 @@ enum EngineSoftwareRenderer {
       else {
         texture = try Texture(image)
         guard texture.bytes.count <= 128_000_000 - textureBytes else {
-          throw EngineInterpreterError.operationLimitExceeded
+          throw EngineInterpreterError.resourceLimitExceeded("decoded texture memory")
         }
         textureBytes += texture.bytes.count
         textures[key] = texture
@@ -111,7 +113,9 @@ enum EngineSoftwareRenderer {
         let top = Int(max(0, min(h, floor(min(a.y, b.y, c.y)))))
         let bottom = Int(max(0, min(h, ceil(max(a.y, b.y, c.y)))))
         let examined = (right - left) * (bottom - top)
-        guard examined <= remaining else { throw EngineInterpreterError.operationLimitExceeded }
+        guard examined <= remaining else {
+          throw EngineInterpreterError.resourceLimitExceeded("software pixel work per frame")
+        }
         remaining -= examined
         func includes(_ value: Double, from a: Vertex, to b: Vertex) -> Bool {
           value > 0 || (value == 0 && (b.y < a.y || (b.y == a.y && b.x > a.x)))
@@ -142,7 +146,7 @@ enum EngineSoftwareRenderer {
         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue:
           CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
         provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
-    else { throw EngineInterpreterError.operationLimitExceeded }
+    else { throw EngineInterpreterError.resourcePreparationFailed("a software frame") }
     return image
   }
 

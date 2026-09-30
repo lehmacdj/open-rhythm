@@ -275,7 +275,9 @@ struct EffectAudioArchive {
         throw EngineInterpreterError.invalidArguments("audio archive directory")
       }
     }
-    guard count <= 1024 else { throw EngineInterpreterError.operationLimitExceeded }
+    guard count <= 1024 else {
+      throw EngineInterpreterError.resourceLimitExceeded("audio archive entries")
+    }
     guard directoryStart <= directoryBoundary,
       directorySize <= directoryBoundary - directoryStart else {
       throw EngineInterpreterError.invalidArguments("audio directory bounds")
@@ -478,7 +480,7 @@ private final class NativeEffectBank {
 
   init(clips: [Int: Data]) throws {
     guard clips.count <= 256 else {
-      throw EngineInterpreterError.operationLimitExceeded
+      throw EngineInterpreterError.resourceLimitExceeded("effect audio clips")
     }
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("OpenRhythmEffects-\(UUID().uuidString)")
@@ -498,10 +500,12 @@ private final class NativeEffectBank {
       }
       decodedBytes += UInt64(file.length)
         * UInt64(file.processingFormat.channelCount) * 4
-      guard decodedBytes <= 128 * 1024 * 1024,
-        let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+      guard decodedBytes <= 128 * 1024 * 1024 else {
+        throw EngineInterpreterError.resourceLimitExceeded("decoded effect audio memory")
+      }
+      guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
           frameCapacity: AVAudioFrameCount(file.length)) else {
-        throw EngineInterpreterError.operationLimitExceeded
+        throw EngineInterpreterError.resourcePreparationFailed("an effect audio buffer")
       }
       try file.read(into: buffer)
       buffers[id] = buffer
@@ -578,7 +582,7 @@ final class EngineAudioPlayback {
     makeVoice: @escaping @MainActor (Int, Data) throws -> any EngineEffectVoice
   ) throws {
     guard clips.count <= 256 else {
-      throw EngineInterpreterError.operationLimitExceeded
+      throw EngineInterpreterError.resourceLimitExceeded("effect audio clips")
     }
     self.clips = clips
     self.makeVoice = makeVoice
@@ -644,10 +648,10 @@ final class EngineAudioPlayback {
       return value
     }
     guard loopCommands.count <= 16_384 - pausedLoopCommands.count else {
-      throw EngineInterpreterError.operationLimitExceeded
+      throw EngineInterpreterError.resourceLimitExceeded("queued audio loop commands")
     }
     guard commands.count <= 16_384 - pending.count else {
-      throw EngineInterpreterError.operationLimitExceeded
+      throw EngineInterpreterError.resourceLimitExceeded("queued audio commands")
     }
     // Buffering is a pause in the BGM timeline, not a fresh playback. Promote
     // reservations that already became due and freeze their sample positions;
@@ -724,7 +728,7 @@ final class EngineAudioPlayback {
           voice = ready
         } else {
           guard allocatedVoiceCount < 256 else {
-            throw EngineInterpreterError.operationLimitExceeded
+            throw EngineInterpreterError.resourceLimitExceeded("effect audio voices")
           }
           voice = try makeVoice(command.clipID, bytes)
           allocatedVoiceCount += 1
@@ -744,7 +748,7 @@ final class EngineAudioPlayback {
   private func updateLoops(_ commands: [EngineLoopCommand], at time: Double,
     advancing: Bool, currentTime: () throws -> Double) throws {
     guard commands.count <= 16_384 else {
-      throw EngineInterpreterError.operationLimitExceeded
+      throw EngineInterpreterError.resourceLimitExceeded("queued audio loop commands")
     }
     // The host can reuse capacity as soon as a scheduled stop is reached.
     for id in Array(loops.keys) { removeFinishedLoop(id, at: time) }
@@ -789,7 +793,7 @@ final class EngineAudioPlayback {
       if let ready = available[loop.clipID]?.popLast() { voice = ready }
       else {
         guard allocatedVoiceCount < 256 else {
-          throw EngineInterpreterError.operationLimitExceeded
+          throw EngineInterpreterError.resourceLimitExceeded("effect audio voices")
         }
         voice = try makeVoice(loop.clipID, bytes)
         allocatedVoiceCount += 1

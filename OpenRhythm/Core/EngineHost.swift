@@ -312,7 +312,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
         scheduledLife.removeFirst(scheduledLifeIndex)
         scheduledLifeIndex = 0
       }
-      try checkLimit(scheduledLife.count)
+      try checkLimit(scheduledLife.count, resource: "scheduled life events")
       scheduledLife.append((time: a[1], amount: a[0]))
       lifeScheduleSorted = false
       return 0
@@ -374,7 +374,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       guard skinSpriteIDs.contains(id) else { return 0 }
       let segments = curve?.segments ?? 1
       guard segments <= EngineDrawCommand.segmentLimitPerFrame - drawSegmentCount else {
-        throw EngineInterpreterError.operationLimitExceeded
+        throw EngineInterpreterError.resourceLimitExceeded("draw segments per frame")
       }
       drawSegmentCount += segments
       draws.append(EngineDrawCommand(
@@ -392,7 +392,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       )
       let id = try identifier(a[0], function: function)
       guard effectClipIDs.contains(id) else { return 0 }
-      try checkLimit(audio.count + loopAudio.count)
+      try checkLimit(audio.count + loopAudio.count, resource: "audio commands per frame")
       audio.append(EngineAudioCommand(
         clipID: id, time: function == "Play" ? time : try audioTime(a[1]),
         minimumDistance: max(0, a.last!)
@@ -402,9 +402,12 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       try validate(a, count: function == "PlayLooped" ? 1 : 2, function: function)
       let clipID = try identifier(a[0], function: function)
       guard effectClipIDs.contains(clipID) else { return 0 }
-      try checkLimit(audio.count + loopAudio.count)
-      guard loopStops.count < 256, nextLoopID < 9_007_199_254_740_991 else {
-        throw EngineInterpreterError.operationLimitExceeded
+      try checkLimit(audio.count + loopAudio.count, resource: "audio commands per frame")
+      guard loopStops.count < 256 else {
+        throw EngineInterpreterError.resourceLimitExceeded("active audio loops")
+      }
+      guard nextLoopID < 9_007_199_254_740_991 else {
+        throw EngineInterpreterError.resourceLimitExceeded("audio loop identifiers")
       }
       let id = nextLoopID
       nextLoopID += 1
@@ -418,7 +421,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       guard let existing = loopStops[id] else { return 0 }
       let end = function == "StopLooped" ? time : try audioTime(a[1])
       guard end < existing else { return 0 }
-      try checkLimit(audio.count + loopAudio.count)
+      try checkLimit(audio.count + loopAudio.count, resource: "audio commands per frame")
       loopAudio.append(.stop(id: id, time: end))
       if end <= time { loopStops[id] = nil } else { loopStops[id] = end }
       return 0
@@ -426,10 +429,10 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       try validate(a, count: 11, function: function)
       let effectID = try identifier(a[0], function: function)
       guard particleEffectIDs.contains(effectID), a[9] > 0 else { return 0 }
-      try checkLimit(particles.count)
+      try checkLimit(particles.count, resource: "active particle effects")
       // Keep handles exactly representable in engine doubles.
       guard nextParticleID < 9_007_199_254_740_991 else {
-        throw EngineInterpreterError.operationLimitExceeded
+        throw EngineInterpreterError.resourceLimitExceeded("particle effect identifiers")
       }
       let id = nextParticleID
       nextParticleID += 1
@@ -468,7 +471,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
         if found { streams[id]?.entries[index].value = a[2] }
         else {
           guard streamEntryCount < streamEntryLimit else {
-            throw EngineInterpreterError.operationLimitExceeded
+            throw EngineInterpreterError.resourceLimitExceeded("stream entries")
           }
           streams[id, default: EngineStream()].entries.insert((key, a[2]),
             at: index)
@@ -502,7 +505,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       guard (0..<archetypeCount).contains(id) else {
         throw EngineInterpreterError.invalidArguments(function)
       }
-      try checkLimit(spawns.count)
+      try checkLimit(spawns.count, resource: "spawn commands per frame")
       spawns.append(EngineSpawnCommand(
         archetypeID: id, memory: Array(a.dropFirst())
       ))
@@ -555,9 +558,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     return result
   }
 
-  private func checkLimit(_ count: Int) throws {
+  private func checkLimit(_ count: Int, resource: String) throws {
     guard count < commandLimit else {
-      throw EngineInterpreterError.operationLimitExceeded
+      throw EngineInterpreterError.resourceLimitExceeded(resource)
     }
   }
 }
@@ -570,7 +573,7 @@ struct EngineAudioScheduler {
 
   mutating func enqueue(_ commands: [EngineAudioCommand]) throws {
     guard commands.count <= 16_384 - pending.count else {
-      throw EngineInterpreterError.operationLimitExceeded
+      throw EngineInterpreterError.resourceLimitExceeded("queued audio commands")
     }
     pending.append(contentsOf: commands)
     pending = pending.enumerated().sorted {

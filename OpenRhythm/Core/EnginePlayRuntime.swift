@@ -536,7 +536,7 @@ final class EnginePlayRuntime {
     }
     waitingIndex += spawnCount
     guard active.count + newlyActive.count + spawned.count <= entityLimit else {
-      throw EngineInterpreterError.operationLimitExceeded
+      throw EngineInterpreterError.resourceLimitExceeded("active engine entities")
     }
     for command in spawned {
       let entity = Entity(key: nextKey, index: nil, archetype: command.archetypeID)

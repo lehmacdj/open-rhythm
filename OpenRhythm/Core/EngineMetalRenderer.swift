@@ -186,7 +186,7 @@ final class EngineMetalRenderer {
       let mesh = Self.vertices(for: sprite, size: size)
       guard !mesh.isEmpty else { continue }
       guard vertices.count <= 1_000_000 - mesh.count else {
-        throw EngineInterpreterError.operationLimitExceeded
+        throw EngineInterpreterError.resourceLimitExceeded("render vertices per frame")
       }
       let key = ObjectIdentifier(sprite.image)
       let texture: MTLTexture

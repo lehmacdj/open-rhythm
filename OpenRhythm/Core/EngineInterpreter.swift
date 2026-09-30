@@ -5,6 +5,8 @@ enum EngineInterpreterError: LocalizedError {
   case invalidArguments(String)
   case unsupportedFunction(String)
   case operationLimitExceeded
+  case resourceLimitExceeded(String)
+  case resourcePreparationFailed(String)
   case invalidMemoryAccess(block: Int, callback: String, write: Bool)
   case invalidFunctionCallback(function: String, callback: String)
 
@@ -18,6 +20,10 @@ enum EngineInterpreterError: LocalizedError {
       "The engine function \(function) is not implemented."
     case .operationLimitExceeded:
       "The engine exceeded the operation limit for one callback."
+    case .resourceLimitExceeded(let resource):
+      "The engine exceeded the safety limit for \(resource)."
+    case .resourcePreparationFailed(let resource):
+      "The engine could not allocate or prepare \(resource)."
     case .invalidMemoryAccess(let block, let callback, let write):
       "The engine cannot \(write ? "write" : "read") memory block \(block) "
         + "during \(callback)."

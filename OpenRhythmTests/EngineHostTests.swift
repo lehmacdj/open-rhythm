@@ -6,6 +6,55 @@ import zlib
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
+  @MainActor
+  func testResourceLimitErrorsIdentifyTheFailingSubsystem() throws {
+    func check(_ context: String, _ action: () throws -> Void) {
+      XCTAssertThrowsError(try action()) { error in
+        XCTAssertTrue(error.localizedDescription.contains(context),
+          "Expected \(context) context, got \(error.localizedDescription)")
+        XCTAssertFalse(error.localizedDescription.contains("callback"),
+          "A resource failure must not blame callback instruction execution")
+      }
+    }
+    let host = CommandEngineRuntimeHost(memory: EngineMemory(),
+      level: LevelData(bgmOffset: 0, entities: []), skinSpriteIDs: [7],
+      effectClipIDs: [8], particleEffectIDs: [], archetypeCount: 0,
+      streamEntryLimit: 0)
+    check("stream entries") {
+      _ = try host.call(function: "StreamSet", arguments: [0, 0, 1])
+    }
+    check("draw segments per frame") {
+      _ = try host.call(function: "DrawCurvedB",
+        arguments: [7] + quad + [0, 1, 16_385, 0, 0])
+    }
+    for _ in 0..<256 {
+      _ = try host.call(function: "PlayLooped", arguments: [8])
+    }
+    check("active audio loops") {
+      _ = try host.call(function: "PlayLooped", arguments: [8])
+    }
+    var scheduler = EngineAudioScheduler()
+    check("queued audio commands") {
+      try scheduler.enqueue(Array(repeating: EngineAudioCommand(
+        clipID: 8, time: 0, minimumDistance: 0), count: 16_385))
+    }
+    check("effect audio clips") {
+      _ = try EngineAudioPlayback(clips: Dictionary(uniqueKeysWithValues:
+        (0..<257).map { ($0, Data()) }), makeVoice: { _, _ in
+          XCTFail("Clip-count rejection must precede voice allocation")
+          return MockEffectVoice()
+        })
+    }
+    check("software render size") {
+      _ = try EngineSoftwareRenderer.render([], size: CGSize(width: 0, height: 1))
+    }
+    let interpreter = EngineInterpreter(nodes: [EngineDataNode(value: 1)],
+      operationLimit: 0)
+    XCTAssertThrowsError(try interpreter.execute(nodeAt: 0)) { error in
+      XCTAssertTrue(error.localizedDescription.contains("callback"))
+    }
+  }
+
   func testPublicFunctionInventoryMatchesDispatchAndPreflight() throws {
     // Independent name inventory from Sonolus/runtime-metadata, revision
     // 8da7fab2580701fdff82e10224f428db05add4bc, Runtime/Functions.json.
@@ -4203,7 +4252,10 @@ final class EngineHostTests: XCTestCase {
     XCTAssertNoThrow(try EngineRenderer.draw([sprite], context: context,
       size: CGSize(width: 40, height: 40), pixelBudget: 10000))
     XCTAssertThrowsError(try EngineRenderer.draw(Array(repeating: sprite, count: 64),
-      context: context, size: CGSize(width: 40, height: 40), pixelBudget: 10000))
+      context: context, size: CGSize(width: 40, height: 40), pixelBudget: 10000)) {
+      XCTAssertTrue($0.localizedDescription.contains("software pixel work per frame"))
+      XCTAssertFalse($0.localizedDescription.contains("callback"))
+    }
   }
 
   @MainActor
@@ -4319,7 +4371,7 @@ final class EngineHostTests: XCTestCase {
     try host.beginFrame(at: 2)
     XCTAssertThrowsError(try host.call(function: "DrawCurvedB",
       arguments: base + [16_385, 0, 0])) {
-      guard case EngineInterpreterError.operationLimitExceeded = $0 else {
+      guard case EngineInterpreterError.resourceLimitExceeded("draw segments per frame") = $0 else {
         return XCTFail("Expected shared work-budget error, got \($0)")
       }
     }
@@ -4362,7 +4414,7 @@ final class EngineHostTests: XCTestCase {
         // A regular Draw consumes one segment from the same budget.
         if segments == 16_384 {
           XCTAssertThrowsError(try host.call(function: "Draw", arguments: base)) {
-            guard case EngineInterpreterError.operationLimitExceeded = $0 else {
+            guard case EngineInterpreterError.resourceLimitExceeded("draw segments per frame") = $0 else {
               return XCTFail("Expected shared work-budget error, got \($0)")
             }
           }
@@ -5586,7 +5638,10 @@ final class EngineHostTests: XCTestCase {
     var tooMany = altered(at: record + 24, bytes: [1, 4])
     tooMany = altered(tooMany, at: record + 32, bytes: [1, 4])
     XCTAssertThrowsError(try EffectAudioArchive(data: tooMany),
-      "ZIP64 must not bypass the 1024-entry budget")
+      "ZIP64 must not bypass the 1024-entry budget") {
+      XCTAssertTrue($0.localizedDescription.contains("audio archive entries"))
+      XCTAssertFalse($0.localizedDescription.contains("callback"))
+    }
     XCTAssertThrowsError(try EffectAudioArchive(data: altered(
       at: extra + 4, bytes: [1, 0, 0, 1, 0, 0, 0, 0])),
       "ZIP64 must not bypass the 16 MiB per-entry budget")

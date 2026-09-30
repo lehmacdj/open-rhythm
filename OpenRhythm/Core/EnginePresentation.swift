@@ -864,7 +864,9 @@ final class EnginePresentationAssets {
       guard effect.groups.allSatisfy({
         (0...1024).contains($0.count) && $0.particles.count <= 1024
       }), effect.groups.reduce(0, { $0 + $1.count * $1.particles.count }) <= 4096
-      else { throw EngineInterpreterError.operationLimitExceeded }
+      else {
+        throw EngineInterpreterError.resourceLimitExceeded("particles per effect definition")
+      }
       for group in effect.groups {
         for particle in group.particles {
           try particle.validate(effectName: definition.name,
