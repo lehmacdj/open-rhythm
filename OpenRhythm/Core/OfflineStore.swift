@@ -177,7 +177,7 @@ actor OfflineStore {
     guard
       let details = try JSONSerialization.jsonObject(with: detailsData)
         as? [String: Any],
-      let item = details["item"]
+      let item = details["item"] as? [String: Any]
     else {
       throw OfflineStoreError.malformedLevelDetails
     }
@@ -195,10 +195,22 @@ actor OfflineStore {
         references.engineVersion
       )
     }
-    let locators = try ResourceLocatorCollector.collect(
-      from: itemData,
-      baseURL: server.baseURL
-    )
+    // Archive the same selected play resources used by online playback. A
+    // recursive walk of the entire item also requires overridden defaults,
+    // non-play engine modes and unrelated thumbnails to remain available.
+    var locators = Set([references.engineData, references.levelData,
+      references.bgm] + Array(references.presentation.values))
+    if let rom = references.engineROM { locators.insert(rom) }
+    if let cover = item["cover"] {
+      guard let cover = cover as? [String: Any] else {
+        throw OfflineStoreError.malformedLevelDetails
+      }
+      let base = (item["source"] as? String).flatMap(URL.init(string:))
+        ?? server.baseURL
+      let artwork = try JSONSerialization.data(withJSONObject: cover)
+      locators.formUnion(try ResourceLocatorCollector.collect(
+        from: artwork, baseURL: base))
+    }
 
     try prepareDirectories()
     var resources = [OfflineResource]()
@@ -507,7 +519,8 @@ actor OfflineStore {
       }
       let first = ordered[0]
       let remoteCover = first.level.cover.resolved(
-        against: first.server.baseURL
+        against: first.level.source.flatMap(URL.init(string:))
+          ?? first.server.baseURL
       )
       let coverURL = localURL(for: RuntimeResourceReference(url: remoteCover,
         hash: first.level.cover.hash?.lowercased()), in: first)

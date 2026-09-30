@@ -86,18 +86,21 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Selected next action:** reconcile the remaining compatibility headings
-  against a finite contract/acceptance checklist. Identify actionable non-stack
-  gaps, existing evidence, and exact dependencies; then select the highest
-  impact actionable item across gameplay and the rest of the app.
-- **Why:** repeated narrow verification has not resolved the larger user
-  reports, and vague open-ended conformance items make prioritization and the
-  device-test gate difficult to evaluate. This is a bounded reconciliation,
-  not permission to start another exhaustive subsystem rewrite.
-- **Acceptance:** each currently open compatibility category has a specific
-  contract or user requirement, evidence status and next check or dependency.
-  Existing verified work is not reopened without a reason. Select one next
-  diagnostic/fix, or identify that no required action is currently unblocked.
+- **Completed action:** reconciled the remaining compatibility categories in
+  COMPATIBILITY.md's acceptance checklist. Independent review found BF-18,
+  reproduced and fixed below. The earlier workflow turn was progress because
+  it changed the audit's operating rules; this continuation adds executed
+  evidence and a working download fix rather than repeating those rules.
+- **Selected next action:** investigate BF-19's actual cached SEKAI startup
+  boundary, including stage spawning and first note visibility. Keep BF-20's
+  online source-resolution mismatch queued for the next global selection.
+- **Why:** BF-19 now has concrete cached evidence and directly affects the
+  reported long lead-in. Further synthetic-only purity extensions did not
+  establish improvement for those charts. BF-18 was selected first because
+  it was a demonstrated download failure with a clear selection contract.
+- **Acceptance:** establish a safe stage-boundary rule or its exact remaining
+  evidence requirement; preserve count-ins/effects and hidden-input rewind.
+  Do not hard-code engine names or silently discard unknown opening visuals.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -124,6 +127,25 @@ and reduced uncertainty about the remaining important outcomes. Raw history
 analysis stays in ignored temporary files, not in the repository.
 
 ## Breadth-first triage — September 30, 2026
+
+Reconciliation pass: the resource/default review distinguishes host policies,
+native parity questions and actual documented API gaps. It found BF-18 below.
+An Xcode simulator probe also measured the visual intro guard on five cached
+charts without playing audio or making requests. At default options/aspect 1.8,
+all three SEKAI charts had no statically recognized stage archetype and stopped
+at the first stage draw, one simulated frame after the initial empty frame:
+shake it! -8.521833 (initial -8.538500), Eleventh/光 -8.983333 (initial -9).
+Each stopping frame contained only “Sekai Stage,” no judgment, particle or
+scheduled engine audio. SIF stopped on nine note slots at 0.016667; 22/7 already
+had visible note graphics at that time. This isolates a visual-guard boundary,
+not actual audio onset, complete GameplayModel startup or physical alignment.
+The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
+
+| ID / priority | Finding and evidence | Acceptance / next action |
+| --- | --- | --- |
+| BF-18 / P2 — verified | Download recursively fetched overridden default assets, non-play engine data and thumbnails. The regression failed on unwanted requests despite successful online bundle preparation. | Selected runtime resources plus level cover now download; all four override/default families, ROM, source-relative artwork, malformed-update preservation and offline reload verified. All 61 offline/catalog tests, normal build and independent review pass. Existing manifests are pruned only through ordinary updates. |
+| BF-19 / P2 — reproduced boundary | Real cached SEKAI stage graphics stop intro skipping almost immediately, preserving about nine seconds of lead-in in Eleventh/光. Earlier synthetic stage-proof extensions do not establish real-engine improvement. | Diagnose actual stage spawn/provenance and first-visible-note boundaries before selecting a safe fix; retain unknown effects/count-ins rather than guessing from sprite names. |
+| BF-20 / P2 — code-path evidence | Online CatalogBuilder cover URLs still use the catalog base instead of a level's source; offline cover lookup now uses the level source. Relative BGM song-key/alias paths also need the same source check. | Reproduce cross-origin relative artwork and grouping with isolated fixtures. Keep distinct level origins distinct, preserve row identities, and do not request real assets just to prove URL resolution. |
 
 Tenth bounded discovery pass: inspected playback/input clock consumption,
 callback scheduling, audio reservation handling, result payload transactions,
@@ -2019,8 +2041,11 @@ model level, checking that future judgments and spawned entities do not leak.
    diagnostics; they cannot be certified by invented simulator measurements.
    Deferred until Sonolus API coverage is complete, then tested together with
    the Metal scheduling before/after comparison and calibration controls.
-2. General engine compatibility is not complete: stack-function ABI and
-   resource/callback conformance still need work. DebugLog/DebugPause now have
+2. General engine compatibility is not complete: stack-function ABI remains
+   unimplemented; the finite remaining acceptance checklist in COMPATIBILITY.md
+   separates actual API gaps from native parity and host policy. Do not reopen
+   the older generic resource/callback wording without a specific rule or
+   reproducer. DebugLog/DebugPause now have
    opt-in logging and resumable pause support; this does not resolve the
    separately listed native/API ambiguities. Memory-block callback
    permissions are now enforced across all interpreter access paths, including

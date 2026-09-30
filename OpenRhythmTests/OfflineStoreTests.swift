@@ -225,6 +225,122 @@ final class OfflineStoreTests: XCTestCase {
     }
   }
 
+  func testDownloadUsesSelectedPlayResourcesAndLevelArtworkOnly() async throws {
+    for useDefault in [false, true] {
+      let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("selected-resources-\(UUID())")
+      defer { try? FileManager.default.removeItem(at: root) }
+      let server = ServerDescriptor(id: "selected", name: "Fixture",
+        baseURL: URL(string: "https://catalog.example")!)
+      let empty = ResourceLocator(hash: nil, url: nil)
+      let level = SonolusLevelItem(name: "selected", source: nil,
+        version: 1, rating: 1, title: LocalizedText("Selected resources"),
+        artists: LocalizedText("Fixture"), author: "Fixture", tags: [],
+        cover: ResourceLocator(hash: nil, url: "cover"), bgm: empty, data: empty)
+      var payloads = [
+        "chart": Data(#"{"bgmOffset":3,"entities":[]}"#.utf8),
+        "engine": Data(#"{"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},"nodes":[],"buckets":[],"archetypes":[]}"#.utf8),
+        "configuration": Data(#"{"options":[]}"#.utf8),
+        "music": Data("music".utf8), "rom": Data([1, 2, 3]),
+        "cover": Data("cover".utf8)]
+      var engine: [String: Any] = ["version": 13, "name": "selected-engine",
+        "source": "https://engine.example/",
+        "playData": ["url": "engine"], "configuration": ["url": "configuration"],
+        "rom": ["url": "rom"], "watchData": ["url": "unselected-watch"],
+        "previewData": ["url": "unselected-preview"],
+        "tutorialData": ["url": "unselected-tutorial"],
+        "thumbnail": ["url": "unselected-thumbnail"]]
+      var item = try XCTUnwrap(JSONSerialization.jsonObject(
+        with: JSONEncoder().encode(level)) as? [String: Any])
+      item["source"] = "https://level.example/"
+      item["bgm"] = ["url": "music"]
+      item["data"] = ["url": "chart"]
+      for (name, fields) in [("skin", ["data", "texture"]),
+        ("background", ["data", "image", "configuration"]),
+        ("effect", ["data", "audio"]), ("particle", ["data", "texture"])] {
+        var selected: [String: Any] = ["source": "https://selected.example/"]
+        var unused: [String: Any] = ["source": "https://unused.example/"]
+        for field in fields {
+          let key = "\(name)-\(field)"
+          payloads[key] = Data(key.utf8)
+          selected[field] = ["url": key]
+          // Valid hash-only shape, but deliberately absent from the cache.
+          unused[field] = ["hash": Data("unused-\(key)".utf8).sha1Hex]
+        }
+        selected["thumbnail"] = ["url": "unselected-\(name)-thumbnail"]
+        engine[name] = useDefault ? selected : unused
+        item["use\(name.prefix(1).uppercased())\(name.dropFirst())"] = [
+          "useDefault": useDefault, "item": useDefault ? unused : selected]
+      }
+      item["engine"] = engine
+      let details = try JSONSerialization.data(withJSONObject: ["item": item])
+      let expectedPayloads = payloads
+      let recorder = RequestRecorder()
+      StubURLProtocol.handler = { request in
+        let url = try XCTUnwrap(request.url)
+        recorder.append(url)
+        if url.path.hasPrefix("/sonolus/levels/") { return details }
+        guard let bytes = expectedPayloads[url.lastPathComponent] else {
+          XCTFail("Unselected resource was fetched: \(url)")
+          throw URLError(.resourceUnavailable)
+        }
+        let expectedHost = ["music", "chart", "cover"].contains(url.lastPathComponent)
+          ? "level.example" : ["engine", "configuration", "rom"]
+            .contains(url.lastPathComponent) ? "engine.example" : "selected.example"
+        XCTAssertEqual(url.host, expectedHost)
+        return bytes
+      }
+      let configuration = URLSessionConfiguration.ephemeral
+      configuration.protocolClasses = [StubURLProtocol.self]
+      let session = URLSession(configuration: configuration)
+      defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+      let client = SonolusClient(session: session,
+        cache: SonolusResponseCache(rootURL: root.appendingPathComponent("cache")))
+      let store = OfflineStore(rootURL: root.appendingPathComponent("offline"),
+        client: client)
+      let online = try await RuntimeBundleLoader(client: client, offlineStore: store)
+        .load(level: level, from: server)
+      let manifest = try await store.download(level: level, from: server)
+      XCTAssertEqual(manifest.resources.count, payloads.count)
+      XCTAssertEqual(Set(manifest.resources.compactMap { $0.remoteURL?.lastPathComponent }),
+        Set(payloads.keys))
+      let count = recorder.urls.count
+      StubURLProtocol.handler = { _ in
+        XCTFail("Offline playback must not fetch anything")
+        throw URLError(.notConnectedToInternet)
+      }
+      let offline = try await store.runtimeBundle(from: manifest)
+      XCTAssertEqual(offline.presentation?.resources, online.presentation?.resources)
+      XCTAssertEqual(offline.engineROM, online.engineROM)
+      XCTAssertEqual(try Data(contentsOf: offline.bgmURL), payloads["music"])
+      let songs = try await store.catalogSnapshot().songs
+      let cover = try XCTUnwrap(songs.first?.coverURL)
+      XCTAssertEqual(try Data(contentsOf: cover), payloads["cover"])
+      XCTAssertEqual(recorder.urls.count, count)
+      for malformedCover: Any in [NSNull(), "not a locator", 7, true, []] {
+        var malformedItem = item
+        malformedItem["cover"] = malformedCover
+        let malformedDetails = try JSONSerialization.data(
+          withJSONObject: ["item": malformedItem])
+        StubURLProtocol.handler = { request in
+          XCTAssertTrue(request.url!.path.hasPrefix("/sonolus/levels/"),
+            "Reject malformed metadata before requesting resources")
+          return malformedDetails
+        }
+        do {
+          _ = try await store.download(level: level, from: server, forceReload: true)
+          XCTFail("Malformed artwork metadata must fail without crashing")
+        } catch {
+          guard case OfflineStoreError.malformedLevelDetails = error else {
+            return XCTFail("Unexpected error: \(error)")
+          }
+        }
+        let retained = try await store.manifests()
+        XCTAssertEqual(retained, [manifest], "A bad update preserves the download")
+      }
+    }
+  }
+
   func testVerifiedResourceCacheReusesAliasesAndRejectsCorruption() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("verified-resources-\(UUID())")

@@ -1464,7 +1464,49 @@ Memory-block access permissions remain a distinct contract with their own
 explicit tables and tests. Non-play Paint/Print and the deferred stack ABI are
 not covered by this host audit.
 
-## Remaining checks, including engines we have not sampled
+## Remaining acceptance checklist — September 30, 2026
+
+This is the operational classification of the remaining categories, not a new
+claim that every API combination or native behavior has been verified. Historical
+scope details follow. Reopen a verified boundary for new evidence, not merely
+because an older paragraph says “more conformance.”
+
+| Category | Current evidence/status | Acceptance check or exact dependency |
+| --- | --- | --- |
+| Fourteen stack functions | Unimplemented; unsupported preflight is not implementation. | Independently establish pointer/frame layout, Temporary Memory aliasing and enter/leave semantics, then verify nested frames and pointer mutation. Implementation/upstream clarification remain deferred; authorized cached consumer search continues separately. |
+| Host callback availability | Explicit documented exclusions checked across 39 function and nine lifecycle pages at the pinned revision; known rules have regressions. | No additional documented exclusion found. An additional restriction needs a named source or independent behavior evidence; absence of a public restriction is not native parity. |
+| Resource selection/defaults | Online UseItem, optional ROM, UI enums, render-mode precedence and named availability implemented. Independent source review found the offline selection mismatch fixed below. | Selected-resource download/online equivalence, retained artwork and required-resource failures are the bounded checks. Omitted schema-required UI fields are tolerated by host policy, not a documented missing default to guess. No further named documented-default mismatch emerged from this review. |
+| Resource/rendering policies | Atlas budgets, incomplete-schema tolerance, blur implementation and per-engine preference scope are explicit policies. Particle coefficient/easing defaults use the public Studio reference. | Exact native filtering/random realization/codec breadth remain evidence limits, not invented documented defaults. Texture metadata dimension disagreement is malformed-input handling, not a separate scaling default. Reproduce a valid-resource rejection or cite a missing rule before expanding support. |
+| Allocation exposure (BF-11) | Earlier atlas decode/base crops lie outside later tint/upload budgets; no observed failure established. | Bounded allocation/cost diagnostic before changing limits. Do not induce OOM or claim process RSS is bounded by nominal texture payload. |
+| Scheduled audio and calibration | Native scheduled-stop kernel, offset mapping and calibration controls have simulator regressions. Independent audio-offset sign/unit convention remains underdocumented. | Seek independent sign/unit evidence without inferring correction from user bias. Acoustic accuracy, stopped-clock transition precision and calibration usability require the deferred device batch. |
+| RuntimeUpdate skip metadata | No runtime clock jump is performed: intro search executes successive updates and leaves skip zero. | A future actual seek/resimulation path needs independently established skip semantics. Current conservative intro behavior is tracked separately, not repaired by guessing a skip value. |
+| Intro silence trimming (BF-19) | Preservation regressions pass, but cached SEKAI stages stop skipping almost immediately, before notes or audio. User-visible shortening remains incomplete. | Improve handling of persistent initial stage presentation while retaining count-ins, non-note effects, engine sound and hidden-input rewind; verify cached startup paths as well as synthetic fixtures. Do not exempt custom sprites by name alone. |
+| Pagination | Cache invalidation, cursor recovery, stable append and bounded prefetch have regressions. | Concurrent remote numbered-page changes cannot be made atomic without a server snapshot contract. That limitation is not an unimplemented client cache rule; physical scroll smoothness remains in the device batch. |
+| Physical gameplay | Synthetic/cached checks do not certify interactive phone behavior. | After the API gate: close/coincident multitouch, successful flick/hold variants, hit effects, audible/display alignment, frame-time tails, repeated starts and interruptions, including the requested problematic charts. |
+| Non-play modes | Tutorial/watch/preview and online score submission are outside the requested app scope. | Do not use their absence to keep play-mode completion indefinitely open or claim they are implemented. |
+
+September 30 selected-download correction (BF-18): offline collection walked
+every SRL in a LevelItem, including overridden defaults, unrelated engine modes
+and presentation thumbnails. A synthetic online-playable bundle reproduced
+failed downloads and unwanted requests. Downloads now use the same selected
+RuntimeResourceReferences as online loading, plus the level cover. Relative
+offline cover lookup also honors the level source. Existing extra manifest
+resources are retained until an update; selected resources still pass the same
+integrity checks and atomic publication path.
+
+The new regression covers default/override selection for all four presentation
+families, distinct level/engine/resource origins, uncached hash-only unused
+assets, retained ROM/artwork and zero-network offline bundle preparation.
+Independent review caught an unchecked malformed-cover serialization path;
+the correction rejects null/scalar/array covers descriptively before requests
+and preserves the previous download on a failed update. Final review is clean.
+All 61 selected offline/catalog tests and the normal build pass:
+`RunSomeTests/1A1444D6-37F6-4012-B84E-350981CA056D.txt`,
+`BuildProject/BuildProject-Log-20260930-163347.txt`.
+This is resource selection and transport evidence, not rendered/audio playback
+of the synthetic media bytes. No remote song request or device check was used.
+
+## Historical scope details for remaining checks
 
 - [StopLoopedScheduled](
   https://wiki.sonolus.com/engine-specs/functions/stop-looped-scheduled)
