@@ -48,6 +48,43 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
 
 ## Breadth-first triage — September 30, 2026
 
+Fifth bounded discovery pass: checked event-time mapping/stopped-clock guards,
+result index/payload replacement, online page invalidation, offline list reads,
+per-engine preference restoration, and resource URL resolution. No new timing,
+transaction or pagination defect was established by those source spot checks.
+The apparent leading-slash URL concern is not a defect: the public
+[SRL contract](https://wiki.sonolus.com/custom-server-specs/misc/srl) explicitly
+resolves those paths against the server address, not the domain root; retain
+the existing behavior. These checks are not native/audio or full API sign-off.
+
+| ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
+| --- | --- | --- | --- |
+| BF-13 / P2 — fixed | Offline and Played Songs now store visible rows, instead of recalculating filtering, localized sorting and engine-key selection for every SwiftUI read. | The same bounded 1,000-song / five-difficulty Debug simulator probe improved from 19.6–20.5 ms for paired unchanged reads to roughly 0–0.001 ms, at timer resolution. 69 focused tests, normal build and independent review pass. This is not phone frame-time evidence. | Song/filter/engine mutations invalidate rows, including same-ID metadata refreshes and deletion. Search stays session-only and preferences remain per engine. Actual filtering and library refresh costs remain; no network-cache changes. |
+
+Re-triage selects BF-13 ahead of error-message polish (BF-12) and continued
+unproven atlas-growth diagnosis (BF-11): measured repeated catalog work affects
+an existing user-reported area and has a small semantics-preserving fix. No
+new timing/input defect displaced it in this pass. Physical alignment and the
+stack ABI remain gated; neither is silently treated as completed.
+
+BF-13 verification: the new model regression covers stored difficulty/sort
+preferences on two engines, session query preservation, switching engines with
+different ranges, filter mutations, repeated reads, same-ID replacement,
+deletion and recreation with saved settings but no saved search. All 69
+CatalogTests/OfflineStoreTests/ResultStoreTests passed:
+`RunSomeTests/9FE8C958-8E4C-4EFA-BACF-6E0F83E2C09A.txt`.
+Normal build passed: `BuildProject/BuildProject-Log-20260930-031810.txt`.
+Independent read-only review found no actionable issue. Performance evidence
+comes from the identical before/after Xcode snippet, not a timing assertion in
+the behavioral test. Fixture creation, actual filter changes, SwiftUI layout,
+image loading and physical scrolling were outside that read-only measurement.
+No full runtime replay or device run was needed for this list-model unit.
+
+Re-triage: BF-13 is complete within that scope. Remaining concrete queued work
+includes BF-12 resource-budget diagnostics; BF-11 atlas/base-crop risk remains
+an open diagnostic. Make another bounded cross-area check before choosing the
+next implementation, with gameplay-affecting evidence able to displace either.
+
 Fourth bounded discovery pass: independently rechecked imports/defaults,
 prepared-state restart, spawn/callback sequencing, spawned-entity restrictions,
 judgment arguments, scheduled audio compensation and stream interpolation

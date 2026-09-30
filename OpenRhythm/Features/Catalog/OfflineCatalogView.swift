@@ -6,33 +6,44 @@ import SwiftUI
 final class OfflineCatalogModel {
   private let offlineStore: OfflineStore
   private let resultStore: ResultStore
-  var songs = [CatalogSong]()
+  private let preferences: UserPreferences
+  var songs = [CatalogSong]() {
+    didSet { updateVisibleSongs() }
+  }
+  private(set) var visibleSongs = [CatalogSong]()
   var issues = [OfflineManifestIssue]()
   var filter = CatalogFilter() {
     didSet {
       if !selectedEngineKey.isEmpty {
-        UserPreferences.shared.save(filter, for: selectedEngineKey)
+        preferences.save(filter, for: selectedEngineKey)
       }
+      updateVisibleSongs()
     }
   }
   var selectedEngineKey = "" {
     didSet {
       guard oldValue != selectedEngineKey else { return }
       let query = filter.query
-      filter = UserPreferences.shared.filter(for: selectedEngineKey)
-      filter.query = query
+      var restored = preferences.filter(for: selectedEngineKey)
+      restored.query = query
+      filter = restored
     }
   }
   var engines: [CatalogEngineChoice] { CatalogEngineChoice.choices(in: songs) }
   var errorMessage: String?
 
-  init(offlineStore: OfflineStore = .shared, resultStore: ResultStore = .shared) {
+  init(offlineStore: OfflineStore = .shared, resultStore: ResultStore = .shared,
+    preferences: UserPreferences = .shared) {
     self.offlineStore = offlineStore
     self.resultStore = resultStore
+    self.preferences = preferences
   }
 
-  var visibleSongs: [CatalogSong] {
-    filter.apply(to: songs.filter { $0.engineKey == selectedEngineKey })
+  private func updateVisibleSongs() {
+    // SwiftUI can read the rows several times per update. Derive them only
+    // when their inputs change, not on scroll or unrelated state updates.
+    visibleSongs = filter.apply(to:
+      songs.filter { $0.engineKey == selectedEngineKey })
   }
 
   func refresh(playedSongs: Bool) async {

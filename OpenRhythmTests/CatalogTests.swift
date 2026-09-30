@@ -2,6 +2,76 @@ import XCTest
 @testable import OpenRhythm
 
 final class CatalogTests: XCTestCase {
+  @MainActor
+  func testOfflineVisibleRowsFollowSongsFiltersAndEnginePreferences() throws {
+    let suite = "OfflineVisibleRows.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = UserPreferences(defaults: defaults)
+    let first = server.preferenceKey
+    var other = level(name: "other", rating: 18, difficulty: "#HARD")
+    other.engine = SonolusEngineIdentity(name: "other-engine")
+    let second = other.engineKey(server: server)
+    var firstFilter = CatalogFilter()
+    firstFilter.sort = .artist
+    firstFilter.minimumRating = 7
+    firstFilter.maximumRating = 8
+    preferences.save(firstFilter, for: first)
+    var secondFilter = CatalogFilter()
+    secondFilter.minimumRating = 17
+    preferences.save(secondFilter, for: second)
+    func song(_ id: String, title: String, artist: String,
+      level: SonolusLevelItem) -> CatalogSong {
+      CatalogSong(id: id, server: server, title: LocalizedText(title),
+        artists: LocalizedText(artist), coverURL: nil, variants: [level],
+        levelOrigins: [])
+    }
+    let a = song("a", title: "Zulu", artist: "Alpha", level:
+      level(name: "a", rating: 7, difficulty: "#HARD"))
+    let b = song("b", title: "Alpha", artist: "Zulu", level:
+      level(name: "b", rating: 9, difficulty: "#HARD"))
+    let c = song("c", title: "Other", artist: "Other", level: other)
+    let model = OfflineCatalogModel(preferences: preferences)
+    model.songs = [b, c, a]
+    model.selectedEngineKey = first
+    XCTAssertEqual(model.visibleSongs.map(\.id), ["a"])
+    model.filter.maximumRating = 10
+    XCTAssertEqual(model.visibleSongs.map(\.id), ["a", "b"])
+    for _ in 0..<10 {
+      XCTAssertEqual(model.visibleSongs.map(\.id), ["a", "b"])
+    }
+    model.filter.query = "Zulu"
+    model.selectedEngineKey = second
+    XCTAssertEqual(model.filter.query, "Zulu", "Search stays session-only")
+    XCTAssertEqual(model.filter.minimumRating, 17)
+    XCTAssertTrue(model.visibleSongs.isEmpty)
+    model.filter.query = ""
+    XCTAssertEqual(model.visibleSongs.map(\.id), ["c"])
+    model.selectedEngineKey = first
+    XCTAssertEqual(model.filter.maximumRating, 10)
+    XCTAssertEqual(model.filter.sort, .artist)
+    XCTAssertEqual(model.visibleSongs.map(\.id), ["a", "b"])
+    model.filter.sort = .title
+    XCTAssertEqual(model.visibleSongs.map(\.id), ["b", "a"])
+    // Refreshes can replace metadata without changing the stable row ID.
+    let updated = song("b", title: "Updated", artist: "Zulu",
+      level: b.variants[0])
+    model.songs = [updated, c]
+    XCTAssertEqual(model.visibleSongs.map(\.id), ["b"])
+    XCTAssertEqual(model.visibleSongs.first?.title, LocalizedText("Updated"))
+    model.songs.removeAll()
+    XCTAssertTrue(model.visibleSongs.isEmpty, "Deletion must invalidate rows")
+    model.songs = [a, b, c]
+    model.filter.query = "no match"
+    XCTAssertTrue(model.visibleSongs.isEmpty)
+    let reopened = OfflineCatalogModel(preferences: preferences)
+    reopened.songs = model.songs
+    reopened.selectedEngineKey = first
+    XCTAssertEqual(reopened.filter.query, "")
+    XCTAssertEqual(reopened.filter.sort, .title)
+    XCTAssertEqual(reopened.visibleSongs.map(\.id), ["b", "a"])
+  }
+
   func testSortKeysPreserveFilteringLocalizationAndStableTies() {
     let songs: [CatalogSong] = (0..<40).map { index in
       let title = LocalizedText(
