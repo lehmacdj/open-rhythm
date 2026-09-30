@@ -54,6 +54,13 @@ proposed replacement is not authority to change its scope or completion gate.
    regressions, remaining questions and deferred device checks. Push stable,
    tested units under the existing authorization without treating that subset
    as completion of this audit.
+   **September 30 push limit:** at most four repository pushes per calendar
+   day in America/New_York, to avoid App Store Connect limits. This is a cap,
+   not a target: batch tested local commits into meaningful releases instead
+   of pushing each fix. Check the day's successful pushes before publishing;
+   if the count cannot be established, do not assume unused capacity. No
+   further pushes on September 30. Continue local commits/testing normally.
+   Do not evade the limit through another branch, tag or release-trigger path.
 7. **Batch verification by risk.** Run the focused regression for a fix; run
    the broader non-cached suite for high-risk shared changes or a coherent
    release batch. Use expensive full-chart runs for affected runtime, render
@@ -86,20 +93,20 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** BF-20's source-resolution fix passes 77 catalog/offline
-  tests, the normal build and independent review. BF-19's cached trace and
-  actual rendered stage were shown to the user; no skipping policy was changed.
-- **Selected next action:** check successful flick coverage against the cached
-  SEKAI engine (BF-21). The current repeated-contact integration workload uses
-  stationary positions and asserts tap/tick/release successes, not flicks.
-- **Why:** successful flick recognition is an explicit gameplay requirement.
-  The synthetic velocity regressions and historical probes are useful, but
-  the durable cached workload does not yet assert that path. This is a coverage
-  diagnostic, not a claim of a newly reproduced flick defect.
-- **Acceptance:** demonstrate a successful cached-engine flick from measured
-  touch samples in a reproducible simulator workload, or identify the concrete
-  failure. Preserve judgment windows and calibration; do not equate this with
-  physical input recognition. Add only the regression needed for that path.
+- **Completed action:** BF-21 now exercises a cached SEKAI normal flick through
+  pooled/coalesced movement and restart. Stationary control misses; moving
+  samples hit. This is simulator coverage, not phone-input certification.
+- **Selected next action:** implement the approved BF-19 static-opening-scene
+  skipping policy. The user saw the actual SEKAI stage graphic and explicitly
+  approved skipping past it on September 30. The prior awaiting-approval
+  status is superseded; the production skipping policy is not yet changed.
+- **Why:** this directly addresses the demonstrated long SEKAI opening delay.
+  Keep count-in/effect preservation, rather than adding a sprite-name exception.
+- **Acceptance:** skip unchanged initial scenery until first visible note or
+  audio, but rewind if an initial graphic changes/disappears before that
+  boundary. Preserve particles, later effects, hidden-input rewind and engine
+  sound. Verify actual cached startup behavior plus held-count-in counterexamples;
+  do not treat passing one fixed-stage synthetic fixture as real-engine evidence.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -143,9 +150,21 @@ The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
 | ID / priority | Finding and evidence | Acceptance / next action |
 | --- | --- | --- |
 | BF-18 / P2 — verified | Download recursively fetched overridden default assets, non-play engine data and thumbnails. The regression failed on unwanted requests despite successful online bundle preparation. | Selected runtime resources plus level cover now download; all four override/default families, ROM, source-relative artwork, malformed-update preservation and offline reload verified. All 61 offline/catalog tests, normal build and independent review pass. Existing manifests are pruned only through ordinary updates. |
-| BF-19 / P2 — awaiting classification policy/evidence | Cached SEKAI dynamically spawns a custom stage quad; it stays unchanged until notes appear. Stability alone cannot distinguish scenery from a held opening instruction. | User was asked whether unchanged initial graphics may be treated as scenery, with rewind if they change/disappear before the first note/audio. User requested an image; the actual cached stage was rendered and shown. No approval yet; retain current behavior, no engine-name exception or more synthetic-only purity extensions. |
+| BF-19 / P2 — policy approved, implementation pending | Cached SEKAI dynamically spawns a custom stage quad; it stays unchanged until notes appear. Stability alone cannot distinguish scenery from a held opening instruction. | After viewing the actual stage render, the user approved skipping past it. Implement the proposed guarded static-scene policy: rewind for initial graphic changes/disappearance before note/audio. Preserve input/effect boundaries; do not hard-code engine names. |
 | BF-20 / P2 — verified | Catalog artwork and relative BGM identity ignored the level source. The regression reproduced wrong cover URLs, incorrectly joined different-origin audio, and a missed absolute-URL alias. | Shared level resource-base resolution now matches runtime/offline behavior. All 77 catalog/offline tests, normal build and independent review pass. Absolute URLs, absent-source fallback, existing incremental row IDs and persisted result/download identities are preserved. |
-| BF-21 / P1 diagnostic — coverage gap, not a confirmed defect | Repeated-contact cached integration asserts successful tap/tick/release types, but never moves its contacts; it cannot prove successful flick recognition. Synthetic coalesced-velocity tests are separate evidence. | Exercise a real cached flick with timestamped movement and assert its successful judgment. No device or server request, guessed timing shift, or broader autoplay feature. |
+| BF-21 / bounded regression verified | New opt-in Eleventh normal-flick regression resolves entity 6: stationary control misses, measured upward movement succeeds at +1/60 s, and restart repeats the result. | Pooled/coalesced sample path, cached engine and unchanged windows/options; independent review clean. This closes the named cached-workload gap, not other flick variants, UIKit/physical delivery or acoustic timing. No gameplay code or calibration was changed. |
+
+BF-21 initial verification: the new cached flick test and the two coalesced
+input regressions pass in
+`RunSomeTests/3D856613-2F4A-4076-9337-503A073D475B.txt`. The test bounds
+execution to the first normal flick, rather than rerunning whole songs, and
+includes a stationary negative control and two moving attempts across restart.
+The final harness-throttling version also passes:
+`RunSomeTests/7AEF1122-7E90-4DE6-BA2D-C3945F913557.txt`.
+No music is played and no remote resources are fetched. Physical harness
+throttling follows the existing cached suite; this does not authorize device
+execution before the API gate. Tested work remains local under the new daily
+push limit.
 
 BF-20 verification: the source-resolution regression failed before the fix
 (`RunSomeTests/33C7A511-D2C8-4640-A4E4-FEEF6C0513B7.txt`). All 77

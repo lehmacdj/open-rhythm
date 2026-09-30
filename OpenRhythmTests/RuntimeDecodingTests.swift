@@ -37,6 +37,102 @@ final class CachedEngineIntegrationTests: XCTestCase {
     try await checkChart(engineFolder: "nanaon", chart: "nanaon/level.gz")
   }
 
+  func testSekaiFlickRequiresMeasuredMovementAndSurvivesRestart() async throws {
+    let cache = try XCTUnwrap(FileManager.default.urls(
+      for: .cachesDirectory, in: .userDomainMask).first)
+      .appendingPathComponent("OpenRhythmIntegrationFixtures")
+    guard FileManager.default.fileExists(atPath: cache.path) else {
+      throw XCTSkip("Optional cached chart fixtures are not installed.")
+    }
+    let root = cache.appendingPathComponent("sekai")
+    let engine = try CompressedJSONDecoder.decode(EnginePlayData.self,
+      from: Data(contentsOf: root.appendingPathComponent("engine.gz")))
+    let level = try CompressedJSONDecoder.decode(LevelData.self,
+      from: Data(contentsOf: cache.appendingPathComponent("eleventh.gz")))
+    var resources = [String: Data]()
+    for key in ["configuration", "skinData", "skinTexture", "particleData",
+      "particleTexture", "effectData", "effectAudio"] {
+      resources[key] = try Data(contentsOf: root.appendingPathComponent(key))
+    }
+    let presentation = RuntimePresentation(resources: resources)
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: presentation)
+    let audio = try EngineAudioPlayback(engine: engine, presentation: presentation)
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: assets.options, aspectRatio: 1.8,
+      skinSpriteIDs: Set(assets.skin.keys), effectClipIDs: audio.clipIDs,
+      particleEffectIDs: Set(assets.particles.keys),
+      rom: Data(contentsOf: root.appendingPathComponent("rom.bin")))
+    let index = try XCTUnwrap(level.entities.firstIndex {
+      $0.archetype == "NormalFlickNote"
+    })
+    let beat = try XCTUnwrap(level.entities[index].data.first {
+      $0.name == "#BEAT"
+    }?.value)
+    let target = try runtime.host.call(function: "BeatToTime", arguments: [beat])
+    let start = BGMClockMapping(offset: level.bgmOffset).initialChartTime
+    let contactFrame = Int(ceil((target - start) * 60))
+    XCTAssertTrue((0..<2400).contains(contactFrame), "Keep this probe bounded")
+    guard (0..<2400).contains(contactFrame) else { return }
+    var movingResults = [Double]()
+    // Same engine/chart/window and start time in each run. Only the measured
+    // gesture changes. Eight fixture lane positions cover the opening chord;
+    // this is neither an autoplay feature nor a physical input measurement.
+    for moving in [false, true, true] {
+      runtime.restart()
+      var pool = EngineTouchPool<Int>()
+      var result: EngineJudgment?
+      var burstStarted = ProcessInfo.processInfo.systemUptime
+      for frame in 0...(contactFrame + 24) {
+        let time = start + Double(frame) / 60
+        let phase = frame - contactFrame
+        if (0...11).contains(phase) {
+          for lane in 0..<8 {
+            let x = -1.05 + Double(lane) * 0.3
+            let y = -0.75 + (moving ? Double(min(phase, 4)) * 0.04 : 0)
+            var samples = [EngineTouchSample]()
+            if moving && (1...4).contains(phase) {
+              samples.append(EngineTouchSample(
+                position: EnginePoint(x: x, y: y - 0.02),
+                time: time - 1.0 / 120,
+                timestamp: 100 + Double(frame) / 60 - 1.0 / 120))
+            }
+            samples.append(EngineTouchSample(position: EnginePoint(x: x, y: y),
+              time: time, timestamp: 100 + Double(frame) / 60))
+            pool.receive(key: lane, samples: samples,
+              started: phase == 0, ended: phase == 11)
+          }
+        }
+        try runtime.update(at: time, touches: pool.touches)
+        if let judgment = runtime.judgments.first(where: { $0.entityIndex == index }) {
+          result = judgment
+          break
+        }
+        pool.nextFrame(at: time)
+        // Match the existing opt-in harness's bounded CPU bursts if this is
+        // later included in the authorized physical validation batch.
+        if ProcessInfo.processInfo.systemUptime - burstStarted >= 0.1 {
+          #if !targetEnvironment(simulator)
+          try await Task.sleep(for: .milliseconds(100))
+          #else
+          await Task.yield()
+          #endif
+          burstStarted = ProcessInfo.processInfo.systemUptime
+        }
+      }
+      let judgment = try XCTUnwrap(result, "The selected flick must resolve")
+      if moving {
+        XCTAssertGreaterThan(judgment.grade, 0, "Measured motion must hit the flick")
+        XCTAssertEqual(judgment.accuracy, 1.0 / 60, accuracy: 1e-6)
+        movingResults.append(judgment.accuracy)
+      } else {
+        XCTAssertEqual(judgment.grade, 0, "A stationary press is not a flick")
+      }
+    }
+    XCTAssertEqual(movingResults.count, 2)
+    XCTAssertEqual(movingResults.first, movingResults.last)
+  }
+
   private struct Judgment: Equatable {
     let entityIndex: Int
     let grade: Int
