@@ -1057,6 +1057,21 @@ Deferred by user direction on September 29. Retain the explicit unsupported
 preflight, but do not let this dependency block non-stack implementation or
 verification. The draft is not authorized for posting.
 
+The user's subsequent September 29 request reopens a bounded search for a
+real chart using these operations, not speculative implementation. Seven
+cached engine files reduce to three unique graphs: LLSIF (1,308 nodes),
+22/7 (1,818) and Next-SEKAI (72,110). All have zero `Stack*` nodes, so the
+cached UNSTOPPABLE, シャンプーの匂いがした, Eleventh, 光 and “shake it!” charts
+cannot exercise stack dispatch. Public code searches found only relevant
+metadata/declaration/wrapper hits, notably [sonolus.h](
+https://github.com/SonolusHaniwa/sonolus.h/blob/86151ef255158ec36bf6e527febc9d198fa1e90b/sonolus.h)
+and its copy bundled with the Sirius engine. A wrapper definition is not a
+gameplay invocation. No real consuming engine/chart has been verified; search
+coverage is bounded and does not establish nonexistence. No catalog crawl or
+reference-client execution was performed. A future candidate needs reachable
+stack calls in its engine graph and a chart that exercises those callbacks;
+even then, successful self-execution alone will not establish reference parity.
+
 The September 25 contract recheck still does not supply an interoperable stack
 layout. The [overview](
 https://wiki.sonolus.com/engine-specs/functions/stack-functions) locates the

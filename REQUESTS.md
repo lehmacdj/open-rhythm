@@ -12,6 +12,15 @@ simulator verification; the stack contract is not a blocker for that work.
 This is not a claim that the remaining non-stack requirements are complete,
 nor permission to post the draft or resume physical-device testing.
 
+September 29 stack-fixture search: the user subsequently requested a real
+chart that uses `StackInit`/`StackGet` to help resolve the contract. Seven
+cached engine files reduce to three unique engines (LLSIF, 22/7, Next-SEKAI);
+none contains a stack node. Bounded public code searches found declarations
+and wrappers, including the header bundled with Sirius, but no verified
+gameplay consumer or usable chart. This is not proof that no such chart
+exists. Details and evidence limits are in COMPATIBILITY.md. No song-server
+crawl or reference-client/device execution was used.
+
 Per the user's latest direction, postpone real-device testing until Sonolus
 API coverage is complete, then perform the outstanding physical checks in one
 large batch. Do not request phone unlocks, install or launch development builds
