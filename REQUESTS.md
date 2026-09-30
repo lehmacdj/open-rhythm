@@ -46,6 +46,51 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
    tested units under the existing authorization without treating that subset
    as completion of this audit.
 
+## Breadth-first triage — September 30, 2026
+
+This initial discovery pass inspected result persistence/history, offline
+manifest lookup and cleanup, catalog pagination/prefetch, gameplay startup and
+stopped-clock input, touch sampling, and Metal submission/completion handling.
+It is source inspection plus existing-test review, not a full UI/performance
+or physical-device validation. Findings below are recorded before fixing them.
+
+| ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
+| --- | --- | --- | --- |
+| BF-01 / P1 — fixed | `ResultStore.record` silently capped history at 500, removed older timing payloads, and thereby also dropped old-only songs from `playedSongs`. The previous audit described this limit, but the user did not request automatic deletion. | Confirmed by the 501st-play regression; automatic eviction is now removed. | Verification below closes this unit. Previously deleted data cannot be reconstructed. |
+| BF-02 / P1 diagnosis | `EngineTouch.nextFrame` advances the velocity baseline to frame time; a subsequently delivered older touch timestamp can make `moved` divide by its 1/240-second floor. This may inflate velocity after delayed delivery. | Suspected gameplay-input bias; code path is present, field prevalence and correct protocol interpretation are not established. | Reproduce delayed-event sequences and compare event/sample semantics before changing input. No arbitrary calibration or physical test is authorized. |
+| BF-03 / P1 diagnosis | Gameplay keeps interpreting touches while the BGM clock is stopped; the advancing flag gates effect audio, not runtime input. Scene inactivity stops the model, but a session interruption need not be represented solely by scene state. | Coverage gap with possible false judgments or stuck play; not yet a confirmed real interruption failure. | Synthetic stopped-player/interruption investigation, consulting Apple's interruption contract. Physical behavior remains in the deferred batch. |
+| BF-04 / P2 | One malformed offline manifest makes `manifests()` throw and prevents `catalogSongs()` from returning the otherwise valid library. Cleanup deliberately fails closed to protect unknown shared references. | Confirmed library-availability path; no current user file has been shown corrupt. | Reproduce mixed valid/corrupt manifests; design recoverable listing without deleting data or weakening cleanup safety. |
+| BF-05 / P2 diagnosis | Every difficulty's download-status lookup enumerates/decodes the manifest collection and validates resource contents again. | Large-library I/O/performance hypothesis, not a measured phone hitch. | Instrument a synthetic multi-song library, then prioritize from measured cost; retain hash verification rather than bypassing it. |
+| BF-06 / P2 diagnosis | Metal completion releases its slot and records GPU timing but does not inspect command-buffer failure status; synchronous encoding failures do trigger software fallback. | Asynchronous render-error coverage gap, not a reproduced GPU failure. | Check failure propagation with an injectable completion seam before touching the renderer's successful frame path. |
+
+BF-01 is selected over speculative timing/render changes because it has a
+deterministic irreversible data-loss path, no evidence dependency, and a small
+verification boundary. BF-02 and BF-03 are next high-impact diagnostic
+candidates, not invitations to assume either is the cause of reported timing
+bias. Catalog generation/cursor guards and per-engine preference paths yielded
+no additional confirmed defect in this bounded pass; they are not certified
+complete. Existing API/stack, intro-classification and physical-verification
+items below remain open alongside this queue. Re-triage after BF-01 rather than
+expanding history storage into an unrelated redesign.
+
+BF-01 verification: after correcting an initially incomplete test fixture, the
+new boundary regression failed with 500 retained summaries and the oldest
+timing file missing. It now passes with all 501 summaries, original timing
+payload, score/duration, replay metadata and same-ID deduplication preserved
+after reopening. Cleanup only removes superseded same-ID payload versions
+after the replacement index is atomically committed. All 35 focused
+ResultStore/Catalog tests pass (summary
+`873C6DCF-FA24-4DB0-A37A-02C9F18C63C6`), the normal build passes at 01:12,
+and independent post-fix review found no actionable issue. Gameplay and
+physical-device suites were not rerun for this persistence-only change.
+
+Re-triage: BF-02 is the next bounded diagnostic choice because it directly
+affects flick input and can be investigated with deterministic event sequences,
+without a phone or new chart files. BF-03 remains a separate high-impact
+diagnostic item; BF-04–06 remain queued. Very-large-history index cost is also
+unmeasured; measure it before redesigning storage, rather than restoring
+silent deletion as a performance shortcut.
+
 ## Current verification order — reaffirmed September 27, 2026
 
 September 29 priority update: defer the 14 stack operations and their upstream
@@ -881,9 +926,10 @@ used the old bundle ID; the current project ID was verified before retrieving
 the actual report. No claim is made about other unreported crash signatures.
 
 Historical detail means the complete payload retained for that play, not
-reconstruction of data older builds never recorded. `ResultStore` currently
-retains the most recent 500 plays; older summary-only records remain without
-per-note timing charts.
+reconstruction of data older builds never recorded. The former automatic
+500-play eviction was removed by BF-01 on September 30: new plays preserve
+existing history and timing payloads. Already evicted data cannot be recovered
+by this fix, and older summary-only records remain without per-note charts.
 
 ## Playback and engine coverage: improvements made, not fully signed off
 

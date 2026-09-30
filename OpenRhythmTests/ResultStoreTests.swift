@@ -2,6 +2,60 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testNewPlayPreservesHistoryAndDetailsBeyondFiveHundred() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ResultStore(rootURL: root)
+    var oldest = result(levelID: "oldest", perfect: 9,
+      playedAt: Date(timeIntervalSince1970: 0))
+    oldest.noteTimings = [NoteTiming(id: 0, songTime: 1, noteType: "Tap",
+      judgement: .great, accuracy: -0.03)]
+    oldest.duration = 2
+    oldest.engineScore = 970_000
+    oldest.server = ServerDescriptor.defaults[0]
+    oldest.level = try JSONDecoder().decode(SonolusLevelItem.self, from: Data(#"""
+      {"name":"oldest","version":1,"rating":7,
+       "title":"Old Song","artists":"Artist","author":"Author","tags":[],
+       "cover":{"url":"cover"},"bgm":{"url":"bgm"},
+       "data":{"url":"data"},"preview":{"url":"preview"}}
+      """#.utf8))
+    try await store.record(oldest)
+    let saved = try await store.allResults()
+    let original = try XCTUnwrap(saved.first)
+    // Seed a pre-existing 500-play index without hundreds of redundant disk
+    // transactions; the boundary-crossing write uses the production method.
+    let later = (1..<500).map {
+      result(levelID: "later-\($0)", perfect: 10,
+        playedAt: Date(timeIntervalSince1970: Double($0)))
+    }
+    try JSONEncoder().encode(later + saved)
+      .write(to: root.appendingPathComponent("Results.json"), options: [.atomic])
+    let newest = result(levelID: "newest", perfect: 10,
+      playedAt: Date(timeIntervalSince1970: 501))
+    try await store.record(newest)
+
+    let reopened = ResultStore(rootURL: root)
+    let all = try await reopened.allResults()
+    XCTAssertEqual(all.count, 501)
+    XCTAssertEqual(all.first?.id, newest.id)
+    XCTAssertEqual(all.last?.id, oldest.id)
+    let retained = try await reopened.results(for: "oldest")
+    XCTAssertEqual(retained.first?.timingID, original.timingID)
+    XCTAssertEqual(retained.first?.score, 970_000)
+    XCTAssertEqual(retained.first?.duration, 2)
+    let timings = try await reopened.noteTimings(for: original)
+    XCTAssertEqual(timings, oldest.noteTimings)
+    let songs = try await reopened.playedSongs()
+    XCTAssertEqual(songs.flatMap(\.variants).map(\.name), ["oldest"])
+    // Replacing a retained result still deduplicates only that result.
+    oldest.duration = 3
+    try await reopened.record(oldest)
+    let replaced = try await reopened.allResults()
+    XCTAssertEqual(replaced.count, 501)
+    XCTAssertEqual(replaced.filter { $0.id == oldest.id }.count, 1)
+  }
+
   func testPlaybackDiagnosticsSurviveHistoryAndAreAbsentFromLegacyPlays() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
@@ -383,11 +437,11 @@ final class ResultStoreTests: XCTestCase {
     XCTAssertEqual(values[0].duration, 12)
   }
 
-  func testTimingPayloadRetentionAndMissingDataDoNotBreakHistory() async throws {
+  func testMissingTimingPayloadDoesNotBreakOtherHistory() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let store = ResultStore(rootURL: root, maximumResults: 1)
+    let store = ResultStore(rootURL: root)
     var first = result(levelID: "first", perfect: 10)
     first.noteTimings = []
     try await store.record(first)
@@ -396,10 +450,10 @@ final class ResultStoreTests: XCTestCase {
     var second = result(levelID: "second", perfect: 10)
     second.noteTimings = []
     try await store.record(second)
-    do {
-      _ = try await store.noteTimings(for: firstSummary)
-      XCTFail("Evicted result payloads should be removed")
-    } catch { }
+    let firstTimings = try await store.noteTimings(for: firstSummary)
+    XCTAssertEqual(firstTimings, [])
+    let all = try await store.allResults()
+    XCTAssertEqual(all.count, 2)
     let history = try await store.results(for: "second")
     XCTAssertEqual(history.count, 1)
     let url = root.appendingPathComponent("ResultTimings")
@@ -486,14 +540,15 @@ final class ResultStoreTests: XCTestCase {
     XCTAssertNil(values[0].duration)
   }
 
-  private func result(levelID: String, perfect: Int) -> PlayResult {
+  private func result(levelID: String, perfect: Int,
+    playedAt: Date = Date()) -> PlayResult {
     PlayResult(
       id: UUID(),
       levelID: levelID,
       title: "Song",
       difficulty: .easy,
       rating: 1,
-      playedAt: Date(),
+      playedAt: playedAt,
       maxCombo: 10,
       perfect: perfect,
       great: 0,

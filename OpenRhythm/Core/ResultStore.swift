@@ -53,15 +53,12 @@ actor ResultStore {
 
   private let fileManager: FileManager
   private let fileURL: URL
-  private let maximumResults: Int
 
   init(
     rootURL: URL? = nil,
-    fileManager: FileManager = .default,
-    maximumResults: Int = 500
+    fileManager: FileManager = .default
   ) {
     self.fileManager = fileManager
-    self.maximumResults = max(1, maximumResults)
     if let rootURL {
       fileURL = rootURL.appendingPathComponent("Results.json")
     } else {
@@ -84,11 +81,11 @@ actor ResultStore {
       summary.hasTimingData = true
       summary.timingID = UUID()
     }
-    var removed = values.filter { $0.id == result.id }
+    let removed = values.filter { $0.id == result.id }
     values.removeAll { $0.id == result.id }
     values.insert(summary, at: 0)
-    removed.append(contentsOf: values.dropFirst(maximumResults))
-    values = Array(values.prefix(maximumResults))
+    // New plays must not evict historical results or their timing payloads.
+    // Only a replacement of the same result ID supersedes an old payload.
     let indexData = try JSONEncoder().encode(values)
     try fileManager.createDirectory(
       at: fileURL.deletingLastPathComponent(),
