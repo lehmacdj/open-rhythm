@@ -1127,13 +1127,42 @@ questions. They do not certify every legal combination of resource fields.
 | Skin atlas | Only named sprites requested by the engine are cropped. Interpolation, transforms, fractional bounds and render mode are honored. | Exact native filtering and treatment of declared atlas dimensions that differ from image dimensions. |
 | Particle atlas | Selected effects are validated, original sprite indices are preserved, and only their referenced sprites are cropped. Structural decoding and atlas validation still apply. | Native rasterization/random realization parity beyond the public Studio reference; selected numeric limits remain explicit host limits. |
 | Particle property defaults | Missing from/to coefficients use zero, and omitted easing uses linear, supported by the public Studio importer. | These defaults are not proprietary-client observation. |
-| Effect audio | Engine-requested named clips are selected from the ZIP and prepared through the native audio backend; missing names remain unavailable to HasEffectClip. | An exhaustive supported codec contract is not supplied by the public MP3 recommendation; native format support and acoustic alignment remain separate checks. |
+| Effect audio | Engine-requested named clips are selected from the ZIP and prepared through the native audio backend; missing names remain unavailable to HasEffectClip. Filenames honor ZIP UTF-8 flags, legacy CP437 and validated Unicode Path extra fields. | An exhaustive supported codec contract is not supplied by the public MP3 recommendation; native format support and acoustic alignment remain separate checks. |
 | Background | Natural aspect and unit scaling apply when overrides are absent; declared fit, color, mask and blur are consumed. | The blur kernel/radius is not specified publicly; the current size-normalized Gaussian is host policy. |
 
 A bounded independent review on September 27 found no new contract-supported
 valid-resource incompatibility in decoding, selection, options or play UI.
 This does not close the evidence limits above or convert host policies into
 native guarantees. Per-engine preference scope remains an explicit user policy.
+
+September 30 ZIP filename correction: the old effect loader treated every name
+as UTF-8. Valid legacy filenames could fail decoding, and Unicode Path metadata
+was ignored, so a requested clip could appear unavailable despite being present.
+The loader now follows [PKWARE APPNOTE Appendix D and section 4.6.9](
+https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT): bit 11 selects UTF-8,
+otherwise the header uses CP437; a recognized Unicode Path field overrides a
+legacy name only when its original-name CRC matches. Stale CRCs and unknown
+versions fall back to the header name. Extra-field parsing is bounded, invalid
+UTF-8 is rejected, and duplicate checks use the final decoded name. Filenames
+are still dictionary keys only, never filesystem extraction paths.
+
+Both new regressions failed before the fix. Coverage includes flagged/unflagged
+non-ASCII names, legacy bytes that also happen to be valid UTF-8, Unicode-field
+precedence, stale/unknown metadata, invalid/truncated fields, unrelated fields,
+conflicting overrides and duplicate decoded names. Independent review found no
+actionable issue, including the final adversarial fixture additions. All 341
+non-cached simulator tests pass, and the normal build passes at 00:16. The seven
+cached-chart probes also pass in the run completed at 00:28, covering Eleventh,
+光, 22/7, SIF and all three "shake it!" workloads. All 348 tests therefore pass
+across these two runs without skips or failures. The observer expired after
+300 seconds; the same original test process continued to its verified
+`TEST FINISHED` result, without restart. Result summaries:
+`BE14EA8F-596E-4C44-8B9D-E8892A5F51B2` (341 tests) and
+`35595312-95FC-4EAA-9D8D-252E87179A38` (seven cached tests).
+This does not expand the archive's existing stored/deflate compression support,
+64 MiB encoded/total decoded bound, 16 MiB per-entry bound or 1,024-entry limit.
+ZIP64 central-directory records and other compression methods remain unsupported;
+no claim of all ZIP variants or native audio codec parity follows from these tests.
 
 ## Stack implementation evidence needed
 

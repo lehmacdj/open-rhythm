@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreFoundation
 import CoreHaptics
 import zlib
 
@@ -230,6 +231,7 @@ struct EffectAudioArchive {
         try integer(offset + 8, 2) & 1 == 0 else {
         throw EngineInterpreterError.invalidArguments("audio archive entry")
       }
+      let flags = try integer(offset + 8, 2)
       let method = try integer(offset + 10, 2)
       let checksum = try integer(offset + 16, 4)
       let compressedSize = try integer(offset + 20, 4)
@@ -238,12 +240,18 @@ struct EffectAudioArchive {
       let extraLength = try integer(offset + 30, 2)
       let commentLength = try integer(offset + 32, 2)
       let local = try integer(offset + 42, 4)
-      guard offset + 46 + nameLength <= bytes.count,
-        let name = String(bytes: bytes[(offset + 46)..<(offset + 46 + nameLength)],
-          encoding: .utf8), files[name] == nil,
+      let nameStart = offset + 46
+      let extraStart = nameStart + nameLength
+      let extraEnd = extraStart + extraLength
+      guard extraEnd + commentLength <= bytes.count,
         try integer(local, 4) == 0x04034b50,
         size <= 16 * 1024 * 1024, totalSize + size <= 64 * 1024 * 1024 else {
         throw EngineInterpreterError.invalidArguments("audio archive file")
+      }
+      let name = try Self.filename(bytes[nameStart..<extraStart], flags: flags,
+        extra: bytes[extraStart..<extraEnd])
+      guard files[name] == nil else {
+        throw EngineInterpreterError.invalidArguments("duplicate audio filename")
       }
       let start = try local + 30 + integer(local + 26, 2) + integer(local + 28, 2)
       guard start <= bytes.count, compressedSize <= bytes.count - start else {
@@ -271,6 +279,55 @@ struct EffectAudioArchive {
       offset += 46 + nameLength + extraLength + commentLength
     }
     self.files = files
+  }
+
+  /// ZIP APPNOTE Appendix D and 4.6.9: the encoding flag and CRC-validated
+  /// Unicode Path field determine names, independently of audio content.
+  private static func filename(_ bytes: ArraySlice<UInt8>, flags: Int,
+    extra: ArraySlice<UInt8>) throws -> String {
+    let isUTF8 = flags & (1 << 11) != 0
+    let cp437 = String.Encoding(rawValue:
+      CFStringConvertEncodingToNSStringEncoding(
+        CFStringEncoding(CFStringEncodings.dosLatinUS.rawValue)))
+    guard let headerName = String(bytes: bytes,
+      encoding: isUTF8 ? .utf8 : cp437) else {
+      throw EngineInterpreterError.invalidArguments("audio filename encoding")
+    }
+    let checksum = bytes.withUnsafeBufferPointer {
+      crc32(0, $0.baseAddress, uInt($0.count))
+    }
+    var unicodeName: String?
+    var offset = extra.startIndex
+    while offset < extra.endIndex {
+      guard extra.endIndex - offset >= 4 else {
+        throw EngineInterpreterError.invalidArguments("audio ZIP extra field")
+      }
+      let tag = Int(extra[offset]) | Int(extra[offset + 1]) << 8
+      let length = Int(extra[offset + 2]) | Int(extra[offset + 3]) << 8
+      offset += 4
+      guard length <= extra.endIndex - offset else {
+        throw EngineInterpreterError.invalidArguments("audio ZIP extra bounds")
+      }
+      if tag == 0x7075, !isUTF8, length > 0, extra[offset] == 1 {
+        guard length >= 5 else {
+          throw EngineInterpreterError.invalidArguments("audio Unicode path")
+        }
+        let nameCRC = (0..<4).reduce(UInt32(0)) {
+          $0 | UInt32(extra[offset + 1 + $1]) << ($1 * 8)
+        }
+        // A stale field belongs to an older name. Unknown versions are also
+        // ignored, as required by the ZIP extension's compatibility rule.
+        if nameCRC == checksum {
+          guard let name = String(bytes: extra[(offset + 5)..<(offset + length)],
+            encoding: .utf8), unicodeName == nil || unicodeName == name else {
+            throw EngineInterpreterError.invalidArguments("audio Unicode path")
+          }
+          unicodeName = name
+        }
+      }
+      offset += length
+    }
+    return unicodeName ?? headerName
   }
 }
 

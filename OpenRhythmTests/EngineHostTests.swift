@@ -2,6 +2,7 @@ import XCTest
 import UIKit
 import Metal
 import AVFoundation
+import zlib
 @testable import OpenRhythm
 
 final class EngineHostTests: XCTestCase {
@@ -5189,6 +5190,132 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(runtime.resolvedInputCount, 1)
     XCTAssertEqual(runtime.memory.value(block: 4103, index: 5), 2)
     XCTAssertEqual(runtime.memory.value(block: 4103, index: 8), 2)
+  }
+
+  func testEffectArchiveHonorsZIPFilenameEncodings() throws {
+    let legacy = Data([0x63, 0x61, 0x66, 0x82, 0x2e, 0x77, 0x61, 0x76])
+    let unicode = Data("音.wav".utf8)
+    let payload = Data("hello".utf8)
+    let cp437 = try EffectAudioArchive(data: namedEffectArchive([
+      (legacy, 0, Data())]))
+    XCTAssertEqual(cp437.files["café.wav"], payload)
+    let ambiguous = try EffectAudioArchive(data: namedEffectArchive([
+      (Data([0xc3, 0xa9]), 0, Data())]))
+    XCTAssertEqual(ambiguous.files["├⌐"], payload,
+      "Do not guess UTF-8 merely because legacy bytes are valid UTF-8")
+    let utf8 = try EffectAudioArchive(data: namedEffectArchive([
+      (unicode, 1 << 11, Data())]))
+    XCTAssertEqual(utf8.files["音.wav"], payload)
+    XCTAssertThrowsError(try EffectAudioArchive(data: namedEffectArchive([
+      (legacy, 1 << 11, Data())])), "Flagged UTF-8 must be valid")
+    XCTAssertThrowsError(try EffectAudioArchive(data: namedEffectArchive([
+      (legacy, 0, Data()), (Data("café.wav".utf8), 1 << 11, Data())])),
+      "Different byte encodings must not bypass duplicate-name rejection")
+  }
+
+  func testEffectArchiveHonorsValidatedUnicodePathExtraFields() throws {
+    let name = Data("tone.wav".utf8)
+    let unicode = Data("音.wav".utf8)
+    let checksum = name.withUnsafeBytes {
+      crc32(0, $0.bindMemory(to: Bytef.self).baseAddress, uInt($0.count))
+    }
+    // Unicode Path tag 0x7075, size, version, CRC of the original filename.
+    let extra = Data([0x75, 0x70, UInt8(5 + unicode.count), 0, 1]
+      + (0..<4).map { UInt8(truncatingIfNeeded: checksum >> ($0 * 8)) })
+      + unicode
+    let archive = try EffectAudioArchive(data: namedEffectArchive([(name, 0, extra)]))
+    XCTAssertEqual(archive.files["音.wav"], Data("hello".utf8))
+    XCTAssertNil(archive.files["tone.wav"])
+    let unknown = Data([0xfe, 0xca, 1, 0, 0xa5])
+    XCTAssertEqual(try EffectAudioArchive(data: namedEffectArchive([
+      (name, 0, unknown + extra + extra)])).files["音.wav"], Data("hello".utf8))
+    XCTAssertEqual(try EffectAudioArchive(data: namedEffectArchive([
+      (name, 1 << 11, extra)])).files["tone.wav"], Data("hello".utf8),
+      "The UTF-8 header flag takes precedence over redundant extra names")
+    for index in [4, 5] { // Unknown version or stale filename CRC: use header.
+      var ignored = extra
+      ignored[index] ^= 0xff
+      let fallback = try EffectAudioArchive(data:
+        namedEffectArchive([(name, 0, ignored)]))
+      XCTAssertEqual(fallback.files["tone.wav"], Data("hello".utf8))
+    }
+    var malformed = extra
+    malformed[2] = 255
+    XCTAssertThrowsError(try EffectAudioArchive(data:
+      namedEffectArchive([(name, 0, malformed)])))
+    for length in 1...3 {
+      XCTAssertThrowsError(try EffectAudioArchive(data:
+        namedEffectArchive([(name, 0, Data(extra.prefix(length)))])))
+    }
+    var invalidUnicode = extra
+    invalidUnicode[9] = 0xff
+    XCTAssertThrowsError(try EffectAudioArchive(data:
+      namedEffectArchive([(name, 0, invalidUnicode)])))
+    invalidUnicode[5] ^= 0xff
+    XCTAssertEqual(try EffectAudioArchive(data: namedEffectArchive([
+      (name, 0, invalidUnicode)])).files["tone.wav"], Data("hello".utf8),
+      "Stale CRC means ignore the Unicode bytes without decoding them")
+    var conflicting = extra
+    conflicting[conflicting.count - 1] = UInt8(ascii: "x")
+    XCTAssertThrowsError(try EffectAudioArchive(data:
+      namedEffectArchive([(name, 0, extra + conflicting)])))
+    XCTAssertThrowsError(try EffectAudioArchive(data: namedEffectArchive([
+      (name, 0, extra), (unicode, 1 << 11, Data())])),
+      "Unicode overrides also participate in duplicate-name checks")
+  }
+
+  /// A stored ZIP with independent local/central records and raw name bytes.
+  private func namedEffectArchive(_ entries: [(Data, Int, Data)]) -> Data {
+    var result = Data()
+    var directory = Data()
+    func append(_ value: Int, bytes: Int, to data: inout Data) {
+      data.append(contentsOf: (0..<bytes).map {
+        UInt8(truncatingIfNeeded: value >> ($0 * 8))
+      })
+    }
+    let payload = Data("hello".utf8)
+    let checksum = payload.withUnsafeBytes {
+      crc32(0, $0.bindMemory(to: Bytef.self).baseAddress, uInt($0.count))
+    }
+    for (name, flags, extra) in entries {
+      let local = result.count
+      append(0x04034b50, bytes: 4, to: &result)
+      for value in [20, flags, 0, 0, 0] {
+        append(value, bytes: 2, to: &result)
+      }
+      for value in [Int(checksum), payload.count, payload.count] {
+        append(value, bytes: 4, to: &result)
+      }
+      append(name.count, bytes: 2, to: &result)
+      append(extra.count, bytes: 2, to: &result)
+      result.append(name)
+      result.append(extra)
+      result.append(payload)
+      append(0x02014b50, bytes: 4, to: &directory)
+      for value in [20, 20, flags, 0, 0, 0] {
+        append(value, bytes: 2, to: &directory)
+      }
+      for value in [Int(checksum), payload.count, payload.count] {
+        append(value, bytes: 4, to: &directory)
+      }
+      for value in [name.count, extra.count, 0, 0, 0] {
+        append(value, bytes: 2, to: &directory)
+      }
+      append(0, bytes: 4, to: &directory)
+      append(local, bytes: 4, to: &directory)
+      directory.append(name)
+      directory.append(extra)
+    }
+    let directoryStart = result.count
+    result.append(directory)
+    append(0x06054b50, bytes: 4, to: &result)
+    for value in [0, 0, entries.count, entries.count] {
+      append(value, bytes: 2, to: &result)
+    }
+    append(directory.count, bytes: 4, to: &result)
+    append(directoryStart, bytes: 4, to: &result)
+    append(0, bytes: 2, to: &result)
+    return result
   }
 
   func testArchiveValidatesBoundsChecksumAndCompressionLimits() throws {

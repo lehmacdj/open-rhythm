@@ -1075,6 +1075,15 @@ model level, checking that future judgments and spawned entities do not leak.
    decoding/localization/results tests and the normal build now pass.
    Independent review verified the pinned text/license data, bundle registration
    and call sites, with no actionable findings.
+   The same resource audit found effect ZIP filenames were incorrectly assumed
+   to be UTF-8. They now honor legacy CP437 and CRC-validated Unicode Path
+   metadata, with bounded parsing and duplicate decoded-name checks. Both
+   regressions failed before the fix; independent review found no actionable
+   issue. All 348 simulator tests pass across the 341-test non-cached run and
+   seven cached-chart probes completed at 00:28; the normal build passes.
+   The cached run continued after its observer timed out and was not restarted.
+   Stored/deflate and existing archive size limits remain;
+   ZIP64 central directories and other compression methods are not implemented.
    Dedicated note-speed/score preferences work inside those categories, and
    legacy controls now resolve/reset generic saved overrides consistently.
    Skin mode selection is now
