@@ -1480,7 +1480,7 @@ because an older paragraph says “more conformance.”
 | Allocation exposure (BF-11) | Earlier atlas decode/base crops lie outside later tint/upload budgets; no observed failure established. | Bounded allocation/cost diagnostic before changing limits. Do not induce OOM or claim process RSS is bounded by nominal texture payload. |
 | Scheduled audio and calibration | Native scheduled-stop kernel, offset mapping and calibration controls have simulator regressions. Independent audio-offset sign/unit convention remains underdocumented. | Seek independent sign/unit evidence without inferring correction from user bias. Acoustic accuracy, stopped-clock transition precision and calibration usability require the deferred device batch. |
 | RuntimeUpdate skip metadata | No runtime clock jump is performed: intro search executes successive updates and leaves skip zero. | A future actual seek/resimulation path needs independently established skip semantics. Current conservative intro behavior is tracked separately, not repaired by guessing a skip value. |
-| Intro silence trimming (BF-19) | Cached SEKAI's custom, dynamically spawned stage stays unchanged until notes appear. The visual guard stops at that unclassified initial graphic. | After viewing the actual stage, the user approved skipping past it. Guarded static-scene implementation is pending: retain initial changes/disappearance, notes, effects and sound. Stability alone is not a protocol-level stage classification; this is the approved client policy. |
+| Intro silence trimming (BF-19) | Approved static-scene policy implemented; cached SEKAI GameplayModel startup advances past the unchanged stage to visible input-owned notes and repeats after restart. | Initial changes/disappearance rewind; input-owned graphics, particles and later additions stop. This is client policy, not semantic recognition of arbitrary images drawn by non-input managers. Physical verification remains deferred. |
 | Pagination | Cache invalidation, cursor recovery, stable append and bounded prefetch have regressions. | Concurrent remote numbered-page changes cannot be made atomic without a server snapshot contract. That limitation is not an unimplemented client cache rule; physical scroll smoothness remains in the device batch. |
 | Physical gameplay | Synthetic/cached checks do not certify interactive phone behavior. | After the API gate: close/coincident multitouch, successful flick/hold variants, hit effects, audible/display alignment, frame-time tails, repeated starts and interruptions, including the requested problematic charts. |
 | Non-play modes | Tutorial/watch/preview and online score submission are outside the requested app scope. | Do not use their absence to keep play-mode completion indefinitely open or claim they are implemented. |
@@ -1613,12 +1613,18 @@ enumeration or new device measurement.
   responses. A changing server's numbered pages are not an atomic snapshot:
   deduplication avoids duplicate rows, but only a server snapshot/cursor contract
   can guarantee no omissions during concurrent remote insertions/removals.
-- Conservative visual provenance can preserve more intro silence than
-  necessary, especially custom/dynamic stage producers. Input activation alone
-  no longer stops simulation; an unseen resolved input restores the start.
-  Optimal first-visible-pixel skipping across arbitrary engines and physical
-  presentation verification remain open. Unknown silence is not inferred from
-  bgmOffset.
+- September 30 approved intro policy supersedes the earlier static-proof-only
+  initial-stage rule. Initial non-input scenery may remain unchanged while
+  skipping; additions are accepted only during the first deferred Spawn cycle.
+  Initial changes/disappearance rewind. Draw provenance protects visible
+  input-owned sprites through ordinary and curved paths; particles and later
+  additions stop simulation. Input activation alone does not stop it, while
+  an unseen resolved input restores the start. All 381 non-cached tests and
+  the cached three-chart GameplayModel startup/restart check pass, with normal
+  build and clean independent review; exact artifacts are in REQUESTS.md.
+  This does not establish semantic note recognition for non-input managers or
+  physical presentation/alignment. Unknown silence is not inferred from
+  bgmOffset; the cached startup regression uses generated known-onset audio.
 - Physical device multitouch, rendering/audio latency, performance tails,
   successful flick/hold variants, interruptions, and repeated play. Simulator
   clocks and no-touch lifecycle completion cannot establish those properties.

@@ -1039,6 +1039,7 @@ struct EngineRenderSprite {
   var textureRegion: EngineTextureRegion = .full
   var renderMode: EngineSkinRenderMode = .standard
   var isStaticIntroDecoration = false
+  var isInputVisual = false
 }
 
 /// Compare visible presentation, not entity activation or offscreen commands.
@@ -1052,6 +1053,7 @@ struct EngineIntroVisualFrame: Equatable {
     let region: EngineTextureRegion
     let interpolation: Bool
     let isStaticDecoration: Bool
+    let isInputVisual: Bool
   }
   let sprites: [Sprite]
   let background: [Double]
@@ -1076,7 +1078,8 @@ struct EngineIntroVisualFrame: Equatable {
       return Sprite(image: ObjectIdentifier(sprite.image), points: points,
         alpha: sprite.alpha, region: sprite.textureRegion,
         interpolation: sprite.interpolation,
-        isStaticDecoration: sprite.isStaticIntroDecoration)
+        isStaticDecoration: sprite.isStaticIntroDecoration,
+        isInputVisual: sprite.isInputVisual)
     }
     self.background = background
     self.ui = ui
@@ -1088,6 +1091,7 @@ struct EngineIntroVisualFrame: Equatable {
 struct EngineIntroVisualGuard {
   enum Decision { case advance, stop, rewind }
   private var initial: EngineIntroVisualFrame?
+  private var mayCaptureDeferredOpening = true
 
   mutating func observe(_ frame: EngineIntroVisualFrame,
     hasParticles: Bool) -> Decision {
@@ -1095,11 +1099,13 @@ struct EngineIntroVisualGuard {
     // even when their first frame is transparent or outside the viewport.
     guard let initial else {
       self.initial = frame
-      if hasParticles || frame.sprites.contains(where: { !$0.isStaticDecoration }) {
+      if hasParticles || frame.sprites.contains(where: \.isInputVisual) {
         return .stop
       }
       return .advance
     }
+    let captureOpening = mayCaptureDeferredOpening
+    mayCaptureDeferredOpening = false
     guard frame != initial else { return hasParticles ? .stop : .advance }
     // A newly appearing graphic starts here. If an initial graphic changes or
     // disappears, retain its held first state too (e.g. the "3" of a count-in),
@@ -1114,6 +1120,16 @@ struct EngineIntroVisualGuard {
         return .rewind
       }
       next = index + 1
+    }
+    // Initialization may Spawn the stage for the next update. The approved
+    // policy permits unchanged initial scenery, including custom sprites.
+    // Capture additions only in that first deferred cycle, never a later
+    // effect. Existing opening layers must survive unchanged (checked above).
+    // Visible input-owned graphics and particles are never scenery.
+    if captureOpening && !hasParticles
+      && !frame.sprites.contains(where: \.isInputVisual) {
+      self.initial = frame
+      return .advance
     }
     return .stop
   }
@@ -1177,14 +1193,16 @@ enum EngineRenderer {
             interpolation: assets.interpolation,
             textureRegion: sprite.textureRegion.subregion(patch.region),
             renderMode: assets.skinRenderMode,
-            isStaticIntroDecoration: command.isStaticIntroDecoration))
+            isStaticIntroDecoration: command.isStaticIntroDecoration,
+            isInputVisual: command.isInputVisual))
         }
       } else {
         result.append(EngineRenderSprite(image: sprite.image, points: points,
           matrix: command.transform, alpha: command.alpha,
           interpolation: assets.interpolation, textureRegion: sprite.textureRegion,
           renderMode: assets.skinRenderMode,
-          isStaticIntroDecoration: command.isStaticIntroDecoration))
+          isStaticIntroDecoration: command.isStaticIntroDecoration,
+          isInputVisual: command.isInputVisual))
       }
     }
     // The particle transform is frame-wide. Reading its sixteen values for

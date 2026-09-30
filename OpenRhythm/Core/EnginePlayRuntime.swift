@@ -638,7 +638,8 @@ final class EnginePlayRuntime {
       exportCount: engine.archetypes[entity.archetype].exports.count,
       staticIntroDrawing: parallelDrawing && entity.index != nil
         && staticIntroArchetypes.contains(entity.archetype)
-        && memory.value(block: 4004, index: 0) == 0
+        && memory.value(block: 4004, index: 0) == 0,
+      inputDrawing: engine.archetypes[entity.archetype].hasInput
     )
   }
 

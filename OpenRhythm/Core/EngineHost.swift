@@ -48,6 +48,7 @@ struct EngineDrawCommand: Equatable, Sendable {
   let transform: [Double]
   var curve: EngineCurve? = nil
   var isStaticIntroDecoration = false
+  var isInputVisual = false
 }
 
 struct EngineAudioCommand: Equatable, Sendable {
@@ -140,6 +141,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private var nextParticleID = 1
   private var entityIndex: Int?
   private var staticIntroDrawing = false
+  private var inputDrawing = false
   private var exportCount = 0
   private let commandLimit = 16_384
   private var drawSegmentCount = 0
@@ -159,7 +161,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     { [time, draws, particles, exports, audio, loopAudio, loopStops,
       nextLoopID, spawns, scheduledLife, scheduledLifeIndex, lifeScheduleSorted,
       streams, streamEntryCount,
-      nextParticleID, entityIndex, staticIntroDrawing, exportCount,
+      nextParticleID, entityIndex, staticIntroDrawing, inputDrawing, exportCount,
       drawSegmentCount, debugLog, debugLogSequence, debugPauseRequested] in
       self.time = time
       self.draws = draws
@@ -178,6 +180,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       self.nextParticleID = nextParticleID
       self.entityIndex = entityIndex
       self.staticIntroDrawing = staticIntroDrawing
+      self.inputDrawing = inputDrawing
       self.exportCount = exportCount
       self.drawSegmentCount = drawSegmentCount
       self.debugLog = debugLog
@@ -227,9 +230,10 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   }
 
   func selectEntity(index: Int?, exportCount: Int,
-    staticIntroDrawing: Bool = false) {
+    staticIntroDrawing: Bool = false, inputDrawing: Bool = false) {
     entityIndex = index
     self.staticIntroDrawing = staticIntroDrawing
+    self.inputDrawing = inputDrawing
     self.exportCount = exportCount
   }
 
@@ -383,7 +387,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
           + Array(repeating: 0, count: required + 3 - a.count),
         alpha: min(1, max(0, a[10])), transform: transform(block: 1003),
         curve: curve, isStaticIntroDecoration: staticIntroDrawing
-          && introStageSpriteIDs.contains(id)
+          && introStageSpriteIDs.contains(id), isInputVisual: inputDrawing
       ))
       return 0
     case "Play", "PlayScheduled":

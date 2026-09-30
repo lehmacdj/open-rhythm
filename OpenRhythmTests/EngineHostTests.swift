@@ -1399,8 +1399,16 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
-  func testGameplayIntroPreservesHeldInitialStageNamedEffect() async throws {
+  func testGameplayIntroSkipsUnchangedInitialScenery() async throws {
     try await checkGameplayIntro(appearanceTime: 0, spriteName: "#LANE")
+  }
+
+  @MainActor
+  func testGameplayIntroPreservesInitiallyVisibleInputAndChangingOpening() async throws {
+    try await checkGameplayIntro(appearanceTime: 0, spriteName: "InitialNote",
+      earlyInput: true)
+    try await checkGameplayIntro(appearanceTime: 0, spriteName: "CountIn",
+      stageMovesAt: 0.5)
   }
 
   @MainActor
@@ -1726,7 +1734,8 @@ final class EngineHostTests: XCTestCase {
     XCTAssertFalse(model.isStartingPlayback)
     XCTAssertEqual(model.skippedIntroDuration,
       rewind || resolveAt != nil || lifeChangeAt != nil || stageMovesAt != nil
-        ? 0 : min(appearanceTime, 1.95),
+        ? 0 : appearanceTime == 0 && !earlyInput ? 1.95
+          : min(appearanceTime, 1.95),
       accuracy: 1.0 / 60 + 1e-9,
       "Stop at visible content or 50 ms before the 2s audio onset")
     XCTAssertEqual(model.engineRuntime?.host.draws.count, preparedStage ? 2 : 1)
@@ -1744,7 +1753,8 @@ final class EngineHostTests: XCTestCase {
       XCTAssertTrue(runtime.judgments.isEmpty)
       XCTAssertEqual(model.judgements.values.reduce(0, +), 0)
       XCTAssertGreaterThanOrEqual(model.startupSteps,
-        resolveAt == nil && lifeChangeAt == nil && stageMovesAt == nil ? 31 : 16,
+        appearanceTime == 0 ? 1
+          : resolveAt == nil && lifeChangeAt == nil && stageMovesAt == nil ? 31 : 16,
         "Activation must not itself terminate intro simulation")
       if let resolveAt {
         try runtime.update(at: resolveAt)
@@ -2382,14 +2392,14 @@ final class EngineHostTests: XCTestCase {
       .image { UIColor.white.setFill(); $0.fill(CGRect(x: 0, y: 0, width: 2, height: 2)) }
     let identity: [Double] = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]
     func sprite(x: Double = 0, alpha: Double = 1,
-      isStatic: Bool = true) -> EngineRenderSprite {
+      isStatic: Bool = true, isInput: Bool = false) -> EngineRenderSprite {
       EngineRenderSprite(image: image,
         points: [EnginePoint(x: x - 0.5, y: -0.5),
           EnginePoint(x: x - 0.5, y: 0.5),
           EnginePoint(x: x + 0.5, y: 0.5),
           EnginePoint(x: x + 0.5, y: -0.5)],
         matrix: identity, alpha: alpha, interpolation: false,
-        isStaticIntroDecoration: isStatic)
+        isStaticIntroDecoration: isStatic, isInputVisual: isInput)
     }
     func frame(_ sprites: [EngineRenderSprite]) -> EngineIntroVisualFrame {
       EngineIntroVisualFrame(sprites: sprites, aspect: 2)
@@ -2420,8 +2430,25 @@ final class EngineHostTests: XCTestCase {
       "An already-running particle effect retains its entire lifetime")
     var held = EngineIntroVisualGuard()
     XCTAssertEqual(held.observe(frame([sprite(isStatic: false)]),
-      hasParticles: false), .stop,
-      "An unchanged initial READY screen is not disposable stage decoration")
+      hasParticles: false), .advance,
+      "Approved policy treats unchanged initial non-input graphics as scenery")
+    XCTAssertEqual(held.observe(frame([sprite(alpha: 0.5, isStatic: false)]),
+      hasParticles: false), .rewind, "A held count-in still retains its beginning")
+    var input = EngineIntroVisualGuard()
+    XCTAssertEqual(input.observe(frame([sprite(isStatic: false, isInput: true)]),
+      hasParticles: false), .stop, "An initial visible note is not scenery")
+    var deferred = EngineIntroVisualGuard()
+    XCTAssertEqual(deferred.observe(frame([]), hasParticles: false), .advance)
+    let customStage = frame([sprite(isStatic: false)])
+    XCTAssertEqual(deferred.observe(customStage, hasParticles: false), .advance)
+    XCTAssertEqual(deferred.observe(customStage, hasParticles: false), .advance)
+    XCTAssertEqual(deferred.observe(frame([sprite(isStatic: false),
+      sprite(x: 1, isStatic: false)]), hasParticles: false), .stop,
+      "Only the first deferred cycle may add initial scenery, not later effects")
+    var deferredInput = EngineIntroVisualGuard()
+    _ = deferredInput.observe(frame([]), hasParticles: false)
+    XCTAssertEqual(deferredInput.observe(frame([sprite(isInput: true)]),
+      hasParticles: false), .stop)
     var simultaneous = EngineIntroVisualGuard()
     _ = simultaneous.observe(stage, hasParticles: false)
     XCTAssertEqual(simultaneous.observe(frame([sprite(alpha: 0.5)]),

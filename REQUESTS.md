@@ -93,20 +93,22 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** BF-21 now exercises a cached SEKAI normal flick through
-  pooled/coalesced movement and restart. Stationary control misses; moving
-  samples hit. This is simulator coverage, not phone-input certification.
-- **Selected next action:** implement the approved BF-19 static-opening-scene
-  skipping policy. The user saw the actual SEKAI stage graphic and explicitly
-  approved skipping past it on September 30. The prior awaiting-approval
-  status is superseded; the production skipping policy is not yet changed.
-- **Why:** this directly addresses the demonstrated long SEKAI opening delay.
-  Keep count-in/effect preservation, rather than adding a sprite-name exception.
-- **Acceptance:** skip unchanged initial scenery until first visible note or
-  audio, but rewind if an initial graphic changes/disappears before that
-  boundary. Preserve particles, later effects, hidden-input rewind and engine
-  sound. Verify actual cached startup behavior plus held-count-in counterexamples;
-  do not treat passing one fixed-stage synthetic fixture as real-engine evidence.
+- **Completed action:** approved BF-19 policy implemented. Actual GameplayModel
+  startup skips 7.72 / 7.02 / 8.40 seconds on cached Eleventh / 光 / shake it!
+  with controlled generated audio, stopping at visible input-owned notes and
+  repeating after restart. All 381 non-cached tests, the cached startup check,
+  normal build and independent review pass. Work remains local, not pushed.
+- **Selected next action:** reconcile existing runtime/render preparation/frame
+  profiles with the remaining performance reports, then select one measured
+  cost or missing measurement for a bounded diagnostic. Inspect the existing
+  cached-run artifacts before rerunning workloads; cover interpreter, input,
+  sprites/particles, upload/draw and preparation rather than only curved holds.
+- **Why:** broad gameplay performance remains an explicit user priority. Stage
+  recognition should not turn into another open-ended proof-polishing task.
+- **Acceptance:** identify the measured cost, workload/build and evidence limit,
+  or record a negative finding with a specific deferred measurement. Do not
+  infer phone frame pacing from a simulator or from a harness that also runs
+  the reference interpreter. Do not invent tighter memory limits for BF-11.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -150,7 +152,7 @@ The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
 | ID / priority | Finding and evidence | Acceptance / next action |
 | --- | --- | --- |
 | BF-18 / P2 — verified | Download recursively fetched overridden default assets, non-play engine data and thumbnails. The regression failed on unwanted requests despite successful online bundle preparation. | Selected runtime resources plus level cover now download; all four override/default families, ROM, source-relative artwork, malformed-update preservation and offline reload verified. All 61 offline/catalog tests, normal build and independent review pass. Existing manifests are pruned only through ordinary updates. |
-| BF-19 / P2 — policy approved, implementation pending | Cached SEKAI dynamically spawns a custom stage quad; it stays unchanged until notes appear. Stability alone cannot distinguish scenery from a held opening instruction. | After viewing the actual stage render, the user approved skipping past it. Implement the proposed guarded static-scene policy: rewind for initial graphic changes/disappearance before note/audio. Preserve input/effect boundaries; do not hard-code engine names. |
+| BF-19 / P2 — approved policy implemented and verified | Initial non-input scenery, including first-cycle deferred stage spawns, may remain onscreen while silence advances. Initial changes/disappearance rewind; visible input-owned graphics, particles and later additions stop advancing. | Cached GameplayModel startup passes Eleventh, 光 and shake it! twice each; all 381 non-cached tests, normal build and independent review pass. No engine-name exception or timing shift. Physical behavior and semantic note imagery drawn by non-input managers remain outside this bounded evidence. |
 | BF-20 / P2 — verified | Catalog artwork and relative BGM identity ignored the level source. The regression reproduced wrong cover URLs, incorrectly joined different-origin audio, and a missed absolute-URL alias. | Shared level resource-base resolution now matches runtime/offline behavior. All 77 catalog/offline tests, normal build and independent review pass. Absolute URLs, absent-source fallback, existing incremental row IDs and persisted result/download identities are preserved. |
 | BF-21 / bounded regression verified | New opt-in Eleventh normal-flick regression resolves entity 6: stationary control misses, measured upward movement succeeds at +1/60 s, and restart repeats the result. | Pooled/coalesced sample path, cached engine and unchanged windows/options; independent review clean. This closes the named cached-workload gap, not other flick variants, UIKit/physical delivery or acoustic timing. No gameplay code or calibration was changed. |
 
@@ -182,6 +184,32 @@ physical latency measurement. Independent review agreed that custom names and
 stability do not establish whether a held graphic's duration is dispensable.
 The rendered graphic shown to the user is the lane playfield and purple
 judgment line, on a black backdrop without the HUD.
+
+BF-19 implementation: the user approved skipping past that unchanged stage.
+Input ownership now follows each draw through ordinary/curved rendering and
+host restart snapshots. The visual guard may capture non-input scenery during
+the initial update and its first deferred Spawn cycle, but never a later
+appearance. It compares the retained opening layers before permitting any
+addition; moving/fading/disappearing initial graphics and changed HUD/background/
+life rewind rather than discard a held count-in. Particle, debug, engine-audio
+and hidden-input safeguards remain in force. This is an approved client policy,
+not a protocol claim that every unknown opening graphic is stage decoration.
+
+The cached regression drives GameplayModel with real cached engines/charts
+and generated audio with known silence through chart zero. It stops at the
+first visible input-owned notes after 7.7167 / 7.0167 / 8.4 seconds for
+Eleventh / 光 / shake it!, repeating after restart with zero resolved inputs.
+Generated audio isolates the startup policy; this does not establish actual
+song audio onset or acoustic alignment. Independent review corrected fixture
+preference isolation (a unique base URL, not just a unique server ID); final
+review is clean. Results: all 381 non-cached tests
+`RunSomeTests/6F31F313-9197-4312-8891-E0C7DC1FB065.txt`, final cached startup
+`RunSomeTests/9C62C561-B7C2-4767-8293-DB06615423E6.txt`, normal build
+`BuildProject/BuildProject-Log-20260930-165807.txt`.
+The earlier policy requiring static-expression proof for every initial sprite
+is superseded. Note ownership identifies the drawing archetype's hasInput flag;
+it is not general semantic recognition of images drawn by non-input managers.
+Do not claim universal optimal first-note classification from these fixtures.
 
 Tenth bounded discovery pass: inspected playback/input clock consumption,
 callback scheduling, audio reservation handling, result payload transactions,
@@ -2144,15 +2172,14 @@ model level, checking that future judgments and spawned entities do not leak.
    honored, but exact native rendering parity is not claimed. Unsupported
    functions are surfaced before music rather than assumed harmless. See the
    separate contract checklist; sampled engines do not prove arbitrary support.
-3. Intro skipping now preserves visible non-input effects and held opening
-   graphics, with synthetic gameplay-model and renderer regressions. Unknown
-   initial graphics stop skipping immediately; only proven persistent stage
-   draws with fixed expressions are exempt. Consequently custom/dynamic producers
-   can retain more silence than necessary. First-input activation no longer
-   ends skipping; unseen input resolution instead restores the original start.
-   Broader safe stage classification and
-   physical visual verification remain open, not an unresolved product choice.
-   Unknown silence is never inferred from bgmOffset.
+3. Physical intro verification remains part of the deferred batch. The approved
+   unchanged-initial-scene policy is implemented and passes cached SEKAI startup
+   plus synthetic count-in/effect/input checks (BF-19). The previous requirement
+   to stop on every unproven initial sprite is superseded. Input activation alone
+   does not end skipping; unseen input resolution restores the original start.
+   A non-input manager can draw semantic note imagery without input ownership;
+   that classification is not guaranteed by the cached evidence. Unknown audio
+   silence is never inferred from bgmOffset.
 4. Full-chart no-touch runtime integration now passes on the physical device
    for four cached charts. Interactive playback, audio and display integration
    beyond those probes still need verification in the deferred device batch.

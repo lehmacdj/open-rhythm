@@ -2,6 +2,7 @@ import XCTest
 import UIKit
 import Metal
 import SwiftUI
+import AVFoundation
 @testable import OpenRhythm
 
 /// Opt-in integration tests: independently obtained assets stay in the app's
@@ -35,6 +36,79 @@ final class CachedEngineIntegrationTests: XCTestCase {
 
   func testNanaonLifecycleAndRestart() async throws {
     try await checkChart(engineFolder: "nanaon", chart: "nanaon/level.gz")
+  }
+
+  func testSekaiStartupSkipsUnchangedStageUntilFirstVisibleNotes() async throws {
+    let cache = try XCTUnwrap(FileManager.default.urls(
+      for: .cachesDirectory, in: .userDomainMask).first)
+      .appendingPathComponent("OpenRhythmIntegrationFixtures")
+    guard FileManager.default.fileExists(atPath: cache.path) else {
+      throw XCTSkip("Optional cached chart fixtures are not installed.")
+    }
+    let root = cache.appendingPathComponent("sekai")
+    let engine = try CompressedJSONDecoder.decode(EnginePlayData.self,
+      from: Data(contentsOf: root.appendingPathComponent("engine.gz")))
+    var resources = [String: Data]()
+    for key in ["configuration", "skinData", "skinTexture", "particleData",
+      "particleTexture", "effectData", "effectAudio"] {
+      resources[key] = try Data(contentsOf: root.appendingPathComponent(key))
+    }
+    let rom = try Data(contentsOf: root.appendingPathComponent("rom.bin"))
+    // Cached charts/engine, but generated audio: a known silent lead-in ends
+    // at chart zero. This isolates the actual GameplayModel startup path from
+    // codec/acoustic timing and requires no downloaded BGM or server request.
+    for (chart, expectedSkip) in [("eleventh.gz", 7.716666667),
+      ("hikari.gz", 7.016666667), ("shake-it.gz", 8.4)] {
+      let level = try CompressedJSONDecoder.decode(LevelData.self,
+        from: Data(contentsOf: cache.appendingPathComponent(chart)))
+      let music = FileManager.default.temporaryDirectory
+        .appendingPathComponent("cached-startup-\(UUID()).caf")
+      defer { try? FileManager.default.removeItem(at: music) }
+      let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000,
+        channels: 1))
+      let onset = Int(ceil(level.bgmOffset * 8000))
+      XCTAssertTrue((1...240000).contains(onset))
+      guard (1...240000).contains(onset) else { return }
+      let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+        frameCapacity: AVAudioFrameCount(onset + 8000)))
+      buffer.frameLength = buffer.frameCapacity
+      for frame in 0..<Int(buffer.frameLength) {
+        buffer.floatChannelData![0][frame] = frame < onset ? 0 : 0.1
+      }
+      do {
+        let file = try AVAudioFile(forWriting: music, settings: format.settings)
+        try file.write(from: buffer)
+      }
+      let empty = ResourceLocator(hash: nil, url: nil)
+      let item = SonolusLevelItem(name: chart, source: nil, version: 1, rating: 1,
+        title: LocalizedText(chart), artists: LocalizedText("Fixture"),
+        author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+      let model = GameplayModel()
+      model.prepare(bundle: RuntimeBundle(engine: engine, level: level,
+        bgmURL: music, isOffline: true,
+        presentation: RuntimePresentation(resources: resources), engineROM: rom),
+        level: item, server: ServerDescriptor(id: UUID().uuidString,
+          name: "Cached startup", baseURL: URL(string: "https://fixture.example")!
+            .appendingPathComponent(UUID().uuidString)),
+        title: chart)
+      defer { model.stop() }
+      for _ in 0..<2 {
+        model.start()
+        for _ in 0..<3000 {
+          model.engineFrame(size: CGSize(width: 1800, height: 1000), touches: [])
+          if !model.isStartingPlayback { break }
+          try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertFalse(model.isStartingPlayback, chart)
+        XCTAssertEqual(model.skippedIntroDuration, expectedSkip,
+          accuracy: 1.0 / 60 + 1e-6, chart)
+        let runtime = try XCTUnwrap(model.engineRuntime)
+        XCTAssertEqual(runtime.resolvedInputCount, 0, "No input may be skipped")
+        XCTAssertTrue(runtime.host.draws.contains(where: \.isInputVisual),
+          "Start with the first note visible, not with the stage alone")
+        model.stop(deactivateAudio: false)
+      }
+    }
   }
 
   func testSekaiFlickRequiresMeasuredMovementAndSurvivesRestart() async throws {
