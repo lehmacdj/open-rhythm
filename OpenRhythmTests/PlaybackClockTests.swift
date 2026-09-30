@@ -151,15 +151,152 @@ final class PlaybackClockTests: XCTestCase {
   }
 
   @MainActor
+  func testAudioInterruptionStopsActiveEngineWithoutSceneChange() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("session-interruption-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let notifications = NotificationCenter()
+    let model = try makeSessionModel(PlaybackAudioSession { _ in },
+      directory: directory, nativeEngine: true, audioNotifications: notifications)
+    defer { model.stop() }
+    model.start()
+    let size = CGSize(width: 800, height: 400)
+    for _ in 0..<200 {
+      model.engineFrame(size: size, touches: [])
+      if !model.isStartingPlayback && model.playbackTime > 0 { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertFalse(model.isStartingPlayback)
+    let runtime = try XCTUnwrap(model.engineRuntime)
+    let p = EnginePoint(x: 0, y: 0)
+    let touch = EngineTouch(id: 1, started: true, ended: false,
+      time: model.playbackTime, startTime: model.playbackTime,
+      position: p, startPosition: p, delta: p)
+    model.engineFrame(size: size, touches: [touch])
+    XCTAssertEqual(runtime.memory.value(block: 1001, index: 3), 1)
+    let generation = model.playbackGeneration
+    notifications.post(
+      name: AVAudioSession.interruptionNotification,
+      object: AVAudioSession.sharedInstance(), userInfo: [
+        AVAudioSessionInterruptionTypeKey:
+          AVAudioSession.InterruptionType.began.rawValue
+      ])
+    await Task.yield()
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertNotNil(model.playbackNotice)
+    XCTAssertGreaterThan(model.playbackGeneration, generation)
+    model.engineFrame(size: size, touches: [])
+    XCTAssertEqual(runtime.memory.value(block: 1001, index: 3), 1,
+      "An interrupted play must no longer interpret input frames")
+    XCTAssertNil(model.resultSaveTask, "An interrupted play is not a result")
+    model.start()
+    for _ in 0..<200 {
+      model.engineFrame(size: size, touches: [])
+      if !model.isStartingPlayback && model.playbackTime > 0 { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertNil(model.playbackNotice)
+    let restartedTime = model.playbackTime
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertGreaterThan(model.playbackTime, restartedTime,
+      "An explicit restart must reach advancing audio, not only change phase")
+  }
+
+  @MainActor
+  func testAudioInterruptionCancelsPendingActivationAndAllowsExplicitRestart()
+    async throws {
+    let entered = expectation(description: "Activation pending")
+    let released = expectation(description: "Interrupted activation released")
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    let session = PlaybackAudioSession { active in
+      if active {
+        entered.fulfill()
+        guard gate.wait(timeout: .now() + 2) == .success else {
+          throw NSError(domain: "AudioSessionProbe", code: 1)
+        }
+      } else { released.fulfill() }
+    }
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pending-interruption-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let notifications = NotificationCenter()
+    let model = try makeSessionModel(session, directory: directory,
+      audioNotifications: notifications)
+    defer { model.stop() }
+    model.start()
+    await fulfillment(of: [entered], timeout: 2)
+    let generation = model.playbackGeneration
+    let inputGeneration = model.inputGeneration
+    // Malformed and ended notifications must not stop a live attempt.
+    for raw: UInt? in [nil, 99, AVAudioSession.InterruptionType.ended.rawValue] {
+      notifications.post(name: AVAudioSession.interruptionNotification,
+        object: AVAudioSession.sharedInstance(), userInfo: raw.map {
+          [AVAudioSessionInterruptionTypeKey: $0]
+        })
+    }
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertEqual(model.playbackGeneration, generation)
+    XCTAssertNil(model.playbackNotice)
+    // Also exercise background delivery through the observer's main queue.
+    await Task.detached {
+      notifications.post(name: AVAudioSession.interruptionNotification,
+        object: AVAudioSession.sharedInstance(), userInfo: [
+          AVAudioSessionInterruptionTypeKey:
+            AVAudioSession.InterruptionType.began.rawValue
+        ])
+    }.value
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertGreaterThan(model.playbackGeneration, generation)
+    XCTAssertGreaterThan(model.inputGeneration, inputGeneration)
+    XCTAssertNotNil(model.playbackNotice)
+    gate.signal()
+    await fulfillment(of: [released], timeout: 2)
+    XCTAssertEqual(model.phase, .ready,
+      "A completed stale activation must not restart interrupted playback")
+    XCTAssertNil(model.resultSaveTask)
+    notifications.post(name: AVAudioSession.interruptionNotification,
+      object: AVAudioSession.sharedInstance(), userInfo: [
+        AVAudioSessionInterruptionTypeKey:
+          AVAudioSession.InterruptionType.ended.rawValue,
+        AVAudioSessionInterruptionOptionKey:
+          AVAudioSession.InterruptionOptions.shouldResume.rawValue
+      ])
+    XCTAssertEqual(model.phase, .ready, "Do not restart without the player")
+    model.start()
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertNil(model.playbackNotice)
+    model.stop()
+    notifications.post(name: AVAudioSession.interruptionNotification,
+      object: AVAudioSession.sharedInstance(), userInfo: [
+        AVAudioSessionInterruptionTypeKey:
+          AVAudioSession.InterruptionType.began.rawValue
+      ])
+    XCTAssertNil(model.playbackNotice, "Stopped models no longer observe audio")
+  }
+
+  @MainActor
   private func makeSessionModel(_ session: PlaybackAudioSession,
-    directory: URL) throws -> GameplayModel {
+    directory: URL, nativeEngine: Bool = false,
+    audioNotifications: NotificationCenter = .default) throws -> GameplayModel {
     let audio = directory.appendingPathComponent("tone.caf")
     let format = try XCTUnwrap(AVAudioFormat(
       standardFormatWithSampleRate: 48000, channels: 1))
     let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
-      frameCapacity: 480))
+      frameCapacity: nativeEngine ? 48000 * 4 : 480))
     buffer.frameLength = buffer.frameCapacity
-    for frame in 0..<480 { buffer.floatChannelData![0][frame] = 0 }
+    for frame in 0..<Int(buffer.frameLength) {
+      buffer.floatChannelData![0][frame] = nativeEngine
+        ? Float(sin(Double(frame) * 2 * .pi * 440 / 48000) * 0.0002) : 0
+    }
     do {
       let file = try AVAudioFile(forWriting: audio, settings: format.settings)
       try file.write(from: buffer)
@@ -173,10 +310,14 @@ final class PlaybackClockTests: XCTestCase {
       version: 1, rating: 1, title: LocalizedText("Session failure"),
       artists: LocalizedText("Generated"), author: "Fixture", tags: [],
       cover: resource, bgm: resource, data: resource)
-    let model = GameplayModel(audioSession: session)
+    let model = GameplayModel(audioSession: session,
+      audioNotifications: audioNotifications)
     model.prepare(bundle: RuntimeBundle(engine: engine,
       level: LevelData(bgmOffset: 0, entities: []), bgmURL: audio,
-      isOffline: true, playbackMode: .basicLanes), level: level,
+      isOffline: true, presentation: nativeEngine
+        ? RuntimePresentation(resources: [
+          "configuration": Data(#"{"options":[]}"#.utf8)]) : nil,
+      playbackMode: nativeEngine ? .engine : .basicLanes), level: level,
       server: ServerDescriptor(id: "session-failure", name: "Fixture",
         baseURL: URL(string: "https://example.com")!), title: "Session failure")
     return model

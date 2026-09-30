@@ -58,10 +58,11 @@ or physical-device validation. Findings below are recorded before fixing them.
 | --- | --- | --- | --- |
 | BF-01 / P1 — fixed | `ResultStore.record` silently capped history at 500, removed older timing payloads, and thereby also dropped old-only songs from `playedSongs`. The previous audit described this limit, but the user did not request automatic deletion. | Confirmed by the 501st-play regression; automatic eviction is now removed. | Verification below closes this unit. Previously deleted data cannot be reconstructed. |
 | BF-02 / P1 — reproduced, estimator unresolved | `EngineTouch.nextFrame` advances the velocity baseline to frame time. Identical OS movement samples produce different velocities depending on intervening display frames. | Xcode diagnostic confirmed 10 versus 24 units/s for the same 0.1-unit movement over 10 ms. Field prevalence and contribution to reported timing bias remain unknown. | Design an event-sample estimator, considering coalesced UIKit samples and stationary-hold-to-flick behavior. No arbitrary calibration or physical test is authorized. |
-| BF-03 / P1 diagnosis | Gameplay keeps interpreting touches while the BGM clock is stopped; the advancing flag gates effect audio, not runtime input. Scene inactivity stops the model, but a session interruption need not be represented solely by scene state. | Coverage gap with possible false judgments or stuck play; not yet a confirmed real interruption failure. | Synthetic stopped-player/interruption investigation, consulting Apple's interruption contract. Physical behavior remains in the deferred batch. |
+| BF-03 / P1 — interruption path fixed; other stalls open | An audio-session interruption previously left the engine interpreting input without a scene change. The model now stops the attempt, invalidates startup/input generations and returns to Ready with an explanation; only an explicit Start restarts it. | Synthetic active-engine regression reproduced the defect and now passes, as do pending-activation, notification parsing and advancing-restart checks. Not a real-device interruption measurement. | Investigate ordinary buffering/stopped-player input separately; do not treat every temporary wait or normal EOF as an interruption. Physical behavior remains in the deferred batch. |
 | BF-04 / P2 | One malformed offline manifest makes `manifests()` throw and prevents `catalogSongs()` from returning the otherwise valid library. Cleanup deliberately fails closed to protect unknown shared references. | Confirmed library-availability path; no current user file has been shown corrupt. | Reproduce mixed valid/corrupt manifests; design recoverable listing without deleting data or weakening cleanup safety. |
 | BF-05 / P2 diagnosis | Every difficulty's download-status lookup enumerates/decodes the manifest collection and validates resource contents again. | Large-library I/O/performance hypothesis, not a measured phone hitch. | Instrument a synthetic multi-song library, then prioritize from measured cost; retain hash verification rather than bypassing it. |
 | BF-06 / P2 diagnosis | Metal completion releases its slot and records GPU timing but does not inspect command-buffer failure status; synchronous encoding failures do trigger software fallback. | Asynchronous render-error coverage gap, not a reproduced GPU failure. | Check failure propagation with an injectable completion seam before touching the renderer's successful frame path. |
+| BF-07 / P2 diagnosis | The SDK distinguishes media-services loss/reset from session interruptions. Gameplay/audio currently has no observer for these notifications; the haptic backend's reset handling does not establish audio recovery. | Source-level lifecycle coverage gap; no reproduced media-server reset failure. | Synthetic notification investigation and an audio-object recreation plan if needed; do not expand the bounded interruption fix into an unverified reset implementation. |
 
 BF-01 is selected over speculative timing/render changes because it has a
 deterministic irreversible data-loss path, no evidence dependency, and a small
@@ -105,6 +106,35 @@ finding open rather than presenting a guessed constant as a timing fix.
 Re-triage after this bounded diagnostic: investigate BF-03 interruption
 handling next, since it has a documented OS event and can be exercised with
 synthetic notifications independently of the unresolved velocity estimator.
+
+BF-03 interruption verification: after correcting the generated fixture's
+required configuration field, the regression demonstrated that `.began` left
+the model in `.playing`, did not invalidate its generation, and allowed
+another runtime input update. The fix observes the
+[audio interruption notification](https://developer.apple.com/documentation/avfaudio/avaudiosession/interruptionnotification),
+using the active SDK's typed `.began` value. It handles notification delivery
+on the main queue before the next input frame, removes the observer on stop
+or destruction, and does not save a partial result or auto-resume on `.ended`.
+This follows the existing backgrounding policy, without changing timing
+calibration or normal buffering behavior.
+
+Two regressions cover active-engine stop, pending off-main activation cleanup,
+background notification delivery, invalid/ended notifications, generation
+invalidation, observer teardown, and explicit restart through an advancing
+audio clock. All 352 non-cached simulator tests pass with no skips or failures
+(`RunSomeTests/8EA7FD44-9351-4761-AB5C-9EBA604F00B0.txt`); the normal build
+passes (`BuildProject/BuildProject-Log-20260930-012805.txt`). Independent
+post-fix review found no actionable issue, including after strengthening the
+restart check. The seven cached-chart workloads were not rerun for this
+model-lifecycle change, and no physical-device tests were run.
+
+Re-triage: BF-02 remains the highest-confidence unresolved gameplay defect.
+Its next bounded step is to check actual UIKit/coalesced sample semantics and
+exercise an event-based estimator against both delayed delivery and a first
+flick after a stationary hold. BF-03's ordinary-stall question remains separate;
+BF-04's corrupt-library recovery is the next confirmed non-gameplay defect.
+BF-05–07 remain diagnostic backlog items, not newly expanded requirements for
+closing the interruption fix.
 
 ## Current verification order — reaffirmed September 27, 2026
 

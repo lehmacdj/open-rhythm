@@ -122,6 +122,28 @@ enum NoteJudgement: String, Codable, CaseIterable, Sendable {
   }
 }
 
+/// Own the token outside the main actor so deallocation also unregisters it.
+private final class AudioInterruptionObservation {
+  private let center: NotificationCenter
+  private let token: NSObjectProtocol
+
+  init(center: NotificationCenter,
+    onBegan: @escaping @MainActor @Sendable () -> Void) {
+    self.center = center
+    token = center.addObserver(forName: AVAudioSession.interruptionNotification,
+      object: AVAudioSession.sharedInstance(), queue: .main) { notification in
+      guard let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey]
+        as? UInt, AVAudioSession.InterruptionType(rawValue: raw) == .began
+      else { return }
+      // The observer runs on the main queue. Handle it before another input
+      // frame instead of enqueueing a second, potentially delayed task.
+      MainActor.assumeIsolated { onBegan() }
+    }
+  }
+
+  deinit { center.removeObserver(token) }
+}
+
 @MainActor
 @Observable
 final class GameplayModel {
@@ -143,6 +165,7 @@ final class GameplayModel {
   private(set) var debugLog = [EngineDebugLogEntry]()
   private(set) var isEngineDebugMode = false
   private(set) var isStartingPlayback = false
+  private(set) var playbackNotice: String?
   private var audioSeekCompleted = false
   private var startupLimitMediaTime: Double?
   private var startupNextTime = 0.0
@@ -301,7 +324,9 @@ final class GameplayModel {
   }
   private var player: AVPlayer?
   private let audioSession: PlaybackAudioSession
+  private let audioNotifications: NotificationCenter
   private let audioSessionOwner = UUID()
+  private var interruptionObserver: AudioInterruptionObservation?
   private var eventClock: PlaybackEventClock?
   var eventClockDiagnosticObservations: [PlaybackEventClock.Observation] {
     eventClock?.diagnosticObservations ?? []
@@ -354,11 +379,13 @@ final class GameplayModel {
   init(
     loader: RuntimeBundleLoader = RuntimeBundleLoader(),
     resultStore: ResultStore = .shared,
-    audioSession: PlaybackAudioSession? = nil
+    audioSession: PlaybackAudioSession? = nil,
+    audioNotifications: NotificationCenter = .default
   ) {
     self.loader = loader
     self.resultStore = resultStore
     self.audioSession = audioSession ?? .shared
+    self.audioNotifications = audioNotifications
   }
 
   deinit {
@@ -445,6 +472,7 @@ final class GameplayModel {
 
   func start() {
     guard phase == .ready, let player else { return }
+    playbackNotice = nil
     presentationAssets?.configureRenderMode(preferred: settings.skinRenderMode)
     let speed = presentationAssets?.configuration.playbackSpeed(preferences: settings) ?? 1
     guard speed.isFinite, (0.05...4).contains(speed) else {
@@ -505,6 +533,18 @@ final class GameplayModel {
     }
 
     phase = .playing
+    // Audio interruptions can occur without a scene-phase transition. Stop
+    // both input and audio together, including a pending seek/activation or
+    // the post-BGM tail. Like backgrounding, this attempt is not a result.
+    interruptionObserver = AudioInterruptionObservation(
+      center: audioNotifications
+    ) { [weak self] in
+      guard let self, self.phase == .playing,
+        self.playbackGeneration == generation else { return }
+      self.stop()
+      self.playbackNotice = "Audio playback was interrupted. "
+        + "Tap Start to play the chart again."
+    }
     if let item = player.currentItem {
       endObserver = NotificationCenter.default.addObserver(
         forName: AVPlayerItem.didPlayToEndTimeNotification,
@@ -789,6 +829,7 @@ final class GameplayModel {
 
   func stop(deactivateAudio: Bool = true) {
     frameTiming = nil
+    interruptionObserver = nil
     if let timingRouteObserver {
       NotificationCenter.default.removeObserver(timingRouteObserver)
       self.timingRouteObserver = nil

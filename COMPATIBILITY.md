@@ -11,6 +11,20 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Audio-session interruption begins now stop both gameplay and audio even
+  without a scene-phase change. Ready explains the interruption and requires
+  an explicit restart; no partial result is saved and `.ended` does not resume
+  automatically. Observer lifetime follows the attempt; generation guards
+  invalidate pending activation/seek and old input, and deallocation removes
+  the token. Generated-audio simulator regressions cover active engine input,
+  pending activation, background notification delivery, invalid/ended events
+  and explicit restart reaching an advancing player clock. All 352 non-cached
+  tests pass (`RunSomeTests/8EA7FD44-9351-4761-AB5C-9EBA604F00B0.txt`), the
+  normal build passes at September 30 01:28, and independent review found no
+  actionable issue. This is not proof of physical interruption behavior or
+  ordinary buffering-input correctness; media-services reset remains a
+  separate audit finding.
+
 - Process-wide audio-session ownership is serialized off the main actor.
   Each gameplay model owns a lease, so an old model's delayed cleanup cannot
   deactivate a newer song. This matters because

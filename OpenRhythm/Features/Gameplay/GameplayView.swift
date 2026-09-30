@@ -63,6 +63,9 @@ struct GameplayView: View {
         "\(model.noteCount) notes · "
           + "\(level.difficulty.displayName) \(level.rating.formatted())"
       )
+      if let notice = model.playbackNotice {
+        Text(notice)
+      }
     } actions: {
       Button("Start", systemImage: "play.fill") {
         model.start()
