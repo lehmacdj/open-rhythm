@@ -21,12 +21,13 @@ final class EngineMetalRenderer {
   private let nearest: MTLSamplerState
   private let inFlight = DispatchSemaphore(value: 3)
   private var textures = [ObjectIdentifier: (UIImage, MTLTexture)]()
-  private let textureByteLimit: Int
-  private(set) var textureBytes = 0
+  private var textureBudget: EngineTextureBudget
+  var textureBytes: Int { textureBudget.bytes }
 
-  init(device: MTLDevice, textureByteLimit: Int = 128_000_000) throws {
+  init(device: MTLDevice,
+    textureByteLimit: Int = EngineTextureBudget.defaultByteLimit) throws {
     self.device = device
-    self.textureByteLimit = max(0, textureByteLimit)
+    textureBudget = EngineTextureBudget(byteLimit: textureByteLimit)
     guard let queue = device.makeCommandQueue() else {
       throw EngineInterpreterError.invalidArguments("Metal command queue")
     }
@@ -238,15 +239,8 @@ final class EngineMetalRenderer {
     // the conversion surface or GPU texture. Count only unique cached images.
     // RGBA payload accounting excludes driver alignment and source atlas data;
     // it is not a claim about total resident memory or a Sonolus constraint.
-    guard image.width > 0, image.height > 0,
-      image.width <= 8192, image.height <= 8192,
-      image.width * image.height <= 8_000_000 else {
-      throw TextureBudgetError.imageSize
-    }
-    let bytesRequired = image.width * image.height * 4
-    guard bytesRequired <= textureByteLimit - textureBytes else {
-      throw TextureBudgetError.totalSize
-    }
+    var next = textureBudget
+    try next.reserve(width: image.width, height: image.height)
     // Normalize extended-range UIKit images as well as atlas crops. Explicit
     // premultiplication matches the pipeline's source-one alpha blending.
     guard let context = CGContext(data: nil, width: image.width,
@@ -269,23 +263,11 @@ final class EngineMetalRenderer {
     }
     texture.replace(region: MTLRegionMake2D(0, 0, image.width, image.height),
       mipmapLevel: 0, withBytes: bytes, bytesPerRow: context.bytesPerRow)
-    textureBytes += bytesRequired
+    textureBudget = next
     return texture
   }
 
-  enum TextureBudgetError: LocalizedError {
-    case imageSize, totalSize
-
-    var errorDescription: String? {
-      switch self {
-      case .imageSize:
-        "An engine texture is too large for this renderer "
-          + "(maximum 8 million pixels and 8192 pixels per side)."
-      case .totalSize:
-        "This engine's textures exceed the renderer's graphics-memory budget."
-      }
-    }
-  }
+  typealias TextureBudgetError = EngineTextureBudget.LimitError
 
   static func vertices(for sprite: EngineRenderSprite, size: CGSize) -> [Vertex] {
     guard size.width > 0, size.height > 0, sprite.alpha.isFinite,

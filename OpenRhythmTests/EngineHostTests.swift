@@ -2551,21 +2551,29 @@ final class EngineHostTests: XCTestCase {
       }
     let identity = Dictionary(uniqueKeysWithValues:
       ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"].map { ($0, [$0: 1]) })
-    func presentation(selected: Int, copies: Int = 1) throws -> RuntimePresentation {
+    func presentation(selected: Int, copies: Int = 1,
+      colors: [String] = ["#fff"], repetitions: Int = 1
+    ) throws -> RuntimePresentation {
       let zero: [String: Any] = ["from": ["c": 0], "to": ["c": 0]]
       let one: [String: Any] = ["from": ["c": 1], "to": ["c": 1]]
       func effect(_ name: String, sprite: Int) -> [String: Any] {
         let particle: [String: Any] = ["sprite": sprite, "color": "#fff",
           "start": 0, "duration": 1, "x": zero, "y": zero,
           "w": one, "h": one, "r": zero, "a": one]
-        return ["name": name, "transform": identity, "groups": [["count": 1,
-          "particles": Array(repeating: particle, count: copies)]]]
+        let variants = colors.flatMap { color in
+          var variant = particle
+          variant["color"] = color
+          return Array(repeating: variant, count: copies)
+        }
+        return ["name": name, "transform": identity, "groups": [
+          ["count": repetitions, "particles": variants]]]
       }
       let data: [String: Any] = ["width": 4, "height": 2,
         "interpolation": true, "sprites": [
           ["x": -1, "y": 0, "w": 2, "h": 2],
           ["x": 0, "y": 0, "w": 0, "h": 2],
-          ["x": 1.25, "y": 0, "w": 1.5, "h": 2]],
+          ["x": 1.25, "y": 0, "w": 1.5, "h": 2],
+          ["x": 0, "y": 0, "w": 1_000_000, "h": 1_000_000]],
         "effects": [effect("unused", sprite: 0),
           effect("selected", sprite: selected)]]
       return RuntimePresentation(resources: [
@@ -2575,11 +2583,12 @@ final class EngineHostTests: XCTestCase {
     }
     let assets = try EnginePresentationAssets(engine: engine,
       presentation: presentation(selected: 2))
-    XCTAssertEqual(assets.particleSprites.count, 3,
+    XCTAssertEqual(assets.particleSprites.count, 4,
       "Resource sprite indices must not shift during selective preparation")
     XCTAssertNil(assets.particleSprites[0])
     XCTAssertNil(assets.particleSprites[1])
     XCTAssertNotNil(assets.particleSprites[2])
+    XCTAssertNil(assets.particleSprites[3])
     let host = makeHost()
     _ = try host.call(function: "SpawnParticleEffect", arguments: [9] + quad + [1, 0])
     let rendered = EngineRenderer.sprites(host: host, assets: assets)
@@ -2604,11 +2613,61 @@ final class EngineHostTests: XCTestCase {
     let green = try XCTUnwrap(shared.particleImage(index: 2, key: "#0f0"))
     XCTAssertFalse(white === green, "Different colors must not reuse a tint")
     XCTAssertTrue(green === shared.particleImage(index: 2, key: "#0f0"))
-    for index in [0, 1, 3] {
+    // Fractional bounds use a padded 4x2 crop: 32 bytes per tint, not the
+    // logical 1.5x2 area. Duplicate definitions/repetitions allocate only once.
+    var tintCalls = 0
+    let repeated = try presentation(selected: 2, copies: 3, repetitions: 4)
+    let bounded = try EnginePresentationAssets(engine: engine,
+      presentation: repeated, tintByteLimit: 32, makeTint: { image, color in
+        tintCalls += 1
+        return EnginePresentationAssets.tinted(image, color: color)
+      })
+    XCTAssertEqual(tintCalls, 1)
+    XCTAssertNotNil(bounded.particleImage(index: 2, key: "#fff"))
+    XCTAssertNil(bounded.particleImage(index: 2, key: "#0f0"))
+    XCTAssertEqual(tintCalls, 1, "Unplanned over-budget requests cannot allocate")
+    for (colors, budget) in [(["#fff"], 31), (["#fff", "#0f0"], 63)] {
+      tintCalls = 0
+      XCTAssertThrowsError(try EnginePresentationAssets(engine: engine,
+        presentation: presentation(selected: 2, colors: colors),
+        tintByteLimit: budget, makeTint: { image, _ in
+          tintCalls += 1
+          return image
+        })) {
+          XCTAssertEqual($0 as? EngineTextureBudget.LimitError, .totalSize)
+      }
+      XCTAssertEqual(tintCalls, 0, "The whole plan must pass before any tint")
+    }
+    tintCalls = 0
+    let two = try EnginePresentationAssets(engine: engine,
+      presentation: presentation(selected: 2, colors: ["#fff", "#0f0"]),
+      tintByteLimit: 64, makeTint: { image, color in
+        tintCalls += 1
+        return EnginePresentationAssets.tinted(image, color: color)
+      })
+    XCTAssertEqual(tintCalls, 2)
+    XCTAssertNotNil(two.particleImage(index: 2, key: "#0f0"))
+    XCTAssertEqual(tintCalls, 2, "All declared images are ready before gameplay")
+    for index in [0, 1, 3, 4] {
       XCTAssertThrowsError(try EnginePresentationAssets(engine: engine,
         presentation: presentation(selected: index)),
         "Invalid selected bounds or indices must still fail: \(index)")
     }
+  }
+
+  func testTextureBudgetBoundsWithoutAllocatingLargeImages() throws {
+    var budget = EngineTextureBudget(byteLimit: 32_000_000)
+    for (width, height) in [(Int.max, 1), (1, Int.max), (-1, 1), (0, 1),
+      (4000, 2001), (8193, 1)] {
+      XCTAssertThrowsError(try budget.reserve(width: width, height: height)) {
+        XCTAssertEqual($0 as? EngineTextureBudget.LimitError, .imageSize)
+      }
+      XCTAssertEqual(budget.bytes, 0)
+    }
+    try budget.reserve(width: 4000, height: 2000)
+    XCTAssertEqual(budget.bytes, 32_000_000)
+    XCTAssertThrowsError(try budget.reserve(width: 1, height: 1))
+    XCTAssertEqual(budget.bytes, 32_000_000)
   }
 
   @MainActor

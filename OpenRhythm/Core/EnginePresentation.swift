@@ -701,6 +701,37 @@ enum EngineEasing {
   }
 }
 
+struct EngineTextureBudget {
+  static let defaultByteLimit = 128_000_000
+  let byteLimit: Int
+  private(set) var bytes = 0
+
+  init(byteLimit: Int = defaultByteLimit) {
+    self.byteLimit = max(0, byteLimit)
+  }
+
+  mutating func reserve(width: Int, height: Int) throws {
+    guard width > 0, height > 0, width <= 8192, height <= 8192,
+      width * height <= 8_000_000 else { throw LimitError.imageSize }
+    let required = width * height * 4
+    guard required <= byteLimit - bytes else { throw LimitError.totalSize }
+    bytes += required
+  }
+
+  enum LimitError: LocalizedError {
+    case imageSize, totalSize
+    var errorDescription: String? {
+      switch self {
+      case .imageSize:
+        "An engine texture exceeds the supported image size "
+          + "(maximum 8 million pixels and 8192 pixels per side)."
+      case .totalSize:
+        "This engine's prepared textures exceed the graphics-memory budget."
+      }
+    }
+  }
+}
+
 @MainActor
 final class EnginePresentationAssets {
   struct Sprite {
@@ -730,6 +761,8 @@ final class EnginePresentationAssets {
   let forcedSkinRenderMode: EngineSkinRenderMode?
   private(set) var skinRenderMode: EngineSkinRenderMode
   private var tintedParticles = [String: UIImage]()
+  private var tintBudget: EngineTextureBudget
+  private let makeTint: @MainActor (UIImage, UIColor) -> UIImage
   private var particleRandomCache = EngineParticleRandomCache()
   private var particlePropertyCache = EngineParticlePropertyCache()
 
@@ -749,7 +782,14 @@ final class EnginePresentationAssets {
     particlePropertyCache.properties(for: particle, key: key, variables: variables)
   }
 
-  init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
+  init(engine: EnginePlayData, presentation: RuntimePresentation,
+    tintByteLimit: Int = EngineTextureBudget.defaultByteLimit,
+    makeTint: @escaping @MainActor (UIImage, UIColor) -> UIImage = {
+      EnginePresentationAssets.tinted($0, color: $1)
+    }
+  ) throws {
+    tintBudget = EngineTextureBudget(byteLimit: tintByteLimit)
+    self.makeTint = makeTint
     forcedSkinRenderMode = try engine.skin.forcedRenderMode
     skinRenderMode = forcedSkinRenderMode ?? .standard
     let configuration = try CompressedJSONDecoder.decode(
@@ -854,14 +894,32 @@ final class EnginePresentationAssets {
       }
     }
     particleSprites = prepared
-    // Build color variants while preparing the chart, not during a first hit.
+    // Plan all selected color variants before creating any tint surface.
+    // Count actual padded crop pixels, not fractional logical sprite bounds
+    // or particle repetition counts. Unselected resource entries stay ignored.
+    var variants = [String: (index: Int, color: String)]()
     for effect in effects.values {
       for group in effect.groups {
         for particle in group.particles {
-          _ = particleImage(index: particle.sprite, key: particle.color)
+          variants[Self.tintKey(particle.sprite, particle.color)] =
+            (particle.sprite, particle.color)
         }
       }
     }
+    var planned = tintBudget
+    for variant in variants.values {
+      guard let image = prepared[variant.index]?.image.cgImage else {
+        throw RuntimeBundleError.missingResource("valid particle sprite")
+      }
+      try planned.reserve(width: image.width, height: image.height)
+    }
+    // Warm all declared variants now, not during a first hit. The entire plan
+    // fits before the first factory call; no partially allocated failed plan.
+    for (key, variant) in variants {
+      let source = prepared[variant.index]!.image
+      tintedParticles[key] = makeTint(source, EngineRenderer.color(variant.color))
+    }
+    tintBudget = planned
   }
 
   func runtimeOptions(noteSpeed: Double?, scoreMode: Int? = nil) -> [Double] {
@@ -874,13 +932,24 @@ final class EnginePresentationAssets {
   }
 
   func particleImage(index: Int, key: String) -> UIImage? {
-    let cacheKey = "\(index):\(key)"
+    let cacheKey = Self.tintKey(index, key)
     if let image = tintedParticles[cacheKey] { return image }
-    guard particleSprites.indices.contains(index), let sprite = particleSprites[index]
+    guard particleSprites.indices.contains(index), let sprite = particleSprites[index],
+      let source = sprite.image.cgImage
     else { return nil }
-    let image = Self.tinted(sprite.image, color: EngineRenderer.color(key))
+    // All engine-declared variants are already cached. Bound incidental
+    // internal requests too; unavailable images use this lookup's nil result.
+    var next = tintBudget
+    guard (try? next.reserve(width: source.width, height: source.height)) != nil
+    else { return nil }
+    let image = makeTint(sprite.image, EngineRenderer.color(key))
     tintedParticles[cacheKey] = image
+    tintBudget = next
     return image
+  }
+
+  private static func tintKey(_ index: Int, _ color: String) -> String {
+    "\(index):\(color)"
   }
 
   static func tinted(_ original: UIImage, color: UIColor) -> UIImage {

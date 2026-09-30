@@ -73,7 +73,7 @@ are not comparative performance claims. The largest retained payload was only
 source path, this establishes selected-color expansion before the Metal check,
 not an observed crash or the cause of the user's phone slowdown.
 
-Re-triage selects a bounded **selected tint preflight** next: compute the
+The fourth pass selected a bounded **selected tint preflight**: compute the
 required unique `(sprite index, color)` images and actual padded crop sizes,
 then apply explicit preparation accounting before creating any tint surfaces.
 Do not charge repetition count as image count, reject unselected sprites, or
@@ -82,7 +82,40 @@ policy where appropriate instead of inventing a smaller limit. Prove exact
 boundaries, duplicate variants, unused large entries and failure-before-tint
 allocation using small injected budgets. Earlier encoded-atlas decode remains
 a separate risk to investigate; tint preflight must not claim to bound it.
-No higher-confidence gameplay/API defect displaced this work in the new pass.
+No higher-confidence gameplay/API defect displaced this work in that pass.
+
+The selected tint preflight is now implemented. It plans every unique declared
+index/color variant before calling the tint factory, charges actual padded crop
+pixels and preserves the existing selected-resource behavior. It shares the
+Metal per-image accounting helper with a separate 128-million-byte tint-cache
+limit. This is explicit host policy, not a protocol limit or process-RSS bound.
+An incidental internal lookup cannot bypass the cache budget; all engine-declared
+variants either warm successfully during preparation or fail preparation.
+
+Tiny 31/32/63/64-byte fixtures verify exact boundaries, duplicate references,
+particle repetitions, unused huge sprite entries, padded dimensions and zero
+tint calls when the complete plan is over budget. Numeric dimension tests use
+no large allocations. Three focused checks passed:
+`RunSomeTests/8C4BC150-935D-4ED7-ABDC-BC67EB6A4D28.txt`.
+All 369 non-cached simulator tests passed:
+`RunSomeTests/3209759D-5596-43CF-9AE6-E9C00727BF2A.txt`.
+Independent review found one stale test count after adding a fourth unused
+sprite; corrected to four and explicitly asserted that it remains unprepared.
+No production-code finding remained. The initial run's assertion failure was a
+fixture update error, not a before-fix behavioral reproduction.
+Actual cached SEKAI, SIF and 22/7 resources still prepare successfully through
+the new preflight and Metal path: 20,341,844 / 265,796 / 7,440,064 uploaded RGBA
+bytes, unchanged by repeat preparation. No server requests were made. Normal
+build passed: `BuildProject/BuildProject-Log-20260930-031236.txt`.
+Full-chart cached replays, physical gameplay and allocation-to-failure were not
+rerun for this accounting-only unit.
+
+Re-triage after this bounded unit: return to a cross-area discovery pass before
+selecting another implementation. Atlas decode/base-crop risk remains open,
+but does not automatically take precedence over reported timing/input/frame
+pacing, catalog behavior or other known API gaps. Compare impact, evidence and
+dependencies globally; do not continue resource refinements just because that
+code is open. The stack contract and physical-device gates remain unchanged.
 
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
@@ -100,7 +133,7 @@ was supported. These spot checks are not exhaustive API coverage.
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
 | BF-10 / P2 — fixed | Skin preparation shares exact atlas crops, so Metal's image-identity cache reuses their uploads. Actual cached assets now prepare SEKAI 175 sprites / 136 unique images, SIF 17 / 11, 22/7 15 / 13. | Alias regression failed before and passes after; all 367 non-cached tests, normal build and independent review pass. SEKAI nominal RGBA payload falls from 18,752,256 to 15,662,844 bytes; not a resident-memory/frame-latency measurement. | Bounded unit verified below. Per-sprite transforms/UVs and per-presentation lifetimes remain independent. Aggregate allocation accounting is separate BF-11. |
-| BF-11 / P2 — Metal guard verified; preparation still open | Metal now applies the existing software numeric budgets before conversion/upload allocation: 8 million pixels / 8192 per side per image and 128 million aggregate RGBA bytes. Only successful unique uploads are charged. Particle tint preparation still precedes renderer checks. | Tiny injected-budget regression, actual cached engine preparation, all 368 non-cached tests, normal build and independent review pass. No memory-pressure crash was reproduced. | Keep pre-render atlas/tint allocation as a separate open diagnostic. These are host limits, not Sonolus resource constraints or a process-RSS bound. Metal accounting spans its persistent cache; software accounting spans one render call. |
+| BF-11 / P2 — Metal and selected tint guards implemented; atlas/crops open | Metal applies the existing software numeric budgets before conversion/upload: 8 million pixels / 8192 per side per image and 128 million aggregate RGBA bytes. Selected tint variants now preflight their whole plan before the first tint allocation with the same per-image limits and a separate cache budget. | Tiny injected-budget checks and all 369 non-cached tests pass; independent review found no remaining production issue. No memory-pressure crash was reproduced. | Earlier atlas decode/base-crop allocation remains a separate diagnostic, subject to global re-triage. These are host limits, not Sonolus resource constraints or process-RSS bounds. Metal accounting spans its persistent cache; software accounting spans one render call. |
 
 BF-10 is selected as the demonstrated cross-engine redundancy with a narrow,
 semantics-preserving fix. BF-11 remains a separate diagnostic rather than an
