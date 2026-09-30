@@ -1842,6 +1842,17 @@ and uses chart-time seconds so playback speed does not rescale the difference.
 The other frame metrics include buffering/tail frames after intro preparation.
 Reports are not acoustic calibration and do not prove live synchronization.
 
+September 30 coverage adds two separate opt-in CPU phases: gameplay bookkeeping
+(score/life, judgment results and haptic dispatch) and effect-audio dispatch
+(command collection, clock reads and native scheduling). They include idle
+polls, exclude recording overhead from adjacent phases, and do not measure
+SwiftUI layout or audible latency. Old reports need not contain the new keys.
+Live-clock tests verify phase counts across restarts and debug pauses; report
+round-trip/isolation and all 384 non-cached tests pass. A bounded three-engine
+GameplayModel probe found no large cost in those phases, but exposed the signed
+stream-ID failure fixed by BF-23. REQUESTS.md records exact workloads and limits;
+the probe does not certify dense physical play or acoustic synchronization.
+
 Independent review found and prompted correction of two measurement biases:
 contact-loop processing no longer inflates later fingers' delivery age, and
 sprite-recorder overhead no longer appears as Metal encoding duration. Builds

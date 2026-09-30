@@ -1051,6 +1051,22 @@ final class PlaybackClockTests: XCTestCase {
       XCTAssertEqual(mean, 0, accuracy: 0.002)
       XCTAssertLessThan(maximum, 0.005)
       let report = try XCTUnwrap(model.timingRecorder?.snapshot())
+      let runtimeCount = try XCTUnwrap(report.metrics[
+        PlaybackTimingMetric.runtime.rawValue]).count
+      XCTAssertGreaterThan(runtimeCount, 0)
+      XCTAssertEqual(report.metrics[
+        PlaybackTimingMetric.bookkeeping.rawValue]?.count, runtimeCount,
+        "Every advancing engine frame includes score/judgment processing")
+      let audioCount = try XCTUnwrap(report.metrics[
+        PlaybackTimingMetric.effectAudio.rawValue]).count
+      XCTAssertGreaterThan(audioCount, 0)
+      if debugPauseCheck {
+        XCTAssertLessThanOrEqual(audioCount, runtimeCount,
+          "A debug pause can stop a frame before audio dispatch")
+      } else {
+        XCTAssertEqual(audioCount, runtimeCount,
+          "Native effect scheduling is measured once per advancing frame")
+      }
       XCTAssertGreaterThan(report.metrics[
         PlaybackTimingMetric.clockDifference.rawValue]?.count ?? 0, 0,
         "Must exercise the real player timebase, not a fallback clock")

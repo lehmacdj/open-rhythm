@@ -2,6 +2,8 @@ import Foundation
 
 enum PlaybackTimingMetric: String, Codable, CaseIterable, Sendable {
   case runtime = "Engine update"
+  case bookkeeping = "Gameplay bookkeeping"
+  case effectAudio = "Effect audio dispatch"
   case sprites = "Sprite generation"
   case encoding = "Metal encoding"
   case drawableWait = "Drawable wait"

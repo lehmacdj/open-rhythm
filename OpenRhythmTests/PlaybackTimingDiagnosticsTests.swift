@@ -2,6 +2,24 @@ import XCTest
 @testable import OpenRhythm
 
 final class PlaybackTimingDiagnosticsTests: XCTestCase {
+  func testGameplayPhaseMetricsRoundTripWithoutRequiringThemInOldReports() throws {
+    let recorder = PlaybackTimingRecorder()
+    recorder.record(.bookkeeping, seconds: 0.0002)
+    recorder.record(.effectAudio, seconds: 0.003)
+    let report = recorder.snapshot()
+    let restored = try JSONDecoder().decode(PlaybackTimingReport.self,
+      from: JSONEncoder().encode(report))
+    XCTAssertEqual(restored, report)
+    XCTAssertEqual(restored.metrics["Gameplay bookkeeping"]?.meanMS, 0.2)
+    XCTAssertEqual(restored.metrics["Effect audio dispatch"]?.meanMS, 3)
+    XCTAssertTrue(restored.text.contains("Gameplay bookkeeping:"))
+    XCTAssertTrue(restored.text.contains("Effect audio dispatch:"))
+    let legacy = try JSONDecoder().decode(PlaybackTimingReport.self,
+      from: Data(#"{"metrics":{},"counters":{}}"#.utf8))
+    XCTAssertTrue(legacy.metrics.isEmpty)
+    XCTAssertFalse(legacy.text.contains("Effect audio dispatch:"))
+  }
+
   func testRawAndEffectiveClockMetricsKeepDistinctLabelsAndStoredKeys() throws {
     let recorder = PlaybackTimingRecorder()
     recorder.record(.clockDifference, seconds: -0.1)

@@ -93,24 +93,23 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** broad performance-evidence reconciliation identified
-  and measured expensive particle tint preparation (BF-22). Exact byte lookup
-  tables reduce paired Debug presentation means from 462 to 312 ms for SEKAI,
-  10.6 to 8.6 ms for SIF and 61.3 to 40.6 ms for 22/7. Tiny images retain the
-  original arithmetic. Twenty focused tests, normal build and independent
-  review pass. Work remains local, not pushed; this is not live-FPS evidence.
-- **Selected next action:** close the measurement blind spot around actual
-  GameplayModel judgment bookkeeping and native effect-audio dispatch with
-  one bounded simulator diagnostic, using cached assets and generated music.
-  Existing full-chart harness timings exclude both, and saved frame diagnostics
-  currently measure runtime/sprites/Metal but not these CPU phases separately.
-- **Why:** broad gameplay performance remains an explicit user priority. The
-  measured loading improvement must not replace investigation of in-song work.
-- **Acceptance:** quantify those phases with the workload/build and limits, or
-  name the exact deferred measurement if the simulator cannot measure it.
-  Preserve scheduling and calibration. Add permanent instrumentation only if
-  needed to make the deferred physical batch actionable; no speculative audio
-  queue optimization. Do not infer phone frame pacing from simulator timings.
+- **Completed action:** added opt-in bookkeeping/effect-dispatch CPU metrics
+  and measured actual GameplayModel playback through chart time 8 s across
+  SEKAI, SIF and 22/7. This exposed and fixed BF-23: rejected signed stream IDs
+  stopped 22/7 on contact. The repeated probe succeeds for all three engines;
+  these two phases did not emerge as bottlenecks. Sixteen focused tests,
+  384 non-cached tests, normal build and independent review pass. Work is local.
+- **Selected next action:** one bounded contract review of the remaining host
+  and resource ID-domain assumptions. Distinguish numeric identities from
+  array indices before claiming generic compatibility; inspect actual public
+  constraints rather than copying the stream fix into unrelated functions.
+- **Why:** BF-23 demonstrated that the tests could reinforce an invented
+  restriction while no-touch fixtures missed a normal interaction path. This
+  merits a cross-API check, not more tuning of already-small audio timings.
+- **Acceptance:** either identify a contract-supported rejected value and add
+  its reproducer/fix, or record the finite reviewed set and negative finding.
+  No arbitrary broadening of indices, no speculative optimization, and no
+  reopening device testing or deferred stack implementation.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -179,6 +178,40 @@ contacts. Passing that pair reinforced the same blind spot rather than
 independently checking the contract. The new cached regression requires an
 actual stage-touch stream write and repeats after restart; positive-input
 coverage must accompany lifecycle coverage when evaluating another engine.
+
+### Live gameplay phase diagnostic — September 30
+
+Opt-in saved timing reports now include **Gameplay bookkeeping** (score/life
+snapshots, judgment storage/feedback and haptic dispatch) and **Effect audio
+dispatch** (command collection, clock reads and native scheduling). They sample
+completed CPU phases only, including idle polls; they do not measure SwiftUI
+layout, acoustic latency or total display-frame time. Recording remains off by
+default, with existing per-play isolation, fixed storage and string-keyed report
+compatibility. Recording work is outside the adjacent phase's timing interval.
+
+The bounded cached probe used actual GameplayModel/AVPlayer, generated local
+music and native effect audio, default engine options, aspect 1.8, eight pooled
+periodic stationary contacts, and manually paced nominal 60 Hz updates through
+chart time 8 s. Sprites were generated but not submitted to a display/GPU.
+This was a Debug simulator measurement, not deterministic autoplay or physical
+input/display/acoustic validation. Means include frames with no judgments.
+
+| Cached workload | Advancing frames / successful judgments | Runtime mean ms | Bookkeeping mean / max ms | Effect dispatch mean / max ms | Sprite mean ms |
+| --- | --- | --- | --- | --- | --- |
+| shake it! Hard 18 | 469 / 18 | 8.37 | 0.01 / 0.07 | 0.02 / 0.08 | 0.91 |
+| SIF UNSTOPPABLE | 460 / 16 | 1.00 | 0.01 / 0.05 | 0.03 / 0.07 | 0.24 |
+| 22/7 cached Pro 4.9 | 460 / 33 | 2.11 | 0.01 / 0.10 | 0.03 / 0.12 | 1.86 |
+
+These samples do not justify optimizing bookkeeping or effect scheduling.
+The metrics remain available for the deferred physical batch, where dense
+inputs, route changes and scheduling costs may differ. Scratch probe/output:
+`tmp/live-gameplay-phase-profile.swift` / `tmp/live-gameplay-phase-results.txt`.
+The first probe's own fatal assertion produced a preview-process crash log on
+the handled BF-23 gameplay failure; the diagnostic was changed to print the
+failure and stop before reproducing/fixing the host defect. It was not treated
+as an unexplained native audio crash. The new report round-trip and live-clock
+phase-count checks pass with restart/debug pause coverage in the focused and
+384-test runs recorded above. Independent review found no remaining issue.
 
 BF-22 profiling covered compressed engine/chart decode, cached asset reads,
 presentation, native effect-bank construction, runtime preprocessing, Metal

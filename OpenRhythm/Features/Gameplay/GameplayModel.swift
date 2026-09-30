@@ -1117,17 +1117,28 @@ final class GameplayModel {
         timingRecorder?.record(.runtime,
           seconds: CACurrentMediaTime() - runtimeStart)
       }
+      let bookkeepingStart = timingRecorder.map { _ in CACurrentMediaTime() }
       engineScore = runtime.arcadeScore?.snapshot
       engineLife = runtime.life
       ingestJudgments(from: runtime)
+      if let bookkeepingStart {
+        timingRecorder?.record(.bookkeeping,
+          seconds: CACurrentMediaTime() - bookkeepingStart)
+      }
       if captureEngineDebugState(runtime) { return true }
       // Interpretation can consume a substantial part of a frame. Schedule
       // against the clock now, not its value before that work, or scheduled
       // hit sounds inherit the entire interpreter delay.
+      let audioStart = engineAudio == nil ? nil
+        : timingRecorder.map { _ in CACurrentMediaTime() }
       try engineAudio?.update(runtime.host.takeAudioCommands(), at: playbackTime,
         advancing: tailStart != nil || player?.timeControlStatus == .playing,
         loopCommands: runtime.host.takeLoopCommands(),
         currentTime: { self.playbackTime })
+      if let audioStart {
+        timingRecorder?.record(.effectAudio,
+          seconds: CACurrentMediaTime() - audioStart)
+      }
       finishIfReady()
       return true
     } catch {
