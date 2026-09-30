@@ -485,9 +485,16 @@ actor OfflineStore {
       name: "Offline",
       baseURL: rootURL
     )
-    let grouped = Dictionary(grouping: entries) { manifest in
-      serverOrigin(manifest.server) + "\u{0}"
-        + manifest.catalogLevel.songKey(server: manifest.server)
+    let grouped = Dictionary(grouping: entries) { serverOrigin($0.server) }
+      .flatMap { origin, manifests -> [(String, [OfflineLevelManifest])] in
+        let server = manifests[0].server
+        let byLevel = Dictionary(manifests.map { ($0.catalogLevel, $0) },
+          uniquingKeysWith: { first, _ in first })
+        return CatalogBuilder.groupedLevels(manifests.map(\.catalogLevel), server: server)
+          .map { levels in
+            (origin + "\u{0}" + CatalogBuilder.songKey(levels, server: server),
+              levels.compactMap { byLevel[$0] })
+          }
     }
 
     return grouped.map { key, manifests in

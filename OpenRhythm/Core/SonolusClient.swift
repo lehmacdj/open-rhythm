@@ -143,8 +143,8 @@ actor SonolusClient {
     // replaced. A stable chart identity locates the song's current key.
     let current = items.first { $0.id == first.id }
       ?? items.first { variants[$0.id] != nil } ?? first
-    let key = current.songKey(server: server)
-    let matching = items.filter { $0.songKey(server: server) == key }
+    let matching = CatalogBuilder.groupedLevels(items, server: server)
+      .first { $0.contains { $0.id == current.id } } ?? []
     guard !matching.isEmpty else {
       throw RuntimeBundleError.missingResource("the song's difficulty list")
     }

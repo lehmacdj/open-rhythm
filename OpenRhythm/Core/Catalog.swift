@@ -24,6 +24,7 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
   }
   let variants: [SonolusLevelItem]
   let levelOrigins: [CatalogLevelOrigin]
+  let songIdentityKeys: Set<String>
 
   var engineKey: String {
     variants.first.map { $0.engineKey(server: server(for: $0)) }
@@ -68,6 +69,10 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
     self.coverHash = coverHash
     self.variants = variants
     self.levelOrigins = levelOrigins
+    songIdentityKeys = Set(variants.flatMap { level in
+      let origin = levelOrigins.first { $0.matches(level) }?.server ?? server
+      return level.songIdentityKeys(server: origin)
+    })
     searchIndex = Set(
       title.values.flatMap { language, value in
         SearchNormalizer.searchableForms(
@@ -188,46 +193,156 @@ struct CatalogFilter: Codable, Equatable, Sendable {
 }
 
 enum CatalogBuilder {
+  /// A URL+hash locator bridges URL-only and hash-only aliases. Keep this
+  /// relation scoped to the engine and never infer an alias from title alone.
+  static func groupedLevels(_ levels: [SonolusLevelItem],
+    server: ServerDescriptor) -> [[SonolusLevelItem]] {
+    groupedIndices(levels.map { $0.songIdentityKeys(server: server) })
+      .map { $0.map { levels[$0] } }
+  }
+
+  private static func groupedIndices(_ keys: [[String]]) -> [[Int]] {
+    var parents = Array(keys.indices)
+    func root(_ index: Int) -> Int {
+      var current = index
+      while parents[current] != current {
+        parents[current] = parents[parents[current]]
+        current = parents[current]
+      }
+      return current
+    }
+    var aliases = [String: Int]()
+    for (index, identities) in keys.enumerated() {
+      for key in identities {
+        if let previous = aliases[key] {
+          let a = root(index), b = root(previous)
+          parents[max(a, b)] = min(a, b)
+        } else { aliases[key] = index }
+      }
+    }
+    var groups = [[Int]]()
+    var positions = [Int: Int]()
+    for index in keys.indices {
+      let key = root(index)
+      if let position = positions[key] { groups[position].append(index) }
+      else {
+        positions[key] = groups.count
+        groups.append([index])
+      }
+    }
+    return groups
+  }
+
   static func merge(songs: [CatalogSong], levels: [SonolusLevelItem],
     server: ServerDescriptor
   ) -> [CatalogSong] {
-    var byID = Dictionary(uniqueKeysWithValues: songs.map { ($0.id, $0) })
-    for (key, incoming) in Dictionary(grouping: levels, by: { $0.songKey(server: server) }) {
-      let id = "\(server.id):\(key)"
-      let previous = byID[id]?.variants ?? []
-      let variants = Dictionary((previous + incoming).map { ($0.id, $0) },
-        uniquingKeysWith: { _, newest in newest })
-      // Re-index only songs touched by this page, not the whole loaded catalog.
-      byID[id] = group(levels: Array(variants.values), server: server).first
+    let incoming = Dictionary(levels.map { ($0.id, $0) },
+      uniquingKeysWith: { _, newest in newest })
+    // Removing an alias can split an existing song; only that uncommon case
+    // needs a chart-level regroup. Additions can treat old groups as units.
+    for song in songs {
+      for previous in song.variants {
+        guard let updated = incoming[previous.id] else { continue }
+        let oldKeys = Set(previous.songIdentityKeys(server: server))
+        if !oldKeys.isSubset(of: Set(updated.songIdentityKeys(server: server))) {
+          return regroup(songs: songs, levels: Array(incoming.values), server: server)
+        }
+      }
     }
-    return Array(byID.values)
+    let added = Array(incoming.values)
+    let keys = songs.map { Array($0.songIdentityKeys) }
+      + added.map { $0.songIdentityKeys(server: server) }
+    var reserved = Set(songs.map(\.id))
+    return groupedIndices(keys).map { indices in
+      if indices.count == 1, let index = indices.first, index < songs.count {
+        return songs[index]
+      }
+      let previous = indices.filter { $0 < songs.count }.map { songs[$0] }
+      let fresh = indices.filter { $0 >= songs.count }.map { added[$0 - songs.count] }
+      let variants = Dictionary((previous.flatMap(\.variants) + fresh).map { ($0.id, $0) },
+        uniquingKeysWith: { _, newest in newest })
+      let ordered = ordered(Array(variants.values))
+      let oldID = previous.map(\.id).min()
+      var id = oldID ?? "\(server.id):\(songKey(ordered, server: server))"
+      if oldID == nil {
+        while reserved.contains(id) { id += "\u{0}" + ordered[0].id }
+        reserved.insert(id)
+      }
+      return makeSong(ordered, server: server, id: id)
+    }
+  }
+
+  private static func regroup(songs: [CatalogSong], levels: [SonolusLevelItem],
+    server: ServerDescriptor) -> [CatalogSong] {
+    var variants = Dictionary(songs.flatMap(\.variants).map { ($0.id, $0) },
+      uniquingKeysWith: { _, newest in newest })
+    for level in levels { variants[level.id] = level }
+    let owners = Dictionary(songs.flatMap { song in
+      song.variants.map { ($0.id, song) }
+    }, uniquingKeysWith: { first, _ in first })
+    let plans = groupedLevels(Array(variants.values), server: server).map { group in
+      let ids = Set(group.map(\.id))
+      let previous = group.compactMap { owners[$0.id] }.filter {
+        $0.variants.first.map { ids.contains($0.id) } == true
+      }.min { $0.id < $1.id }
+      return (group, previous)
+    }
+    var reserved = Set(plans.compactMap { $0.1?.id })
+    return plans.map { group, previous in
+      // Reuse unchanged search indices. Alias discovery can merge rows, but
+      // adding a locator to an existing song must not replace its row ID.
+      if let previous, previous.variants.count == group.count,
+        previous.variants.allSatisfy({ variants[$0.id] == $0 }) { return previous }
+      let ordered = ordered(group)
+      var id = previous?.id ?? "\(server.id):\(songKey(ordered, server: server))"
+      if previous == nil {
+        // A metadata refresh may split a prior group. Its original row ID
+        // belongs to only the component containing its original first chart.
+        while reserved.contains(id) { id += "\u{0}" + ordered[0].id }
+        reserved.insert(id)
+      }
+      return makeSong(ordered, server: server, id: id)
+    }
   }
 
   static func group(
     levels: [SonolusLevelItem],
     server: ServerDescriptor
   ) -> [CatalogSong] {
-    Dictionary(grouping: levels) { $0.songKey(server: server) }
-      .map { key, variants in
-        let ordered = variants.sorted {
-          if $0.difficulty.sortOrder == $1.difficulty.sortOrder {
-            return $0.rating < $1.rating
-          }
-          return $0.difficulty.sortOrder < $1.difficulty.sortOrder
-        }
-        let first = ordered[0]
-        return CatalogSong(
-          id: "\(server.id):\(key)",
-          server: server,
-          title: first.title,
-          artists: first.artists,
-          coverURL: first.cover.resolved(against: server.baseURL),
-          variants: ordered,
-          levelOrigins: ordered.map {
-            CatalogLevelOrigin(level: $0, server: server)
-          }, coverHash: first.cover.hash
-        )
+    groupedLevels(levels, server: server).map {
+      makeSong(ordered($0), server: server)
+    }
+  }
+
+  private static func ordered(_ variants: [SonolusLevelItem]) -> [SonolusLevelItem] {
+    variants.sorted {
+      if $0.difficulty.sortOrder == $1.difficulty.sortOrder {
+        return $0.rating == $1.rating ? $0.id < $1.id : $0.rating < $1.rating
       }
+      return $0.difficulty.sortOrder < $1.difficulty.sortOrder
+    }
+  }
+
+  static func songKey(_ levels: [SonolusLevelItem], server: ServerDescriptor) -> String {
+    let urlBearing = levels.filter { $0.bgm.resolved(against: server.baseURL) != nil }
+    return (urlBearing.isEmpty ? levels : urlBearing)
+      .map { $0.songKey(server: server) }.min()!
+  }
+
+  private static func makeSong(_ ordered: [SonolusLevelItem],
+    server: ServerDescriptor, id: String? = nil) -> CatalogSong {
+    let first = ordered[0]
+    return CatalogSong(
+      id: id ?? "\(server.id):\(songKey(ordered, server: server))",
+      server: server,
+      title: first.title,
+      artists: first.artists,
+      coverURL: first.cover.resolved(against: server.baseURL),
+      variants: ordered,
+      levelOrigins: ordered.map {
+        CatalogLevelOrigin(level: $0, server: server)
+      }, coverHash: first.cover.hash
+    )
   }
 }
 

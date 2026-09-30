@@ -48,6 +48,25 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
 
 ## Breadth-first triage — September 30, 2026
 
+Eighth bounded discovery pass: revisited the public offset/input and scheduled
+audio contracts, BPM/time-scale selection, stream boundary lookups, judgment
+metadata ingestion and catalog grouping. The [offset guide](
+https://wiki.sonolus.com/getting-started/advanced/offsets) and
+[PlayScheduled](https://wiki.sonolus.com/engine-specs/functions/play-scheduled)
+still do not independently establish the missing audio-offset sign/unit
+convention; no timing constant was changed. The input guide's subtraction rule
+matches the implemented input offset. No additional host mismatch was proved
+by these spot checks; they are not exhaustive API sign-off.
+
+The BF-16 Xcode probe did establish a concrete failure: URL+hash, hash-only and
+URL-only locators for one BGM produced two rows (`[easy, expert]`, `[hard]`).
+`completeSong` used the same key equality, so its discovery could exclude the
+hash-only difficulty. Promote BF-16 to P2 and select it before speculative
+atlas-allocation changes: it affects the explicit all-difficulties download
+requirement, not just row presentation. Use known URL/hash bridges scoped by
+engine, not title guesses. Verify stable row IDs, metadata replacement,
+offline grouping and persistence boundaries before shipping.
+
 Seventh bounded discovery pass: rechecked result payload/index replacement,
 playback interruption and startup-generation guards, selected skin/particle
 preparation and online artwork. No new transactional or playback defect was
@@ -83,7 +102,7 @@ a new concrete compatibility gap, not a reason to reopen URL path resolution.
 | --- | --- | --- | --- |
 | BF-14 / P1 — runtime/offline unit verified | Runtime references and saved resources retain optional URLs and per-role hashes. The collector preserves distinct identities at one URL; verified Downloads objects can serve online playback. | Integration regressions reproduced rejected hash-only engine data and wrong offline music bytes before their fixes. All 375 non-cached tests, normal build and independent post-fix review pass. | Re-triage the whole backlog. Online catalog artwork remains separately tracked as BF-15; do not claim all app SRL support. |
 | BF-15 / P2 — verified | Catalog/detail artwork now retains the cover hash and keys its loading task by the full resource reference. Verified response-cache and Downloads hits support hash-only covers; changed hashes cannot reuse stale URL bytes. | All 74 catalog/download/history tests, normal build and independent review pass. Row IDs/grouping are unchanged; these are transport and identity checks, not rendered-image measurements. | Re-triage across the backlog; no production-server or device request was needed. |
-| BF-16 / P3 — compatibility question | Song grouping uses BGM URL or title/artist fallback, not BGM hash. URL-bearing and hash-only variants can therefore receive different grouping keys. | Confirmed key construction; prevalence and a real mixed-variant failure are unverified. Changing keys also affects row stability and saved identity. | Construct a grouping fixture and assess migration before choosing any key change. Do not silently rewrite library identities. |
+| BF-16 / P2 — verified | Known URL/hash aliases now connect BGM references for catalog grouping, all-difficulty discovery and offline rows. Existing row IDs survive added aliases; splitting a group reserves its old ID for the original first chart. | Pre-fix execution produced two rows for one BGM. All 377 non-cached tests, normal build and independent review pass after incremental merge correction. Stored results and download manifests retain their existing per-level keys. Real-server prevalence is unmeasured. | Re-triage the broader API/performance/intro backlog. No title-only inference joins resource-bearing charts; a missing bridge remains insufficient evidence of identity. |
 
 Re-triage selects BF-14 ahead of further diagnostics/resource polish once the
 verified BF-12 unit is complete. Silent stale chart/engine
@@ -150,6 +169,44 @@ passed: `RunSomeTests/3EE210A6-7999-4083-8DFE-F2C9E8DF5992.txt`.
 Normal build passed: `BuildProject/BuildProject-Log-20260930-035409.txt`.
 Independent review found no actionable issue. Test payloads exercise transport, not codecs;
 no production request, whole-chart replay or device check was performed.
+
+BF-16 implementation uses a union of known URL/hash aliases, scoped by engine;
+offline rows additionally remain scoped by normalized server origin. Hash-only
+identities no longer fall back to title/artist. Different declared hashes with
+no URL bridge and different engines stay separate. A known URL+hash record can
+bridge URL-only and hash-only records, including transitive URL aliases. Title
+equality alone cannot prove that two resource-bearing levels share audio.
+
+Merge tests cover every starting locator, later bridge discovery, unchanged
+row IDs, deterministic difficulty ties, repeat pages, engine separation and
+same-ID metadata replacement that splits a group without duplicate SwiftUI
+IDs. The actual song-download fixture now mixes three locator forms, saves
+all three difficulties, rereads manifests into one offline row and still
+fetches the shared payload once. Manifest filenames and result keys remain
+per-level and unchanged; no saved library migration or deletion occurs.
+
+An initial full-regroup implementation cost 34.1–36.6 ms for a page addition
+to 1,000 songs × five difficulties, versus 1.03–1.11 ms for the prior URL-only
+algorithm. That regression was caught before shipping. Cached per-song alias
+keys now let additions reuse old groups/search indices; only removal of an
+existing chart's identity alias requires the full split-capable regroup.
+The repeated six-sample paired Debug simulator probe measured 3.34–3.63 ms
+versus 1.03–1.32 ms for the legacy algorithm. At 100 songs it measured
+0.77–0.84 ms versus 0.57–0.71 ms. Both paths add the same 20 new rows, with
+fixture construction excluded and execution order alternated. This is a
+bounded page-merge CPU comparison, not device scrolling/FPS evidence; the
+model already performs merge work in a detached task. The residual alias
+overhead remains explicit rather than claiming a general speed improvement.
+
+All 75 catalog/download/history tests pass after the incremental revision:
+`RunSomeTests/54305AFB-287F-41E2-B46E-8297F641CB89.txt`.
+Independent read-only review found no actionable issue. All 377 non-cached
+simulator tests passed:
+`RunSomeTests/E25A1241-F73B-47BE-92C0-0A415CA4FC64.txt`.
+Normal build passed: `BuildProject/BuildProject-Log-20260930-040742.txt`.
+No production request, full-chart replay or physical check was needed.
+Re-triage after this unit, rather than optimizing
+alias matching to parity with the less-capable URL-only algorithm.
 
 BF-12 verification: a new regression failed before implementation on stream,
 draw, loop, audio queue, effect clip and software-size errors:

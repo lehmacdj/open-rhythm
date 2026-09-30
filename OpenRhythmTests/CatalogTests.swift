@@ -2,6 +2,52 @@ import XCTest
 @testable import OpenRhythm
 
 final class CatalogTests: XCTestCase {
+  func testBGMAliasesGroupDifficultiesWithoutChangingExistingRows() throws {
+    let hash = String(repeating: "a", count: 40)
+    func item(_ id: String, hash: String?, url: String?, engine: String? = nil)
+      -> SonolusLevelItem {
+      let empty = ResourceLocator(hash: nil, url: nil)
+      return SonolusLevelItem(name: id, source: nil, version: 1, rating: 7,
+        title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+        author: "Fixture", tags: [], cover: empty,
+        bgm: ResourceLocator(hash: hash, url: url), data: empty,
+        engine: engine.map { SonolusEngineIdentity(name: $0) })
+    }
+    let a = item("a", hash: hash, url: "/music")
+    let b = item("b", hash: hash.uppercased(), url: nil)
+    let c = item("c", hash: nil, url: "/music")
+    let d = item("d", hash: hash, url: "/alias")
+    let e = item("e", hash: nil, url: "/alias")
+    let all = [a, b, c, d, e]
+    for start in all {
+      let first = CatalogBuilder.group(levels: [start], server: server)
+      let merged = CatalogBuilder.merge(songs: first,
+        levels: all.filter { $0.id != start.id }, server: server)
+      XCTAssertEqual(merged.count, 1)
+      XCTAssertEqual(merged.first?.id, first[0].id)
+      XCTAssertEqual(merged.first?.variants.map(\.id), ["a", "b", "c", "d", "e"])
+      let repeated = CatalogBuilder.merge(songs: merged, levels: all, server: server)
+      XCTAssertEqual(repeated, merged)
+    }
+    let sameTitleDifferentHash = item("other", hash: String(repeating: "b", count: 40), url: nil)
+    let otherEngine = item("other-engine", hash: hash, url: "/music", engine: "another")
+    XCTAssertEqual(CatalogBuilder.group(levels: all + [sameTitleDifferentHash, otherEngine],
+      server: server).count, 3)
+    let unbridged = CatalogBuilder.group(levels: [b, c], server: server)
+    XCTAssertEqual(unbridged.count, 2, "A title match is not proof of a resource alias")
+    let bridged = CatalogBuilder.merge(songs: unbridged, levels: [a], server: server)
+    XCTAssertEqual(bridged.count, 1)
+    XCTAssertTrue(unbridged.contains { $0.id == bridged[0].id })
+    let original = CatalogBuilder.group(levels: [a, c], server: server)
+    let moved = item("a", hash: String(repeating: "c", count: 40), url: "/changed")
+    let split = CatalogBuilder.merge(songs: original, levels: [moved], server: server)
+    XCTAssertEqual(split.count, 2)
+    XCTAssertEqual(Set(split.map(\.id)).count, 2, "A split must not duplicate a SwiftUI ID")
+    XCTAssertEqual(split.first { $0.variants.contains { $0.id == "a" } }?.id, original[0].id)
+    XCTAssertEqual(split.flatMap(\.variants).filter { $0.id == "a" }, [moved],
+      "A metadata update replaces the chart rather than leaving a stale duplicate")
+  }
+
   @MainActor
   func testOfflineVisibleRowsFollowSongsFiltersAndEnginePreferences() throws {
     let suite = "OfflineVisibleRows.\(UUID().uuidString)"

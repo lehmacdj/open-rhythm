@@ -60,12 +60,27 @@ struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
     if let bgmURL = bgm.resolved(against: server.baseURL) {
       return prefix + bgmURL.absoluteString
     }
+    if let hash = bgm.hash.flatMap({ try? ContentAddress.normalizedSHA1($0) }) {
+      return prefix + "sha1:" + hash
+    }
 
     return prefix + SearchNormalizer.normalize(
       title.searchValues.joined(separator: " ")
         + "\u{0}"
         + artists.searchValues.joined(separator: " ")
     )
+  }
+
+  func songIdentityKeys(server: ServerDescriptor) -> [String] {
+    let prefix = engineKey(server: server) + "\u{0}"
+    var keys = [String]()
+    if let url = bgm.resolved(against: server.baseURL) {
+      keys.append(prefix + "url:" + url.absoluteString)
+    }
+    if let hash = bgm.hash.flatMap({ try? ContentAddress.normalizedSHA1($0) }) {
+      keys.append(prefix + "sha1:" + hash)
+    }
+    return keys.isEmpty ? [prefix + "text:" + songKey(server: server)] : keys
   }
 }
 

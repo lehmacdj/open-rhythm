@@ -1560,12 +1560,14 @@ final class OfflineStoreTests: XCTestCase {
     let locator = ResourceLocator(
       hash: "043c442d55264f4fb778fc32b387254d6dc40f92",
       url: "https://assets.example/data")
-    let levels = ["#EASY", "#EXPERT"].enumerated().map { index, difficulty in
+    let levels = ["#EASY", "#EXPERT", "#MASTER"].enumerated().map { index, difficulty in
       SonolusLevelItem(name: "level-\(index)", source: nil, version: 1,
         rating: Double(index + 1), title: LocalizedText("Song"),
         artists: LocalizedText("Artist"), author: "Fixture",
         tags: [SonolusTag(title: difficulty)],
-        cover: ResourceLocator(hash: nil, url: nil), bgm: locator, data: locator)
+        cover: ResourceLocator(hash: nil, url: nil),
+        bgm: ResourceLocator(hash: index == 2 ? nil : locator.hash,
+          url: index == 1 ? nil : locator.url), data: locator)
     }
     let song = CatalogBuilder.group(levels: [levels[0]], server: server)[0]
     let list = try JSONEncoder().encode(SonolusLevelList(pageCount: 1, items: levels))
@@ -1603,7 +1605,10 @@ final class OfflineStoreTests: XCTestCase {
     let complete = try await store.download(song: song)
     XCTAssertEqual(Set(complete.variants.map(\.id)), Set(levels.map(\.id)))
     let manifests = try await store.manifests()
-    XCTAssertEqual(manifests.count, 2)
+    XCTAssertEqual(manifests.count, 3)
+    let offline = try await store.catalogSnapshot()
+    XCTAssertEqual(offline.songs.count, 1)
+    XCTAssertEqual(Set(offline.songs[0].variants.map(\.id)), Set(levels.map(\.id)))
     let completeStatus = await store.containsAllDifficulties(
       of: complete, discoverySucceeded: true)
     XCTAssertTrue(completeStatus)
