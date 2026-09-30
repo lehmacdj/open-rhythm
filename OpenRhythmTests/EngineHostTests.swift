@@ -5187,11 +5187,42 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(try call("StreamGetPreviousKey", [0, -1]), -1)
     XCTAssertEqual(try call("StreamGetNextKey", [0, 11]), 11)
     XCTAssertThrowsError(try call("StreamSet", [0, .nan, 1]))
-    XCTAssertThrowsError(try call("StreamSet", [-1, 0, 1]))
-    XCTAssertThrowsError(try call("StreamSet", [0.5, 0, 1]))
     _ = try call("StreamSet", [2, -Double.greatestFiniteMagnitude, -100])
     _ = try call("StreamSet", [2, Double.greatestFiniteMagnitude, 100])
     XCTAssertEqual(try call("StreamGetValue", [2, 0]), 0)
+  }
+
+  func testStreamIDsPreserveSignedFractionalAndLargeNumbers() throws {
+    let host = makeHost()
+    let ids: [Double] = [-9999, -1, -0.5, 0, 0.5, 1,
+      Double(Int.max), Double.greatestFiniteMagnitude]
+    for (index, id) in ids.enumerated() {
+      _ = try host.call(function: "StreamSet", arguments: [id, -2, Double(index)])
+      _ = try host.call(function: "StreamSet", arguments: [id, 2, Double(index + 4)])
+    }
+    let restore = host.makeRestorePoint()
+    for (index, id) in ids.enumerated() {
+      XCTAssertEqual(try host.call(function: "StreamHas", arguments: [id, -2]), 1)
+      XCTAssertEqual(try host.call(function: "StreamHas", arguments: [id, 0]), 0)
+      XCTAssertEqual(try host.call(function: "StreamGetValue", arguments: [id, 0]),
+        Double(index + 2), "Stream IDs must not be truncated or aliased")
+      XCTAssertEqual(try host.call(function: "StreamGetNextKey", arguments: [id, 0]), 2)
+      XCTAssertEqual(try host.call(function: "StreamGetPreviousKey", arguments: [id, 0]), -2)
+      _ = try host.call(function: "StreamSet", arguments: [id, -2, 99])
+    }
+    restore()
+    for (index, id) in ids.enumerated() {
+      XCTAssertEqual(try host.call(function: "StreamGetValue", arguments: [id, -2]),
+        Double(index))
+    }
+    XCTAssertEqual(try host.call(function: "StreamGetValue", arguments: [-0.0, -2]), 3)
+    for function in ["StreamSet", "StreamHas", "StreamGetValue",
+      "StreamGetNextKey", "StreamGetPreviousKey"] {
+      for invalid in [Double.nan, .infinity, -.infinity] {
+        let arguments = [invalid, 0] + (function == "StreamSet" ? [1] : [])
+        XCTAssertThrowsError(try host.call(function: function, arguments: arguments))
+      }
+    }
   }
 
   func testStreamBudgetCountsAllStreamsButAllowsReplacement() throws {
@@ -5199,11 +5230,11 @@ final class EngineHostTests: XCTestCase {
       level: LevelData(bgmOffset: 0, entities: []), skinSpriteIDs: [],
       effectClipIDs: [], particleEffectIDs: [], archetypeCount: 0,
       streamEntryLimit: 2)
-    _ = try host.call(function: "StreamSet", arguments: [0, 0, 1])
-    _ = try host.call(function: "StreamSet", arguments: [1, 0, 2])
-    _ = try host.call(function: "StreamSet", arguments: [0, 0, 3])
+    _ = try host.call(function: "StreamSet", arguments: [-9999, 0, 1])
+    _ = try host.call(function: "StreamSet", arguments: [0.5, 0, 2])
+    _ = try host.call(function: "StreamSet", arguments: [-9999, 0, 3])
     XCTAssertThrowsError(try host.call(function: "StreamSet", arguments: [2, 0, 4]))
-    XCTAssertEqual(try host.call(function: "StreamGetValue", arguments: [0, 0]), 3)
+    XCTAssertEqual(try host.call(function: "StreamGetValue", arguments: [-9999, 0]), 3)
     XCTAssertEqual(try host.call(function: "StreamHas", arguments: [2, 0]), 0)
   }
 

@@ -158,6 +158,27 @@ The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
 | BF-20 / P2 — verified | Catalog artwork and relative BGM identity ignored the level source. The regression reproduced wrong cover URLs, incorrectly joined different-origin audio, and a missed absolute-URL alias. | Shared level resource-base resolution now matches runtime/offline behavior. All 77 catalog/offline tests, normal build and independent review pass. Absolute URLs, absent-source fallback, existing incremental row IDs and persisted result/download identities are preserved. |
 | BF-21 / bounded regression verified | New opt-in Eleventh normal-flick regression resolves entity 6: stationary control misses, measured upward movement succeeds at +1/60 s, and restart repeats the result. | Pooled/coalesced sample path, cached engine and unchanged windows/options; independent review clean. This closes the named cached-workload gap, not other flick variants, UIKit/physical delivery or acoustic timing. No gameplay code or calibration was changed. |
 | BF-22 / P2 — verified | Cross-engine preparation profiling isolated repeated per-pixel tint arithmetic as a main-actor loading cost. Exact 256-entry channel tables now amortize that work; below 256 pixels the original arithmetic avoids table setup. | Paired Debug presentation means: SEKAI 461.9→312.2 ms, SIF 10.6→8.6 ms, 22/7 61.3→40.6 ms. Exhaustive channel-byte equivalence, tiny/cutoff images, alpha, metadata and allocation-failure checks pass in 20 focused tests. Normal build and independent review pass. Loading improvement only; in-song/device performance remains open. |
+| BF-23 / P1 — verified | Native-clock/cached-engine contacts failed immediately in 22/7 with invalid StreamSet arguments. Cached engine node 627 explicitly writes stream ID -9999; the host invented a nonnegative-integer restriction. Prior no-touch lifecycle tests never reached that contact path. | All five stream functions now preserve finite numeric IDs without narrowing. New synthetic and cached contact/restart regressions failed before the fix; 16 focused tests, all 384 non-cached tests, normal build and independent review pass afterward. The actual GameplayModel probe now reaches chart time 8 s in all three engines, including 33 successful 22/7 judgments. |
+
+BF-23 is a contract/coverage correction, not an engine-name exception. The
+public [StreamSet contract](https://wiki.sonolus.com/engine-specs/functions/stream-set)
+does not constrain IDs to nonnegative integers, and
+[ReplayData](https://wiki.sonolus.com/replay-specs/resources/replay-data)
+represents stream IDs as numbers. Signed/fractional/large finite IDs now remain
+distinct across get/has/neighbor/set operations. Nonfinite rejection, total
+entry budgets, replacement, interpolation and prepared-state restore remain.
+The regression also checks signed zero and values beyond Int's range.
+Pre-fix failures: `RunSomeTests/53046CE5-1456-46C7-BB7A-5402224B755C.txt`.
+Post-fix focused run: `RunSomeTests/F4276FAC-2C93-43F4-95A7-8A6EEF12388E.txt`.
+Broader suite: `RunSomeTests/D904DC7D-49FA-4321-9A3B-F1ED73E3E3D0.txt`;
+normal build: `BuildProject/BuildProject-Log-20260930-172346.txt`.
+
+Why prior checks missed it: the general stream test explicitly encoded the
+unsupported ID restriction, while the full cached 22/7 workload supplied no
+contacts. Passing that pair reinforced the same blind spot rather than
+independently checking the contract. The new cached regression requires an
+actual stage-touch stream write and repeats after restart; positive-input
+coverage must accompany lifecycle coverage when evaluating another engine.
 
 BF-22 profiling covered compressed engine/chart decode, cached asset reads,
 presentation, native effect-bank construction, runtime preprocessing, Metal

@@ -992,6 +992,19 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Interpreter performance validation
 
+### Stream identity conformance — September 30, 2026
+
+All five stream functions preserve finite numeric IDs, including negative,
+fractional and large values, rather than narrowing them to nonnegative Ints.
+The [StreamSet contract](https://wiki.sonolus.com/engine-specs/functions/stream-set)
+does not specify that narrowing, and the
+[replay stream schema](https://wiki.sonolus.com/replay-specs/resources/replay-data)
+uses numeric IDs. Cached 22/7 stage touches exposed the defect by writing -9999.
+Both synthetic ID-domain and actual cached contact/restart checks failed before
+the fix and pass afterward. Nonfinite guards, aggregate entry budgets,
+interpolation and restore semantics remain unchanged. See BF-23 in REQUESTS.md
+for the broader live-probe scope; no-touch lifecycle tests alone missed it.
+
 ### Particle tint preparation — September 30, 2026
 
 Cached cross-engine preparation profiling separately measured resource decode,

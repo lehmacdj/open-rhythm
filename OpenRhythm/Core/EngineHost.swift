@@ -135,7 +135,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private var scheduledLife = [(time: Double, amount: Double)]()
   private var scheduledLifeIndex = 0
   private var lifeScheduleSorted = true
-  private var streams = [Int: EngineStream]()
+  private var streams = [Double: EngineStream]()
   private var streamEntryCount = 0
   private let streamEntryLimit: Int
   private var nextParticleID = 1
@@ -461,10 +461,10 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       "StreamGetNextKey", "StreamGetPreviousKey":
       try validate(a, count: function == "StreamSet" ? 3 : 2,
         function: function)
-      let id = try identifier(a[0], function: function)
-      guard id >= 0 else {
-        throw EngineInterpreterError.invalidArguments(function)
-      }
+      // Streams use numeric identities, not resource-array indices. Engines
+      // may use negative IDs (22/7 uses -9999), fractions or large values.
+      // validate() above keeps nonfinite values out of dictionary keys.
+      let id = a[0]
       let key = a[1]
       // Do not copy the stream across a mutation: writes typically append
       // samples and should not copy an ever-growing buffer each frame.

@@ -38,6 +38,46 @@ final class CachedEngineIntegrationTests: XCTestCase {
     try await checkChart(engineFolder: "nanaon", chart: "nanaon/level.gz")
   }
 
+  func testNanaonStageTouchesWriteSignedStreamAcrossRestart() throws {
+    let root = try XCTUnwrap(FileManager.default.urls(
+      for: .cachesDirectory, in: .userDomainMask).first)
+      .appendingPathComponent("OpenRhythmIntegrationFixtures/nanaon")
+    guard FileManager.default.fileExists(atPath: root.path) else {
+      throw XCTSkip("Optional cached chart fixtures are not installed.")
+    }
+    let engine = try CompressedJSONDecoder.decode(EnginePlayData.self,
+      from: Data(contentsOf: root.appendingPathComponent("engine.gz")))
+    let level = try CompressedJSONDecoder.decode(LevelData.self,
+      from: Data(contentsOf: root.appendingPathComponent("level.gz")))
+    let resources = try Dictionary(uniqueKeysWithValues:
+      ["configuration", "skinData", "skinTexture", "particleData",
+        "particleTexture"].map {
+        ($0, try Data(contentsOf: root.appendingPathComponent($0)))
+      })
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: RuntimePresentation(resources: resources))
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: assets.options, aspectRatio: 1.8,
+      skinSpriteIDs: Set(assets.skin.keys),
+      effectClipIDs: Set(engine.effect.clips.map(\.id)),
+      particleEffectIDs: Set(assets.particles.keys))
+    for _ in 0..<2 {
+      runtime.restart()
+      try runtime.update(at: 0)
+      XCTAssertEqual(try runtime.host.call(function: "StreamHas",
+        arguments: [-9999, 1.0 / 60]), 0)
+      let point = EnginePoint(x: 0, y: -0.75)
+      let touch = EngineTouch(id: 1, started: true, ended: false,
+        time: 1.0 / 60, startTime: 1.0 / 60, position: point,
+        startPosition: point, delta: EnginePoint(x: 0, y: 0))
+      try runtime.update(at: 1.0 / 60, touches: [touch])
+      XCTAssertEqual(try runtime.host.call(function: "StreamHas",
+        arguments: [-9999, 1.0 / 60]), 1,
+        "22/7's stage contact callback writes the signed stream ID -9999")
+      XCTAssertFalse(runtime.host.draws.isEmpty)
+    }
+  }
+
   func testSekaiStartupSkipsUnchangedStageUntilFirstVisibleNotes() async throws {
     let cache = try XCTUnwrap(FileManager.default.urls(
       for: .cachesDirectory, in: .userDomainMask).first)
