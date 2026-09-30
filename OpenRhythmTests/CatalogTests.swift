@@ -2,6 +2,65 @@ import XCTest
 @testable import OpenRhythm
 
 final class CatalogTests: XCTestCase {
+  func testSortKeysPreserveFilteringLocalizationAndStableTies() {
+    let songs: [CatalogSong] = (0..<40).map { index in
+      let title = LocalizedText(
+        "##LOCALIZE:{\"en\":\"Song \(index % 7)\","
+          + "\"ja\":\"曲 \(6 - index % 7)\"}")
+      let variants = [
+        level(name: "\(index)-easy", rating: Double(index % 9) + 0.5,
+          difficulty: "#EASY", title: title),
+        level(name: "\(index)-hard", rating: Double(index % 11) + 5.5,
+          difficulty: "#HARD", title: title),
+        level(name: "\(index)-expert", rating: Double(index % 13) + 7.5,
+          difficulty: "#EXPERT", title: title)
+      ]
+      return CatalogSong(id: String(index), server: server, title: title,
+        artists: LocalizedText("Artist \(index % 4)"), coverURL: nil,
+        variants: index == 39 ? [] : variants.reversed(), levelOrigins: [])
+    }
+    // Independent simple reference: materialize the ordered matching charts,
+    // then compare song metadata directly, as the previous implementation did.
+    for locale in [Locale(identifier: "en_US"), Locale(identifier: "ja_JP")] {
+      for sort in CatalogSort.allCases {
+        for query in ["", "Song 2", "Artist 1", "no matches"] {
+          for bounded in [false, true] {
+            var filter = CatalogFilter()
+            filter.sort = sort
+            filter.query = query
+            if bounded {
+              filter.minimumRating = 7.5
+              filter.maximumRating = 12.5
+              filter.difficulties = [.hard, .expert]
+            }
+            let expected = songs.filter {
+              !filter.matchingVariants(in: $0).isEmpty
+                && (query.isEmpty || $0.matches(query: query))
+            }.sorted { left, right in
+              if sort == .difficulty {
+                let a = filter.matchingVariants(in: left).first!.rating
+                let b = filter.matchingVariants(in: right).first!.rating
+                if a != b { return a < b }
+              }
+              let a = (sort == .artist ? left.artists : left.title)
+                .displayValue(locale: locale)
+              let b = (sort == .artist ? right.artists : right.title)
+                .displayValue(locale: locale)
+              let order = a.localizedStandardCompare(b)
+              return order == .orderedSame ? left.id < right.id
+                : order == .orderedAscending
+            }.map(\.id)
+            XCTAssertEqual(filter.apply(to: songs, locale: locale).map(\.id),
+              expected, "\(locale.identifier) \(sort) \(query) \(bounded)")
+            XCTAssertEqual(
+              filter.apply(to: songs.reversed(), locale: locale).map(\.id),
+              expected, "Input order must not change deterministic tie breaks")
+          }
+        }
+      }
+    }
+  }
+
   @MainActor
   func testFractionalRatingsDecodeFilterAndPersistWithoutTruncation() throws {
     let json = #"""

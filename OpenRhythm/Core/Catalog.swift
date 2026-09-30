@@ -128,11 +128,7 @@ struct CatalogFilter: Codable, Equatable, Sendable {
   }
 
   func matchingVariants(in song: CatalogSong) -> [SonolusLevelItem] {
-    song.variants.filter { level in
-      difficulties.contains(level.difficulty)
-        && (minimumRating.map { level.rating >= $0 } ?? true)
-        && (maximumRating.map { level.rating <= $0 } ?? true)
-    }.sorted {
+    song.variants.filter(matches).sorted {
       if $0.rating != $1.rating { return $0.rating < $1.rating }
       if $0.difficulty != $1.difficulty {
         return $0.difficulty.sortOrder < $1.difficulty.sortOrder
@@ -152,43 +148,37 @@ struct CatalogFilter: Codable, Equatable, Sendable {
   func apply(to songs: [CatalogSong], locale: Locale = .current)
     -> [CatalogSong]
   {
-    let filtered = songs.filter { song in
-      !matchingVariants(in: song).isEmpty
-        && (query.isEmpty || song.matches(query: query))
+    // These keys are immutable for this pass. Resolving them in the sort
+    // comparator repeatedly decoded difficulty tags and sorted each song's
+    // variants, multiplying main-thread work as the catalog grew.
+    let keyed = songs.compactMap { song
+      -> (song: CatalogSong, rating: Double, label: String)? in
+      var rating: Double?
+      for level in song.variants where matches(level) {
+        rating = min(rating ?? level.rating, level.rating)
+      }
+      guard let rating, query.isEmpty || song.matches(query: query) else {
+        return nil
+      }
+      let label = (sort == .artist ? song.artists : song.title)
+        .displayValue(locale: locale)
+      return (song, rating, label)
     }
 
-    return filtered.sorted { left, right in
-      func ordered(_ a: String, _ b: String) -> Bool {
-        let comparison = a.localizedStandardCompare(b)
-        return comparison == .orderedSame ? left.id < right.id
-          : comparison == .orderedAscending
+    return keyed.sorted { left, right in
+      if sort == .difficulty, left.rating != right.rating {
+        return left.rating < right.rating
       }
-      switch sort {
-      case .title:
-        return ordered(
-          left.title.displayValue(locale: locale),
-          right.title.displayValue(locale: locale)
-        )
-      case .artist:
-        return ordered(
-          left.artists.displayValue(locale: locale),
-          right.artists.displayValue(locale: locale)
-        )
-      case .difficulty:
-        let leftRating = matchingVariants(in: left).first?.rating ?? 0
-        let rightRating = matchingVariants(in: right).first?.rating ?? 0
-        return leftRating == rightRating
-          ? ordered(
-            left.title.displayValue(locale: locale),
-            right.title.displayValue(locale: locale)
-          )
-          : leftRating < rightRating
-      }
-    }
+      let comparison = left.label.localizedStandardCompare(right.label)
+      return comparison == .orderedSame ? left.song.id < right.song.id
+        : comparison == .orderedAscending
+    }.map(\.song)
   }
 
-  private func compare(_ left: String, _ right: String) -> Bool {
-    left.localizedStandardCompare(right) == .orderedAscending
+  private func matches(_ level: SonolusLevelItem) -> Bool {
+    difficulties.contains(level.difficulty)
+      && (minimumRating.map { level.rating >= $0 } ?? true)
+      && (maximumRating.map { level.rating <= $0 } ?? true)
   }
 }
 

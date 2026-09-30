@@ -48,6 +48,43 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
 
 ## Breadth-first triage — September 30, 2026
 
+Second bounded discovery pass: catalog filtering/pagination, engine option
+defaults, result metadata and persistence were inspected. No new defect was
+confirmed in pagination invalidation or atomic result writes by this spot check;
+that is not exhaustive coverage. New findings are recorded before implementation:
+
+| ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
+| --- | --- | --- | --- |
+| BF-08 / P2 — bounded optimization verified | Catalog filtering now computes matching minimum rating and localized sort label once per song. The same generated 1,000-song/five-variant simulator probe improved difficulty sorting from 303–312 ms to 13.5–14.2 ms, title from 59–63 ms to 16.8–17.9 ms, and artist from 20–21 ms to 10.6–10.8 ms. | Shared online/offline filter path; output-equivalence regression, 68 focused tests, normal build and independent review pass. Synthetic simulator timings do not establish the cause or magnitude of phone scroll jitter. | Re-triage below. Remaining repeated whole-catalog passes and actual phone scrolling stay separate; no persistent keys, cache invalidation change or catalog/index redesign. |
+| BF-09 / P2 — queued | Runtime score-mode selection accepts a legacy generic `engineOptions["Score Mode"]` override when the dedicated setting is absent, but result `scoreModeName` reads only the dedicated setting, labeling that play with the engine default. | Source-confirmed inconsistency, with existing option tests proving the generic override is supported; persisted result reproduction still needed. Numeric gameplay scoring is not affected. | Add a result-save regression and derive the label from the same effective option value as runtime; also check standard-text label resolution. No device or stack dependency. |
+
+BF-08 is selected because the measured main-actor pause affects ordinary catalog
+use across engines, while BF-09 is limited to historical labels under legacy
+preferences. Existing gameplay/compatibility questions remain open with their
+evidence and device/contract dependencies; neither finding justifies a guessed
+timing correction. Re-triage after this bounded optimization.
+
+BF-08 verification: the reference-equivalence regression covers both English
+and Japanese title selection, all three sorts, empty and nonempty queries,
+no matches, empty variants, fractional rating bounds, difficulty subsets,
+equal-key ID ties and reversed input order (96 comparisons). All 68
+Catalog/OfflineStore/ResultStore tests passed, including append-order and
+pagination regressions:
+`RunSomeTests/015003B4-5865-49A7-A414-A4FCB3E260DD.txt`.
+Normal build passed:
+`BuildProject/BuildProject-Log-20260930-023814.txt`.
+Independent read-only post-fix review reported no actionable findings.
+No production-server requests, cached gameplay replays or physical-device
+checks were needed for this pure catalog transformation.
+
+Re-triage: BF-09 is the next bounded reproducible correctness candidate. It
+affects saved result interpretation without a device/stack dependency, whereas
+remaining catalog refresh/index redesign lacks a newly demonstrated requirement
+and the major physical timing/input questions remain gated. Reproduce the
+result-save mismatch before changing it; preserve the existing numeric scoring
+and inspect whether other result labels share the same discrepancy. Do not
+extend BF-08 toward perfect catalog performance before that cross-area step.
+
 This initial discovery pass inspected result persistence/history, offline
 manifest lookup and cleanup, catalog pagination/prefetch, gameplay startup and
 stopped-clock input, touch sampling, and Metal submission/completion handling.
