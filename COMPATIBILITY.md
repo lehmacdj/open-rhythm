@@ -1036,6 +1036,10 @@ native guarantees. Per-engine preference scope remains an explicit user policy.
 
 ## Stack implementation evidence needed
 
+Deferred by user direction on September 29. Retain the explicit unsupported
+preflight, but do not let this dependency block non-stack implementation or
+verification. The draft is not authorized for posting.
+
 The September 25 contract recheck still does not supply an interoperable stack
 layout. The [overview](
 https://wiki.sonolus.com/engine-specs/functions/stack-functions) locates the

@@ -6,6 +6,12 @@ phone audio alignment, touch handling, or frame pacing is correct.
 
 ## Current verification order — reaffirmed September 27, 2026
 
+September 29 priority update: defer the 14 stack operations and their upstream
+clarification for now. Continue the non-stack audit, implementation and
+simulator verification; the stack contract is not a blocker for that work.
+This is not a claim that the remaining non-stack requirements are complete,
+nor permission to post the draft or resume physical-device testing.
+
 Per the user's latest direction, postpone real-device testing until Sonolus
 API coverage is complete, then perform the outstanding physical checks in one
 large batch. Do not request phone unlocks, install or launch development builds
@@ -977,8 +983,9 @@ acoustic/hardware checks remain part of items 1, 4, 5 and 6 above. Do not infer
 calibration from these checks. A bounded independent resource review on
 September 27 found no new contract-supported defect; undocumented parity and
 the stack ABI remain open. A public stack-contract clarification draft is
-prepared locally, awaiting permission to post to Sonolus/feedback; no issue
-has been submitted.
+prepared locally; both stack implementation and upstream clarification are
+deferred by the September 29 instruction. No issue has been submitted. Continue
+the remaining non-stack work without waiting for approval on that draft.
 
 ## Deliberately not added / superseded requests
 
