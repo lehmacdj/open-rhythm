@@ -26,7 +26,7 @@ struct SongDetailView: View {
     Form {
       Section {
         HStack(alignment: .top, spacing: 16) {
-          SongArtwork(url: song.coverURL, contentMode: .fit)
+          SongArtwork(reference: song.artworkReference, contentMode: .fit)
           .frame(width: 96, height: 96)
           .clipShape(RoundedRectangle(cornerRadius: 12))
 

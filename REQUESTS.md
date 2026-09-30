@@ -48,6 +48,17 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
 
 ## Breadth-first triage — September 30, 2026
 
+Seventh bounded discovery pass: rechecked result payload/index replacement,
+playback interruption and startup-generation guards, selected skin/particle
+preparation and online artwork. No new transactional or playback defect was
+established by these spot checks. Earlier atlas decoding/base-crop allocation
+risk remains unproven; no allocation-to-failure or device probe was attempted.
+Select BF-15 next: the confirmed cover identity loss prevents cached hash-only
+artwork and can reuse URL-cached old covers. Preserve grouping/row identities;
+test actual artwork transport with isolated caches and no production requests.
+BF-16 needs a grouping/migration diagnostic, not an incidental key rewrite.
+The stack contract and physical timing/input checks remain gated.
+
 Sixth bounded discovery pass: rechecked UIKit touch cancellation/coalescing,
 host draw/audio/spawn limits, software frame budgets and effect preparation.
 No new input/lifecycle defect was established in that spot check. It confirmed
@@ -71,7 +82,7 @@ a new concrete compatibility gap, not a reason to reopen URL path resolution.
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
 | BF-14 / P1 — runtime/offline unit verified | Runtime references and saved resources retain optional URLs and per-role hashes. The collector preserves distinct identities at one URL; verified Downloads objects can serve online playback. | Integration regressions reproduced rejected hash-only engine data and wrong offline music bytes before their fixes. All 375 non-cached tests, normal build and independent post-fix review pass. | Re-triage the whole backlog. Online catalog artwork remains separately tracked as BF-15; do not claim all app SRL support. |
-| BF-15 / P2 — discovered | Online `CatalogSong` construction and `SongArtwork` pass only a cover URL, discarding its hash. A hash-only cover therefore has no artwork source even if matching bytes are cached. | Confirmed source boundary; affects catalog/detail artwork, not runtime skin loading or the new offline-cover lookup. | Bounded hash-aware artwork lookup with cache-hit/miss tests. No extra server crawl is needed. |
+| BF-15 / P2 — verified | Catalog/detail artwork now retains the cover hash and keys its loading task by the full resource reference. Verified response-cache and Downloads hits support hash-only covers; changed hashes cannot reuse stale URL bytes. | All 74 catalog/download/history tests, normal build and independent review pass. Row IDs/grouping are unchanged; these are transport and identity checks, not rendered-image measurements. | Re-triage across the backlog; no production-server or device request was needed. |
 | BF-16 / P3 — compatibility question | Song grouping uses BGM URL or title/artist fallback, not BGM hash. URL-bearing and hash-only variants can therefore receive different grouping keys. | Confirmed key construction; prevalence and a real mixed-variant failure are unverified. Changing keys also affects row stability and saved identity. | Construct a grouping fixture and assess migration before choosing any key change. Do not silently rewrite library identities. |
 
 Re-triage selects BF-14 ahead of further diagnostics/resource polish once the
@@ -127,6 +138,18 @@ or physical-device tests were performed for this unit.
 Re-triage boundary: finish this data-integrity unit, then reconsider the entire
 backlog. Record the newly discovered artwork and grouping limitations as
 BF-15/BF-16 instead of expanding this patch into a catalog identity rewrite.
+
+BF-15 verification: the production artwork loader regression covers changed
+hashes at one URL despite an old URL-cache entry, unchanged row identity,
+uppercase hash-only cache hits, Downloads-to-online reuse, local-file checksum
+validation and corrupt/missing hash-only content without any invented request.
+Both list and detail use the full reference as SwiftUI task identity; cancelled
+tasks still cannot publish their image. The existing background image decoder
+and placeholder behavior are unchanged. All 74 catalog/download/history tests
+passed: `RunSomeTests/3EE210A6-7999-4083-8DFE-F2C9E8DF5992.txt`.
+Normal build passed: `BuildProject/BuildProject-Log-20260930-035409.txt`.
+Independent review found no actionable issue. Test payloads exercise transport, not codecs;
+no production request, whole-chart replay or device check was performed.
 
 BF-12 verification: a new regression failed before implementation on stream,
 draw, loop, audio queue, effect clip and software-size errors:
@@ -1801,7 +1824,8 @@ model level, checking that future judgments and spawned entities do not leak.
    host-function and resource conformance stay open. Server playback now
    requires engine configuration and cannot silently bypass callbacks via the
    basic lane fallback. Explicit resource overrides and declared optional ROM
-   must have usable HTTP(S) locators; absent ROM remains supported. Both online
+   must have HTTP(S) URLs or valid cached hash identities; absent ROM remains
+   supported. Both online
    and offline playback perform unsupported-function preflight. Downloads may
    still archive an unsupported engine, but cannot play it through basic lanes.
    Engine option categories are now decoded and rendered in their declared

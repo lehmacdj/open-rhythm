@@ -2,6 +2,80 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  func testCatalogArtworkKeepsHashesThroughRefreshAndCacheLookup() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("artwork-identity-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let server = ServerDescriptor(id: "artwork", name: "Fixture",
+      baseURL: URL(string: "https://artwork.example")!)
+    let url = server.baseURL.appendingPathComponent("cover")
+    let old = Data("old cover".utf8)
+    let fresh = Data("new cover".utf8)
+    let cache = SonolusResponseCache(rootURL: root.appendingPathComponent("cache"))
+    _ = try await cache.data(at: url, maximumAge: 600, fetch: { old })
+    let requests = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      requests.append(request.url!)
+      return fresh
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let client = SonolusClient(session: session, cache: cache)
+    let downloadRoot = root.appendingPathComponent("downloads")
+    let loader = CatalogArtworkLoader(client: client,
+      offlineStore: OfflineStore(rootURL: downloadRoot))
+    func song(_ hash: String, url: String?) -> CatalogSong {
+      let empty = ResourceLocator(hash: nil, url: nil)
+      let level = SonolusLevelItem(name: "level", source: nil, version: 1,
+        rating: 1, title: LocalizedText("Song"), artists: LocalizedText("Fixture"),
+        author: "Fixture", tags: [], cover: ResourceLocator(hash: hash, url: url),
+        bgm: empty, data: empty)
+      return CatalogBuilder.group(levels: [level], server: server)[0]
+    }
+    let before = song(old.sha1Hex, url: "/cover")
+    let after = song(fresh.sha1Hex, url: "/cover")
+    XCTAssertEqual(before.id, after.id, "Artwork refresh cannot change row identity")
+    XCTAssertNotEqual(before.artworkReference, after.artworkReference,
+      "A changed hash must restart the artwork task even at the same URL")
+    let updated = try await loader.data(for: after.artworkReference)
+    XCTAssertEqual(updated, fresh, "Old URL-cached bytes must not hide a changed hash")
+    let hashOnly = song(fresh.sha1Hex.uppercased(), url: nil)
+    let reused = try await loader.data(for: hashOnly.artworkReference)
+    XCTAssertEqual(reused, fresh)
+    XCTAssertEqual(requests.urls, [url])
+    let stored = Data("downloaded cover".utf8)
+    let objects = downloadRoot.appendingPathComponent("Objects")
+    try FileManager.default.createDirectory(at: objects, withIntermediateDirectories: true)
+    let file = objects.appendingPathComponent(stored.sha1Hex)
+    try stored.write(to: file)
+    let fromDownload = try await loader.data(for: song(stored.sha1Hex, url: nil)
+      .artworkReference)
+    XCTAssertEqual(fromDownload, stored, "Online artwork reuses Downloads content")
+    let local = RuntimeResourceReference(url: file, hash: stored.sha1Hex)
+    let offline = try await loader.data(for: local)
+    XCTAssertEqual(offline, stored)
+    try Data("damaged cover".utf8).write(to: file)
+    do {
+      _ = try await loader.data(for: local)
+      XCTFail("Damaged local artwork must not be displayed")
+    } catch {
+      guard case SonolusClientError.resourceChecksumMismatch = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+    }
+    do {
+      _ = try await loader.data(for: song(stored.sha1Hex, url: nil).artworkReference)
+      XCTFail("A corrupt or missing hash-only cover must fail without a request")
+    } catch {
+      guard case SonolusClientError.missingResourceHash = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+    }
+    XCTAssertEqual(requests.urls, [url])
+  }
+
   func testOfflineHashedCoverLookupDoesNotReadUnrelatedObjects() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("cover-lookup-\(UUID())")

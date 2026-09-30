@@ -513,7 +513,7 @@ actor OfflineStore {
         variants: ordered.map(\.catalogLevel),
         levelOrigins: ordered.map {
           CatalogLevelOrigin(level: $0.catalogLevel, server: $0.server)
-        }
+        }, coverHash: first.level.cover.hash
       )
     }
   }

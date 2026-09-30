@@ -301,7 +301,7 @@ struct SongRow: View {
 
   var body: some View {
     HStack(spacing: 12) {
-      SongArtwork(url: song.coverURL, contentMode: .fill)
+      SongArtwork(reference: song.artworkReference, contentMode: .fill)
       .frame(width: 56, height: 56)
       .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -327,7 +327,7 @@ struct SongRow: View {
 }
 
 struct SongArtwork: View {
-  let url: URL?
+  let reference: RuntimeResourceReference
   let contentMode: ContentMode
   @State private var loadedImage: UIImage?
 
@@ -341,20 +341,10 @@ struct SongArtwork: View {
         placeholder
       }
     }
-    .task(id: url) {
+    .task(id: reference) {
       loadedImage = nil
-      guard let url else { return }
       do {
-        let bytes: Data
-        if url.isFileURL {
-          bytes = try await Task.detached(priority: .utility) {
-            try Data(contentsOf: url)
-          }.value
-        } else {
-          // Artwork shares the same persistent, coalescing response cache as
-          // catalog pages and downloads, even if HTTP cache headers are absent.
-          bytes = try await SonolusClient().resource(at: url)
-        }
+        let bytes = try await CatalogArtworkLoader().data(for: reference)
         let image = await Task.detached(priority: .utility) {
           UIImage(data: bytes)?.preparingForDisplay()
         }.value

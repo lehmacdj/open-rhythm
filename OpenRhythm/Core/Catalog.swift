@@ -18,6 +18,10 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
   let title: LocalizedText
   let artists: LocalizedText
   let coverURL: URL?
+  let coverHash: String?
+  var artworkReference: RuntimeResourceReference {
+    RuntimeResourceReference(url: coverURL, hash: coverHash)
+  }
   let variants: [SonolusLevelItem]
   let levelOrigins: [CatalogLevelOrigin]
 
@@ -54,13 +58,14 @@ struct CatalogSong: Identifiable, Hashable, Sendable {
   init(
     id: String, server: ServerDescriptor, title: LocalizedText,
     artists: LocalizedText, coverURL: URL?, variants: [SonolusLevelItem],
-    levelOrigins: [CatalogLevelOrigin]
+    levelOrigins: [CatalogLevelOrigin], coverHash: String? = nil
   ) {
     self.id = id
     self.server = server
     self.title = title
     self.artists = artists
     self.coverURL = coverURL
+    self.coverHash = coverHash
     self.variants = variants
     self.levelOrigins = levelOrigins
     searchIndex = Set(
@@ -220,8 +225,32 @@ enum CatalogBuilder {
           variants: ordered,
           levelOrigins: ordered.map {
             CatalogLevelOrigin(level: $0, server: server)
-          }
+          }, coverHash: first.cover.hash
         )
       }
+  }
+}
+
+/// Keeps artwork's content identity through cache and Downloads lookup.
+/// Image decoding stays in the view's background preparation task.
+struct CatalogArtworkLoader: Sendable {
+  var client = SonolusClient()
+  var offlineStore = OfflineStore.shared
+
+  func data(for reference: RuntimeResourceReference) async throws -> Data {
+    let hash = try reference.hash.map(ContentAddress.normalizedSHA1)
+    if let url = reference.url, url.isFileURL {
+      let bytes = try await Task.detached(priority: .utility) {
+        try Data(contentsOf: url)
+      }.value
+      if let hash, bytes.sha1Hex != hash {
+        throw SonolusClientError.resourceChecksumMismatch(hash)
+      }
+      return bytes
+    }
+    if let hash, let bytes = try await offlineStore.cachedResource(expectedSHA1: hash) {
+      return bytes
+    }
+    return try await client.resource(at: reference.url, expectedSHA1: hash)
   }
 }
