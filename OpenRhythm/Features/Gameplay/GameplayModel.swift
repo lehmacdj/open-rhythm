@@ -144,6 +144,29 @@ private final class AudioInterruptionObservation {
   deinit { center.removeObserver(token) }
 }
 
+/// Prepared audio objects can become invalid even while the Ready screen is
+/// visible, so this observer lives with the model, not with one play attempt.
+private final class AudioServicesObservation {
+  private let center: NotificationCenter
+  private var tokens = [NSObjectProtocol]()
+
+  init(center: NotificationCenter,
+    onChange: @escaping @MainActor @Sendable (Bool) -> Void) {
+    self.center = center
+    for (name, available) in [
+      (AVAudioSession.mediaServicesWereLostNotification, false),
+      (AVAudioSession.mediaServicesWereResetNotification, true)
+    ] {
+      tokens.append(center.addObserver(forName: name,
+        object: AVAudioSession.sharedInstance(), queue: .main) { _ in
+        MainActor.assumeIsolated { onChange(available) }
+      })
+    }
+  }
+
+  deinit { tokens.forEach(center.removeObserver) }
+}
+
 @MainActor
 @Observable
 final class GameplayModel {
@@ -166,6 +189,7 @@ final class GameplayModel {
   private(set) var isEngineDebugMode = false
   private(set) var isStartingPlayback = false
   private(set) var playbackNotice: String?
+  private(set) var areAudioServicesAvailable = true
   private var audioSeekCompleted = false
   private var startupLimitMediaTime: Double?
   private var startupNextTime = 0.0
@@ -239,7 +263,9 @@ final class GameplayModel {
   private(set) var presentationAssets: EnginePresentationAssets?
   private var runtimeBundle: RuntimeBundle?
   private var preparedAudio: PreparedRuntimeAudio?
-  private var engineAudio: EngineAudioPlayback?
+  private var preparedBGMURL: URL?
+  private var needsAudioRecreation = false
+  private(set) var engineAudio: EngineAudioPlayback?
   private let engineHaptics = EngineHapticPlayback()
   private var engineAspectRatio: Double?
   private var preparedRuntime: EnginePlayRuntime?
@@ -335,6 +361,7 @@ final class GameplayModel {
   private let audioNotifications: NotificationCenter
   private let audioSessionOwner = UUID()
   private var interruptionObserver: AudioInterruptionObservation?
+  private var servicesObserver: AudioServicesObservation?
   private var eventClock: PlaybackEventClock?
   var eventClockDiagnosticObservations: [PlaybackEventClock.Observation] {
     eventClock?.diagnosticObservations ?? []
@@ -396,6 +423,9 @@ final class GameplayModel {
     self.audioSession = audioSession ?? .shared
     self.audioNotifications = audioNotifications
     self.makePlayer = makePlayer
+    servicesObserver = AudioServicesObservation(center: audioNotifications) {
+      [weak self] available in self?.audioServicesChanged(available: available)
+    }
   }
 
   deinit {
@@ -446,9 +476,9 @@ final class GameplayModel {
         presentationAssets = try EnginePresentationAssets(
           engine: bundle.engine, presentation: presentation
         )
-        engineAudio = try EngineAudioPlayback(
+        engineAudio = areAudioServicesAvailable ? try EngineAudioPlayback(
           engine: bundle.engine, presentation: presentation
-        )
+        ) : nil
         runtimeBundle = bundle
       }
     } catch {
@@ -476,12 +506,49 @@ final class GameplayModel {
     resultLevelID = level.resultKey(server: server)
     resultTitle = title
     preparedAudio = bundle.preparedAudio
-    player = makePlayer(bundle.bgmURL)
+    preparedBGMURL = bundle.bgmURL
+    player = areAudioServicesAvailable ? makePlayer(bundle.bgmURL) : nil
+    needsAudioRecreation = !areAudioServicesAvailable
     phase = .ready
   }
 
+  private func audioServicesChanged(available: Bool) {
+    areAudioServicesAvailable = available
+    // Cancel pending activation/seek as well as active playback, and retire
+    // all objects tied to the old media service. Keep immutable bundle data.
+    stop()
+    player = nil
+    engineAudio = nil
+    needsAudioRecreation = true
+    playbackNotice = available
+      ? "The audio service restarted. Tap Start to play the chart again."
+      : "The audio service is unavailable. Wait for it to restart."
+  }
+
+  private func recreateAudioIfNeeded() throws {
+    guard needsAudioRecreation, let url = preparedBGMURL else { return }
+    let audio = try runtimeBundle.map { bundle in
+      guard let presentation = bundle.presentation else {
+        throw RuntimeBundleError.missingResource("engine configuration")
+      }
+      return try EngineAudioPlayback(engine: bundle.engine,
+        presentation: presentation)
+    }
+    player = makePlayer(url)
+    engineAudio = audio
+    needsAudioRecreation = false
+  }
+
   func start() {
-    guard phase == .ready, let player else { return }
+    guard phase == .ready, areAudioServicesAvailable else { return }
+    do { try recreateAudioIfNeeded() }
+    catch {
+      let error = error as NSError
+      phase = .failed("Audio playback could not be restored. "
+        + "\(error.localizedDescription) (\(error.domain), \(error.code))")
+      return
+    }
+    guard let player else { return }
     playbackNotice = nil
     presentationAssets?.configureRenderMode(preferred: settings.skinRenderMode)
     let speed = presentationAssets?.configuration.playbackSpeed(preferences: settings) ?? 1

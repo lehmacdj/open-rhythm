@@ -71,6 +71,7 @@ struct GameplayView: View {
         model.start()
       }
       .buttonStyle(.borderedProminent)
+      .disabled(!model.areAudioServicesAvailable)
       Button("Gameplay Settings", systemImage: "slider.horizontal.3") {
         showsSettings = true
       }

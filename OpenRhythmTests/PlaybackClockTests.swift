@@ -285,6 +285,151 @@ final class PlaybackClockTests: XCTestCase {
   }
 
   @MainActor
+  func testMediaServicesLossRequiresResetAndExplicitAudioRecreation()
+    async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("media-reset-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let notifications = NotificationCenter()
+    var players = [AVPlayer]()
+    let model = try makeSessionModel(PlaybackAudioSession { _ in },
+      directory: directory, nativeEngine: true, audioNotifications: notifications,
+      makePlayer: { url in
+        let player = AVPlayer(url: url)
+        players.append(player)
+        return player
+      })
+    defer { model.stop() }
+    let size = CGSize(width: 800, height: 400)
+    func waitForPlayback() async throws {
+      for _ in 0..<200 {
+        model.engineFrame(size: size, touches: [])
+        if !model.isStartingPlayback && model.playbackTime > 0 { break }
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      XCTAssertEqual(model.phase, .playing)
+      XCTAssertFalse(model.isStartingPlayback)
+      XCTAssertGreaterThan(model.playbackTime, 0)
+    }
+    model.start()
+    try await waitForPlayback()
+    let originalAudio = try XCTUnwrap(model.engineAudio)
+    let generation = model.playbackGeneration
+    await Task.detached {
+      notifications.post(name: AVAudioSession.mediaServicesWereLostNotification,
+        object: AVAudioSession.sharedInstance())
+    }.value
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertGreaterThan(model.playbackGeneration, generation)
+    XCTAssertNotNil(model.playbackNotice)
+    XCTAssertNil(model.engineAudio, "Dispose the orphaned effect graph")
+    XCTAssertEqual(players[0].rate, 0)
+    XCTAssertNil(model.resultSaveTask)
+    model.start()
+    XCTAssertEqual(model.phase, .ready, "Cannot activate while services are lost")
+    XCTAssertEqual(players.count, 1)
+    notifications.post(name: AVAudioSession.mediaServicesWereResetNotification,
+      object: AVAudioSession.sharedInstance())
+    XCTAssertEqual(model.phase, .ready, "Reset must not restart automatically")
+    XCTAssertEqual(players.count, 1, "Recreate only on explicit Start")
+    model.start()
+    XCTAssertEqual(players.count, 2)
+    XCTAssertFalse(model.engineAudio === originalAudio)
+    XCTAssertNil(model.playbackNotice)
+    try await waitForPlayback()
+    let resumedTime = model.playbackTime
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertGreaterThan(model.playbackTime, resumedTime)
+    // A reset need not be preceded by a loss, and prepared Ready models must
+    // observe it even though their ordinary interruption observer is removed.
+    model.stop()
+    let secondAudio = try XCTUnwrap(model.engineAudio)
+    notifications.post(name: AVAudioSession.mediaServicesWereResetNotification,
+      object: AVAudioSession.sharedInstance())
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertNil(model.engineAudio)
+    XCTAssertEqual(players.count, 2)
+    model.start()
+    XCTAssertEqual(players.count, 3)
+    XCTAssertFalse(model.engineAudio === secondAudio)
+    try await waitForPlayback()
+  }
+
+  @MainActor
+  func testMediaResetCancelsPendingActivationWithoutAutomaticRestart()
+    async throws {
+    let entered = expectation(description: "Initial activation pending")
+    let released = expectation(description: "Invalidated activation released")
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    let probe = AudioSessionProbe()
+    let session = PlaybackAudioSession { active in
+      let count = probe.record(active)
+      if active, count == 1 {
+        entered.fulfill()
+        guard gate.wait(timeout: .now() + 2) == .success else {
+          throw NSError(domain: "ResetActivationProbe", code: 1)
+        }
+      } else if !active, count == 2 { released.fulfill() }
+    }
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("pending-reset-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let notifications = NotificationCenter()
+    var playerCount = 0
+    let model = try makeSessionModel(session, directory: directory,
+      nativeEngine: true, audioNotifications: notifications,
+      makePlayer: { url in playerCount += 1; return AVPlayer(url: url) })
+    defer { model.stop() }
+    let size = CGSize(width: 800, height: 400)
+    model.start()
+    for _ in 0..<200 {
+      model.engineFrame(size: size, touches: [])
+      if !probe.values.isEmpty { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    await fulfillment(of: [entered], timeout: 2)
+    XCTAssertTrue(model.isStartingPlayback)
+    let generation = model.playbackGeneration
+    notifications.post(name: AVAudioSession.mediaServicesWereLostNotification,
+      object: AVAudioSession.sharedInstance())
+    XCTAssertFalse(model.areAudioServicesAvailable)
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertGreaterThan(model.playbackGeneration, generation)
+    model.start()
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertEqual(probe.values, [true])
+    notifications.post(name: AVAudioSession.mediaServicesWereResetNotification,
+      object: AVAudioSession.sharedInstance())
+    XCTAssertTrue(model.areAudioServicesAvailable)
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertEqual(playerCount, 1)
+    gate.signal()
+    await fulfillment(of: [released], timeout: 2)
+    await Task.yield()
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertEqual(probe.values, [true, false],
+      "Neither reset nor stale activation can request automatic reactivation")
+    XCTAssertNil(model.resultSaveTask)
+    model.start()
+    XCTAssertEqual(playerCount, 2)
+    for _ in 0..<200 {
+      model.engineFrame(size: size, touches: [])
+      if !model.isStartingPlayback && model.playbackTime > 0 { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertGreaterThan(model.playbackTime, 0)
+    XCTAssertEqual(probe.values, [true, false, true])
+  }
+
+  @MainActor
   func testStoppedPlayerDoesNotJudgeUntilMusicResumes() async throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("stopped-input-\(UUID())")

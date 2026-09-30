@@ -11,6 +11,19 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Media-service loss/reset is distinct from ordinary session interruption.
+  Model-lifetime observers also cover prepared Ready models, invalidate startup
+  and active attempts, and retire old BGM/effect controllers. Start is disabled
+  while services are lost; reset never autoplays. Explicit Start reconstructs
+  media objects from retained bundle data and the BGM lease, then reasserts
+  session activation. This follows [Apple QA1749](
+  https://developer.apple.com/library/archive/qa/qa1749/_index.html).
+  Isolated-notification regression failed before the fix; active/Ready and
+  blocked-activation regressions now verify new object identities and advancing
+  local music after explicit restart. All 364 non-cached simulator tests, the
+  normal build and independent review pass. No real media server was reset;
+  post-reset physical audio/effect behavior remains unverified.
+
 - Asynchronous failed Metal commands now reach the existing software fallback,
   not just synchronous encoding errors. Completion releases its frame slot
   before dispatching failure once to the main actor; weak identity-checked

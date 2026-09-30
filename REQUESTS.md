@@ -62,7 +62,7 @@ or physical-device validation. Findings below are recorded before fixing them.
 | BF-04 / P2 — fixed | Catalog and lookup reads now recover valid manifests individually and report unreadable records in the Offline UI. Strict manifest inventory, whole-song deletion and asset cleanup still fail closed on unknown references. | Mixed valid/corrupt regression verifies visible songs, download status, offline runtime-bundle preparation with zero network requests, warning lifecycle and byte-for-byte preservation. No current user file was shown corrupt. | Bounded recovery unit verified below. Damaged metadata is retained; no automatic deletion or speculative reconstruction is performed. |
 | BF-05 / P2 — batch status fixed; catalog cost separate | The five-difficulty status check now reads one fresh inventory and verifies each shared content-address/hash pair once. The same 1,000-manifest/8 MiB-object probe improved from 331–339 ms to 76–79 ms. | Confirmed improvement on song-detail status checks, not per scrolling row. Separate catalog refresh remains about 79–81 ms. Read-count/invalidation regression, 67 focused tests, normal build and independent review pass. | Keep large-library catalog construction and single-lookup scan cost as lower-priority follow-ups; no persistent memoization or relaxed integrity checks. This does not establish the cause of the reported phone scroll hitch. |
 | BF-06 / P2 — recovery fixed | A `.error` completion now triggers the existing software fallback on the main actor, once per renderer, instead of leaving Metal active after failed GPU work. The frame slot is released first; normal successful completions do not dispatch an actor task. | Injected background completion reproduced missing fallback before the fix. Strengthened regression passes with actual local audio/runtime advancement, preserved playback generation, software redraw and detach/reattach. All 362 non-cached tests, normal build and independent review pass. No real GPU fault was induced. | Physical GPU-failure/performance behavior remains deferred; this is recovery-path coverage, not a diagnosis of curved-hold slowdown. Re-triage below selects BF-07 next. |
-| BF-07 / P2 diagnosis | The SDK distinguishes media-services loss/reset from session interruptions. Gameplay/audio currently has no observer for these notifications; the haptic backend's reset handling does not establish audio recovery. | Source-level lifecycle coverage gap; no reproduced media-server reset failure. | Synthetic notification investigation and an audio-object recreation plan if needed; do not expand the bounded interruption fix into an unverified reset implementation. |
+| BF-07 / P2 — recovery fixed | Model-lifetime loss/reset observation now cancels the attempt, retires media-bound objects and disables Start while services are lost. Reset only restores availability; explicit Start recreates BGM/effect audio and reasserts session activation. | Isolated notification regression failed before the fix and now passes with fresh object identities and an advancing local player. Pending-activation cancellation/restart also passes; all 364 non-cached tests, normal build and independent review pass. Not an actual media-server reset. | Real service/device recovery remains in the deferred physical batch; do not kill host services for this diagnostic. Return to broader discovery/triage rather than extending this lifecycle unit indefinitely. |
 
 BF-01 is selected over speculative timing/render changes because it has a
 deterministic irreversible data-loss path, no evidence dependency, and a small
@@ -349,6 +349,50 @@ checks, not by killing the host audio service or resuming deferred device tests.
 Remaining catalog cost, intro classification, API/stack contract and physical
 timing/rendering requirements stay open. Do not expand BF-06 into speculative
 GPU fault generation or renderer tuning before that next bounded diagnosis.
+
+BF-07 diagnostic/fix follows the active SDK's loss/reset notifications and
+[Apple QA1749](https://developer.apple.com/library/archive/qa/qa1749/_index.html):
+reset invalidates media-bound objects and must not trigger automatic activation.
+The isolated-notification regression first showed continued playback, unchanged
+generation and retention of the original effect controller
+(`RunSomeTests/23F2160D-FF16-4361-8EC5-010A3D99E2C6.txt`). This reproduced a
+missing host response, not an actual operating-system media failure.
+
+The observer now lives with the model, so reset while Ready is not missed when
+the attempt-specific interruption observer has been removed. Loss/reset calls
+the existing stop path to invalidate callbacks, seeks, input and pending
+startup, then releases the model's player/effect-controller references. The
+immutable bundle and prepared-BGM lease/URL remain available for reconstruction.
+Start is unavailable between loss and reset. Reset does not allocate/start new
+playback: explicit Start recreates audio, and the existing serialized session
+activation reasserts category/active state. Haptic startup already recreates its
+backend. A service event while preparation is incomplete also prevents new
+media objects from being constructed until availability returns.
+
+Two regressions now pass
+(`RunSomeTests/AE92CD90-003F-4F18-9DF8-E84ACF1D3D87.txt`): active loss on a
+background notification, blocked Start, reset without autoplay, fresh player
+and effect-controller identity, advancing audio after explicit restart, reset
+without a preceding loss while Ready, and a reset while session activation is
+blocked. The already-running system activation call cannot be retroactively
+cancelled; queued release and generation guards prevent its stale continuation
+from seeking or playing. Independent post-fix review found no actionable issue.
+All 364 non-cached simulator tests pass without skips/failures
+(`RunSomeTests/9C766AA6-0C63-42AF-AB6C-DE5D781F8B5A.txt`), and the normal
+build passes (`BuildProject/BuildProject-Log-20260930-023028.txt`). The seven
+cached engine workloads were not rerun for this model-lifecycle change.
+These fixtures use local generated music and an empty effect set; they do not
+simulate invalid system audio handles or certify post-reset hit-sound playback
+on a physical device.
+
+Re-triage: the initial BF-01–07 implementation units have now been addressed,
+with their explicit measurement/physical limits retained. Do a new bounded
+cross-area discovery pass before selecting another fix: compare catalog/list
+main-thread work against the separate offline-inventory cost, recheck remaining
+play-mode resource/default contracts, and inspect results/settings persistence
+boundaries. Record newly supported findings first, then rank them against
+existing intro/API/timing/performance follow-ups. The stack crawl stays
+independent; neither it nor the deferred phone batch closes the wider audit.
 
 ## Current verification order — reaffirmed September 27, 2026
 
