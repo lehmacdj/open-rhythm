@@ -1480,7 +1480,7 @@ because an older paragraph says “more conformance.”
 | Allocation exposure (BF-11) | Earlier atlas decode/base crops lie outside later tint/upload budgets; no observed failure established. | Bounded allocation/cost diagnostic before changing limits. Do not induce OOM or claim process RSS is bounded by nominal texture payload. |
 | Scheduled audio and calibration | Native scheduled-stop kernel, offset mapping and calibration controls have simulator regressions. Independent audio-offset sign/unit convention remains underdocumented. | Seek independent sign/unit evidence without inferring correction from user bias. Acoustic accuracy, stopped-clock transition precision and calibration usability require the deferred device batch. |
 | RuntimeUpdate skip metadata | No runtime clock jump is performed: intro search executes successive updates and leaves skip zero. | A future actual seek/resimulation path needs independently established skip semantics. Current conservative intro behavior is tracked separately, not repaired by guessing a skip value. |
-| Intro silence trimming (BF-19) | Preservation regressions pass, but cached SEKAI stages stop skipping almost immediately, before notes or audio. User-visible shortening remains incomplete. | Improve handling of persistent initial stage presentation while retaining count-ins, non-note effects, engine sound and hidden-input rewind; verify cached startup paths as well as synthetic fixtures. Do not exempt custom sprites by name alone. |
+| Intro silence trimming (BF-19) | Cached SEKAI's custom, dynamically spawned stage stays unchanged until notes appear. The visual guard stops at that unclassified initial graphic. | Await semantic evidence or the proposed user-approved static-scene policy; the user requested and received the actual graphic, not approval. Stability alone cannot distinguish scenery from a held instruction. Preserve current behavior meanwhile. |
 | Pagination | Cache invalidation, cursor recovery, stable append and bounded prefetch have regressions. | Concurrent remote numbered-page changes cannot be made atomic without a server snapshot contract. That limitation is not an unimplemented client cache rule; physical scroll smoothness remains in the device batch. |
 | Physical gameplay | Synthetic/cached checks do not certify interactive phone behavior. | After the API gate: close/coincident multitouch, successful flick/hold variants, hit effects, audible/display alignment, frame-time tails, repeated starts and interruptions, including the requested problematic charts. |
 | Non-play modes | Tutorial/watch/preview and online score submission are outside the requested app scope. | Do not use their absence to keep play-mode completion indefinitely open or claim they are implemented. |
@@ -1505,6 +1505,16 @@ All 61 selected offline/catalog tests and the normal build pass:
 `BuildProject/BuildProject-Log-20260930-163347.txt`.
 This is resource selection and transport evidence, not rendered/audio playback
 of the synthetic media bytes. No remote song request or device check was used.
+
+September 30 source-resolution correction (BF-20): online catalog covers and
+BGM grouping now use the level's declared source, consistent with runtime
+resources and offline artwork. An executable regression demonstrated that the
+old path joined different-origin relative music URLs and missed the matching
+absolute alias. The correction preserves existing incremental row IDs, engine
+scoping and persisted result/download identities. All 77 catalog/offline tests,
+normal build and independent review pass; exact artifacts are in REQUESTS.md.
+This covers deterministic URL/identity behavior, not a fresh production-server
+enumeration or new device measurement.
 
 ## Historical scope details for remaining checks
 

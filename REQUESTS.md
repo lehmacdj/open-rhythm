@@ -86,21 +86,20 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** reconciled the remaining compatibility categories in
-  COMPATIBILITY.md's acceptance checklist. Independent review found BF-18,
-  reproduced and fixed below. The earlier workflow turn was progress because
-  it changed the audit's operating rules; this continuation adds executed
-  evidence and a working download fix rather than repeating those rules.
-- **Selected next action:** investigate BF-19's actual cached SEKAI startup
-  boundary, including stage spawning and first note visibility. Keep BF-20's
-  online source-resolution mismatch queued for the next global selection.
-- **Why:** BF-19 now has concrete cached evidence and directly affects the
-  reported long lead-in. Further synthetic-only purity extensions did not
-  establish improvement for those charts. BF-18 was selected first because
-  it was a demonstrated download failure with a clear selection contract.
-- **Acceptance:** establish a safe stage-boundary rule or its exact remaining
-  evidence requirement; preserve count-ins/effects and hidden-input rewind.
-  Do not hard-code engine names or silently discard unknown opening visuals.
+- **Completed action:** BF-20's source-resolution fix passes 77 catalog/offline
+  tests, the normal build and independent review. BF-19's cached trace and
+  actual rendered stage were shown to the user; no skipping policy was changed.
+- **Selected next action:** check successful flick coverage against the cached
+  SEKAI engine (BF-21). The current repeated-contact integration workload uses
+  stationary positions and asserts tap/tick/release successes, not flicks.
+- **Why:** successful flick recognition is an explicit gameplay requirement.
+  The synthetic velocity regressions and historical probes are useful, but
+  the durable cached workload does not yet assert that path. This is a coverage
+  diagnostic, not a claim of a newly reproduced flick defect.
+- **Acceptance:** demonstrate a successful cached-engine flick from measured
+  touch samples in a reproducible simulator workload, or identify the concrete
+  failure. Preserve judgment windows and calibration; do not equate this with
+  physical input recognition. Add only the regression needed for that path.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -144,8 +143,26 @@ The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
 | ID / priority | Finding and evidence | Acceptance / next action |
 | --- | --- | --- |
 | BF-18 / P2 — verified | Download recursively fetched overridden default assets, non-play engine data and thumbnails. The regression failed on unwanted requests despite successful online bundle preparation. | Selected runtime resources plus level cover now download; all four override/default families, ROM, source-relative artwork, malformed-update preservation and offline reload verified. All 61 offline/catalog tests, normal build and independent review pass. Existing manifests are pruned only through ordinary updates. |
-| BF-19 / P2 — reproduced boundary | Real cached SEKAI stage graphics stop intro skipping almost immediately, preserving about nine seconds of lead-in in Eleventh/光. Earlier synthetic stage-proof extensions do not establish real-engine improvement. | Diagnose actual stage spawn/provenance and first-visible-note boundaries before selecting a safe fix; retain unknown effects/count-ins rather than guessing from sprite names. |
-| BF-20 / P2 — code-path evidence | Online CatalogBuilder cover URLs still use the catalog base instead of a level's source; offline cover lookup now uses the level source. Relative BGM song-key/alias paths also need the same source check. | Reproduce cross-origin relative artwork and grouping with isolated fixtures. Keep distinct level origins distinct, preserve row identities, and do not request real assets just to prove URL resolution. |
+| BF-19 / P2 — awaiting classification policy/evidence | Cached SEKAI dynamically spawns a custom stage quad; it stays unchanged until notes appear. Stability alone cannot distinguish scenery from a held opening instruction. | User was asked whether unchanged initial graphics may be treated as scenery, with rewind if they change/disappear before the first note/audio. User requested an image; the actual cached stage was rendered and shown. No approval yet; retain current behavior, no engine-name exception or more synthetic-only purity extensions. |
+| BF-20 / P2 — verified | Catalog artwork and relative BGM identity ignored the level source. The regression reproduced wrong cover URLs, incorrectly joined different-origin audio, and a missed absolute-URL alias. | Shared level resource-base resolution now matches runtime/offline behavior. All 77 catalog/offline tests, normal build and independent review pass. Absolute URLs, absent-source fallback, existing incremental row IDs and persisted result/download identities are preserved. |
+| BF-21 / P1 diagnostic — coverage gap, not a confirmed defect | Repeated-contact cached integration asserts successful tap/tick/release types, but never moves its contacts; it cannot prove successful flick recognition. Synthetic coalesced-velocity tests are separate evidence. | Exercise a real cached flick with timestamped movement and assert its successful judgment. No device or server request, guessed timing shift, or broader autoplay feature. |
+
+BF-20 verification: the source-resolution regression failed before the fix
+(`RunSomeTests/33C7A511-D2C8-4640-A4E4-FEEF6C0513B7.txt`). All 77
+catalog/offline tests pass afterward
+(`RunSomeTests/5F3B007F-0CF1-4234-B3AE-690903842106.txt`), and the normal
+build passes (`BuildProject/BuildProject-Log-20260930-164144.txt`). Independent
+review found no actionable regression. No result key, manifest ID or saved
+schema changed; newly reconstructed rows use the corrected BGM identity.
+
+BF-19 trace follow-up: at the same default options/aspect, the first visible
+note graphics appear at chart time -0.138500 (shake it!), -1.283333 (Eleventh)
+and -1.983333 (光). The custom stage is unchanged from its first draw until
+those times. These are simulated presentation times, not audio onset or a
+physical latency measurement. Independent review agreed that custom names and
+stability do not establish whether a held graphic's duration is dispensable.
+The rendered graphic shown to the user is the lane playfield and purple
+judgment line, on a black backdrop without the HUD.
 
 Tenth bounded discovery pass: inspected playback/input clock consumption,
 callback scheduling, audio reservation handling, result payload transactions,

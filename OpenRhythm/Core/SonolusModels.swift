@@ -46,6 +46,10 @@ struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
 
   var id: String { name }
 
+  func resourceBaseURL(server: ServerDescriptor) -> URL {
+    source.flatMap(URL.init(string:)) ?? server.baseURL
+  }
+
   var difficulty: Difficulty {
     Difficulty(tags: tags)
   }
@@ -57,7 +61,7 @@ struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
 
   func songKey(server: ServerDescriptor) -> String {
     let prefix = engine == nil ? "" : "\(engineKey(server: server))\u{0}"
-    if let bgmURL = bgm.resolved(against: server.baseURL) {
+    if let bgmURL = bgm.resolved(against: resourceBaseURL(server: server)) {
       return prefix + bgmURL.absoluteString
     }
     if let hash = bgm.hash.flatMap({ try? ContentAddress.normalizedSHA1($0) }) {
@@ -74,7 +78,7 @@ struct SonolusLevelItem: Codable, Hashable, Identifiable, Sendable {
   func songIdentityKeys(server: ServerDescriptor) -> [String] {
     let prefix = engineKey(server: server) + "\u{0}"
     var keys = [String]()
-    if let url = bgm.resolved(against: server.baseURL) {
+    if let url = bgm.resolved(against: resourceBaseURL(server: server)) {
       keys.append(prefix + "url:" + url.absoluteString)
     }
     if let hash = bgm.hash.flatMap({ try? ContentAddress.normalizedSHA1($0) }) {

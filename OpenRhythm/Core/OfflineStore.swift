@@ -519,8 +519,7 @@ actor OfflineStore {
       }
       let first = ordered[0]
       let remoteCover = first.level.cover.resolved(
-        against: first.level.source.flatMap(URL.init(string:))
-          ?? first.server.baseURL
+        against: first.level.resourceBaseURL(server: first.server)
       )
       let coverURL = localURL(for: RuntimeResourceReference(url: remoteCover,
         hash: first.level.cover.hash?.lowercased()), in: first)

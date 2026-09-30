@@ -2,6 +2,50 @@ import XCTest
 @testable import OpenRhythm
 
 final class CatalogTests: XCTestCase {
+  func testLevelSourceResolvesArtworkAndSeparatesRelativeSongResources() throws {
+    func item(_ id: String, source: String?, bgm: String = "music.mp3",
+      cover: String = "cover.png") -> SonolusLevelItem {
+      SonolusLevelItem(name: id, source: source, version: 1, rating: 7,
+        title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+        author: "Fixture", tags: [],
+        cover: ResourceLocator(hash: nil, url: cover),
+        bgm: ResourceLocator(hash: nil, url: bgm),
+        data: ResourceLocator(hash: nil, url: "chart"),
+        engine: SonolusEngineIdentity(name: "shared-engine",
+          source: "https://engine.example"))
+    }
+    let a = item("a", source: "https://first.example/catalog")
+    let b = item("b", source: "https://second.example/catalog")
+    let sibling = item("hard", source: a.source)
+    let absoluteAlias = item("expert", source: "https://elsewhere.example",
+      bgm: "https://first.example/catalog/music.mp3")
+    let first = try XCTUnwrap(CatalogBuilder.group(levels: [a], server: server).first)
+    XCTAssertEqual(first.coverURL?.absoluteString,
+      "https://first.example/catalog/cover.png")
+    XCTAssertTrue(a.songKey(server: server).hasSuffix(
+      "https://first.example/catalog/music.mp3"))
+    XCTAssertNotEqual(a.songIdentityKeys(server: server), b.songIdentityKeys(server: server))
+    let rows = CatalogBuilder.merge(songs: [first],
+      levels: [b, sibling, absoluteAlias], server: server)
+    XCTAssertEqual(rows.count, 2,
+      "Identical relative paths on different origins are not the same audio")
+    let related = try XCTUnwrap(rows.first { $0.variants.contains(a) })
+    XCTAssertEqual(related.id, first.id, "Adding difficulties retains the row")
+    XCTAssertEqual(Set(related.variants.map(\.id)), ["a", "hard", "expert"])
+    XCTAssertEqual(rows.first { $0.variants.contains(b) }?.coverURL?.absoluteString,
+      "https://second.example/catalog/cover.png")
+    for source in [nil, server.baseURL.absoluteString] as [String?] {
+      let fallback = item("fallback", source: source)
+      let row = try XCTUnwrap(CatalogBuilder.group(levels: [fallback], server: server).first)
+      XCTAssertEqual(row.coverURL,
+        fallback.cover.resolved(against: server.baseURL))
+    }
+    let absolute = item("absolute", source: a.source,
+      cover: "https://cdn.example/image.png")
+    XCTAssertEqual(CatalogBuilder.group(levels: [absolute], server: server)
+      .first?.coverURL?.absoluteString, "https://cdn.example/image.png")
+  }
+
   func testBGMAliasesGroupDifficultiesWithoutChangingExistingRows() throws {
     let hash = String(repeating: "a", count: 40)
     func item(_ id: String, hash: String?, url: String?, engine: String? = nil)

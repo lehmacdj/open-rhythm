@@ -324,7 +324,9 @@ enum CatalogBuilder {
   }
 
   static func songKey(_ levels: [SonolusLevelItem], server: ServerDescriptor) -> String {
-    let urlBearing = levels.filter { $0.bgm.resolved(against: server.baseURL) != nil }
+    let urlBearing = levels.filter {
+      $0.bgm.resolved(against: $0.resourceBaseURL(server: server)) != nil
+    }
     return (urlBearing.isEmpty ? levels : urlBearing)
       .map { $0.songKey(server: server) }.min()!
   }
@@ -337,7 +339,7 @@ enum CatalogBuilder {
       server: server,
       title: first.title,
       artists: first.artists,
-      coverURL: first.cover.resolved(against: server.baseURL),
+      coverURL: first.cover.resolved(against: first.resourceBaseURL(server: server)),
       variants: ordered,
       levelOrigins: ordered.map {
         CatalogLevelOrigin(level: $0, server: server)
