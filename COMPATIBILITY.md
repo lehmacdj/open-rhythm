@@ -1123,6 +1123,7 @@ questions. They do not certify every legal combination of resource fields.
 
 | Surface | Implemented boundary | Remaining evidence |
 | --- | --- | --- |
+| Gzip resources | All concatenated members are decoded and validated; output limits apply to their cumulative data. Split JSON and ROM resources are covered. | Host output budgets remain 64 MiB generally and 16 MiB for ROM; this is not unbounded resource support. |
 | Engine configuration | Required for server playback; declared options, categories, UI metrics, visibility and animations are consumed. Per-engine preference policy is explicit. | Missing UI sections still use app defaults; do not mistake acceptance of incomplete configuration for a specified native default. |
 | Skin atlas | Only named sprites requested by the engine are cropped. Interpolation, transforms, fractional bounds and render mode are honored. | Exact native filtering and treatment of declared atlas dimensions that differ from image dimensions. |
 | Particle atlas | Selected effects are validated, original sprite indices are preserved, and only their referenced sprites are cropped. Structural decoding and atlas validation still apply. | Native rasterization/random realization parity beyond the public Studio reference; selected numeric limits remain explicit host limits. |
@@ -1134,6 +1135,28 @@ A bounded independent review on September 27 found no new contract-supported
 valid-resource incompatibility in decoding, selection, options or play UI.
 This does not close the evidence limits above or convert host policies into
 native guarantees. Per-engine preference scope remains an explicit user policy.
+
+September 30 gzip correction: the shared resource decoder previously returned
+after the first compressed member, silently discarding later data. Gzip permits
+concatenated members under [RFC 1952 section 2.2](
+https://www.rfc-editor.org/rfc/rfc1952.html). The decoder now uses zlib's
+[`inflateReset`](https://zlib.net/manual.html) between members, validates later
+headers/trailers, rejects incomplete or trailing non-member data, and retains
+one cumulative output budget. Its output buffer is reused across members;
+raw-DEFLATE decoding for ZIP entries is unchanged. Magic detection also works
+for Data slices whose startIndex is not zero.
+
+Three initial regressions failed before the fix and pass afterward. Four new
+tests use independently generated fixtures to cover split JSON, split ROM,
+empty members, corrupt/truncated later members, wrapper boundaries, Data slices
+and cumulative limits across 64 KiB output chunks. Independent review found no
+actionable issue. All 349 non-cached simulator tests and the cached 22/7
+lifecycle/restart check pass; the normal build passes at 01:06. Summary IDs:
+`A1E24DFF-C0CD-4B34-8876-53F26B0CE755` and
+`C83817F1-F4AD-458A-B159-FB5C22F79EBD`. The other six cached chart/workload
+checks were not rerun for this bounded decoder change. Physical tests remain
+deferred. This unit was already in verification when the breadth-first policy
+was adopted; further resource edge cases return to global triage.
 
 September 30 ZIP filename correction: the old effect loader treated every name
 as UTF-8. Valid legacy filenames could fail decoding, and Unicode Path metadata

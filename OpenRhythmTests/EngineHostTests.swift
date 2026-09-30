@@ -5512,6 +5512,87 @@ final class EngineHostTests: XCTestCase {
     XCTAssertThrowsError(try GzipDecoder.decompress(compressed, maximumSize: 4))
   }
 
+  func testGzipConcatenatedMembersPreserveAllResourceData() throws {
+    // Independent fixtures generated with Python's gzip.compress(mtime=0).
+    let hello = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/8tIzcnJBwCGphA2BQAAAA=="))
+    let world = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/yvPL8pJAQBDEXc6BQAAAA=="))
+    let empty = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/wMAAAAAAAAAAAA="))
+    XCTAssertEqual(try GzipDecoder.decompress(empty + hello + empty + world),
+      Data("helloworld".utf8))
+    let start = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/6tWSkrP9U9LK04tUbIy0AEA4bCqmw8AAAA="))
+    let end = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/1NKzSvJLMlMLVayio6tBQAuowsfDgAAAA=="))
+    let level = try CompressedJSONDecoder.decode(LevelData.self,
+      from: start + end)
+    XCTAssertEqual(level.bgmOffset, 0)
+    XCTAssertTrue(level.entities.isEmpty)
+  }
+
+  func testGzipValidatesEveryMemberAndRejectsTrailingGarbage() throws {
+    let member = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/8tIzcnJBwCGphA2BQAAAA=="))
+    for length in 1..<member.count {
+      XCTAssertThrowsError(try GzipDecoder.decompress(member + member.prefix(length)),
+        "Truncated second member at \(length)")
+    }
+    for offset in [2, 3, member.count - 8, member.count - 4] {
+      var corrupt = member
+      corrupt[offset] ^= 0xff
+      XCTAssertThrowsError(try GzipDecoder.decompress(member + corrupt),
+        "Invalid second member at \(offset)")
+    }
+    XCTAssertThrowsError(try GzipDecoder.decompress(member + Data([0xff])))
+  }
+
+  func testGzipMembersPreserveROMAndWrapperBoundaries() throws {
+    let first = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/2NgWGAPAMhOJTkEAAAA"))
+    let second = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/2NgUDgAAA45pC8EAAAA"))
+    let memory = EngineMemory()
+    try memory.loadROM(first + second)
+    XCTAssertEqual(memory.value(block: 3000, index: 0), 1.25)
+    XCTAssertEqual(memory.value(block: 3000, index: 1), -2.5)
+    let expanded = try GzipDecoder.decompress(first + second)
+    XCTAssertEqual(try GzipDecoder.decompress(first + second,
+      windowBits: MAX_WBITS + 32), expanded)
+    // Data slices can retain a nonzero startIndex; magic detection must not
+    // subscript absolute indices 0 and 1.
+    let slice = (Data([0xff]) + first + second).dropFirst()
+    XCTAssertEqual(try GzipDecoder.decompressIfNeeded(slice), expanded)
+    XCTAssertEqual(try GzipDecoder.decompressIfNeeded(Data("plain".utf8)),
+      Data("plain".utf8))
+    let raw = try XCTUnwrap(Data(base64Encoded: "y0jNyckHAA=="))
+    XCTAssertEqual(try GzipDecoder.decompress(raw, windowBits: -MAX_WBITS),
+      Data("hello".utf8))
+    let empty = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/wMAAAAAAAAAAAA="))
+    XCTAssertEqual(try GzipDecoder.decompress(empty + empty, maximumSize: 0), Data())
+    XCTAssertThrowsError(try GzipDecoder.decompress(empty, maximumSize: -1))
+    // Auto-detection must not permit a non-gzip wrapper as the next member.
+    XCTAssertThrowsError(try GzipDecoder.decompress(first + raw,
+      windowBits: MAX_WBITS + 32))
+  }
+
+  func testGzipSizeBudgetAppliesAcrossMembersAndOutputChunks() throws {
+    let member = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/8tIzcnJBwCGphA2BQAAAA=="))
+    XCTAssertEqual(try GzipDecoder.decompress(member + member, maximumSize: 10),
+      Data("hellohello".utf8))
+    XCTAssertThrowsError(try GzipDecoder.decompress(member + member, maximumSize: 9))
+    let chunk = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/+3BAQEAAACAkNvN7wgKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAappYtCwAAAEA"))
+    XCTAssertEqual(try GzipDecoder.decompress(chunk + member,
+      maximumSize: 65_541), Data(repeating: 120, count: 65_536) + Data("hello".utf8))
+    XCTAssertThrowsError(try GzipDecoder.decompress(chunk + member,
+      maximumSize: 65_540))
+  }
+
   func testPresentationReferencesHonorOverridesAndEachResourceSource() throws {
     let item = Data(#"""
       {"source":"https://level.example/game",

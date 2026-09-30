@@ -1160,6 +1160,13 @@ model level, checking that future judgments and spawned entities do not leak.
    budgets. All 345 non-cached tests and three cached engine-family checks
    pass, with a clean normal build. Other compression methods remain outside
    stored/deflate support.
+   The shared gzip loader now decodes all concatenated members instead of
+   silently truncating after the first, with cumulative size limits and later
+   member validation. Split JSON/ROM and malformed-member regressions cover
+   this confirmed resource-compatibility defect. Independent review is clean;
+   349 non-cached tests, the cached 22/7 lifecycle/restart check and the normal
+   build pass. This closes the bounded fix already in flight at the policy
+   change; the next implementation choice follows a breadth-first triage pass.
    Dedicated note-speed/score preferences work inside those categories, and
    legacy controls now resolve/reset generic saved overrides consistently.
    Skin mode selection is now
