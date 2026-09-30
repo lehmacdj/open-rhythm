@@ -43,9 +43,7 @@ struct EngineConfiguration: Decodable {
     }
 
     static func label(_ text: String) -> String {
-      text.hasPrefix("#")
-        ? text.dropFirst().replacingOccurrences(of: "_", with: " ").capitalized
-        : text
+      EngineStandardText.label(text)
     }
 
     var displayName: String { Self.label(title ?? name ?? "Option") }

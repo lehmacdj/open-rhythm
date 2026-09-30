@@ -1064,10 +1064,17 @@ model level, checking that future judgments and spawned entities do not leak.
    before the fix; all 79 RuntimeDecodingTests and the normal build pass.
    Independent post-fix review found no actionable issue; saved standard-option
    summaries are also covered by the unit-formatting regression.
-   General standardized text translation remains open: identifier title-casing
-   still displays labels such as `#STAGE_ALPHA` incorrectly as "Stage Alpha"
-   instead of "Stage Transparency". This affects settings and saved option
-   labels, not the runtime option values.
+   Standardized text follow-up: all 596 public English protocol labels are
+   bundled offline with pinned revision and MIT attribution. Settings names,
+   descriptions, categories, select choices and new saved option summaries
+   resolve identifiers through that table; custom text and unknown future
+   identifiers retain their fallback. Existing saved result text is not rewritten.
+   This matches the current English app UI, not whole-app localization.
+   The new integration regression failed before the fix. Packaging checks also
+   caught and corrected an initially missing target resource; all 105 focused
+   decoding/localization/results tests and the normal build now pass.
+   Independent review verified the pinned text/license data, bundle registration
+   and call sites, with no actionable findings.
    Dedicated note-speed/score preferences work inside those categories, and
    legacy controls now resolve/reset generic saved overrides consistently.
    Skin mode selection is now

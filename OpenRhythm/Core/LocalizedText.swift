@@ -1,5 +1,32 @@
 import Foundation
 
+/// Public Sonolus Text identifiers, in the app's current UI language (English).
+/// This is a pinned offline protocol-label table, not a dependency on the
+/// Sonolus app. Its source revision and MIT notice travel with the resource.
+enum EngineStandardText {
+  private final class ResourceMarker {}
+  private struct Table: Decodable {
+    let texts: [String: String]
+  }
+
+  static let english: [String: String] = {
+    guard let url = Bundle(for: ResourceMarker.self).url(
+      forResource: "EngineStandardText", withExtension: "json"),
+      let data = try? Data(contentsOf: url),
+      let table = try? JSONDecoder().decode(Table.self, from: data) else {
+      assertionFailure("The bundled engine text table is missing or invalid.")
+      return [:]
+    }
+    return table.texts
+  }()
+
+  static func label(_ text: String) -> String {
+    guard text.hasPrefix("#") else { return text }
+    return english[text]
+      ?? text.dropFirst().replacingOccurrences(of: "_", with: " ").capitalized
+  }
+}
+
 struct LocalizedText: Codable, Hashable, Sendable {
   private static let prefix = "##LOCALIZE:"
 

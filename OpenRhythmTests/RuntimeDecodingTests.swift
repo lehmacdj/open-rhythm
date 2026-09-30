@@ -705,6 +705,33 @@ final class RuntimeDecodingTests: XCTestCase {
     }
   }
 
+  func testStandardEngineTextResolvesAcrossSettingsAndSavedOverrides() throws {
+    let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
+      {"optionCategories":[{"name":"stage","title":"#STAGE_ALPHA"}],
+       "options":[
+       {"name":"mode","title":"#JUDGMENT_STRICT","category":"stage",
+        "type":"select","def":0,"standard":true,
+        "values":["#OFF","#JUDGELINE","Custom label"]},
+       {"name":"#MIRROR","category":"stage","type":"toggle",
+        "def":0,"standard":true}]}
+      """#.utf8))
+    XCTAssertNoThrow(try config.validateOptions())
+    XCTAssertEqual(config.options[0].displayName, "Strict Judgment")
+    XCTAssertEqual(config.options[0].valueLabel(1), "Judgment Line")
+    XCTAssertEqual(config.options[0].valueLabel(2), "Custom label")
+    XCTAssertEqual(config.optionGroups.first?.title, "Stage Transparency")
+    let settings = GameplayPreferences(engineOptions: ["mode": 1, "#MIRROR": 1])
+    XCTAssertEqual(config.runtimeOptions(preferences: settings), [1, 1])
+    XCTAssertEqual(config.modifiedStandardOptions(preferences: settings), [
+      EngineOptionOverride(name: "Strict Judgment", value: "Judgment Line"),
+      EngineOptionOverride(name: "Mirror Level", value: "On")])
+    XCTAssertEqual(EngineConfiguration.Option.label("literal_Aa"), "literal_Aa")
+    XCTAssertEqual(EngineConfiguration.Option.label("#NEW_FUTURE_LABEL"),
+      "New Future Label")
+    XCTAssertEqual(EngineConfiguration.Option.label("#NOTE_EFFECT_ALPHA"),
+      "Note Effect Transparency")
+  }
+
   func testEngineOptionTimeUnitsFormatWithoutChangingRuntimeValues() throws {
     let units = [
       ("#YEAR_UNIT", "yr"), ("#MONTH_UNIT", "mo"), ("#DAY_UNIT", "d"),
@@ -753,7 +780,7 @@ final class RuntimeDecodingTests: XCTestCase {
       [1.25, 1, 2, 1.5, 17, 9, 0])
     XCTAssertEqual(config.playbackSpeed(preferences: settings), 1.5)
     XCTAssertEqual(config.modifiedStandardOptions(preferences: settings), [
-      EngineOptionOverride(name: "Mirror", value: "On"),
+      EngineOptionOverride(name: "Mirror Level", value: "On"),
       EngineOptionOverride(name: "Input Mode", value: "Strict")])
     XCTAssertEqual(config.options[0].valueLabel(1.25), "125%")
     settings.engineOptions["Mode"] = 99
