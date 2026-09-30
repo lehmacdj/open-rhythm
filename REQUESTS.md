@@ -28,14 +28,24 @@ The chart-fixture request remains open, not completed by these negative hits.
 September 30 scope update: the user explicitly authorizes a slow, cached crawl
 of all chart data on 22/7, Project SEKAI and LLSIF to continue the stack search,
 and authorizes a dedicated crawl subagent. Requests may run in parallel across
-servers, but must remain serial within each server. The implementation plan is
+servers, but must remain serial within each server. The implementation uses
 a persistent queue/cache with randomized 60–120-second request spacing and
 retry backoff. The two milkbun catalogs share their host's rate limit; SEKAI
 can advance in parallel. Scope is catalog metadata, every chart difficulty's
 level data, and associated engine play data, not BGM, artwork or other media.
 Engine bytes are reused by verified content hash while retaining their chart
 associations; scans distinguish callback-reachable calls from orphan nodes.
-Crawl tooling is in preparation; no full crawl has started at this entry.
+The user explicitly reaffirmed the 60–120-second pace after discussing a
+two-minute minimum. Following 25 passing offline tests, independent review
+and a successful five-request probe, the full crawl started September 30 at
+05:00:39 UTC as detached PID 40431. It resumed the same dated cache at
+`tmp/cached-stack-crawl-20260930`; the PID/start event is retained in
+`events.jsonl` and `worker.log`, and `report.json` is the read-only progress
+summary. The initial catalogs advertise 28, 96 and 483 pages respectively;
+full chart-data collection will take days at this pace. The corpus search is
+in progress, not complete. Verify the process command/start time before
+stopping or resuming it; neither a stale PID nor the lock-file path proves a
+live worker. See `scripts/README.md` for safe cache/status/resume instructions.
 This does not authorize stack implementation based on guesses,
 upstream messages, or physical-device testing.
 

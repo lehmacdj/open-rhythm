@@ -432,9 +432,12 @@ class Crawl:
                     server = servers[index]
                     row = self.db.execute(
                         "SELECT kind,url,expected,context,tries,ready FROM tasks "
-                        "WHERE server=? AND state='pending' ORDER BY ready, "
-                        "CASE kind WHEN 'engine' THEN 0 WHEN 'page' THEN 1 ELSE 2 END, rowid LIMIT 1",
-                        (server,)).fetchone()
+                        "WHERE server=? AND state='pending' ORDER BY "
+                        "CASE WHEN ready<=? THEN 0 ELSE 1 END, "
+                        "CASE WHEN ready<=? THEN CASE kind WHEN 'engine' THEN 0 "
+                        "WHEN 'page' THEN 1 ELSE 2 END ELSE 3 END, "
+                        "CASE WHEN ready<=? THEN 0 ELSE ready END, rowid LIMIT 1",
+                        (server, now, now, now)).fetchone()
                     if row:
                         candidates.append((max(now, row[5]), offset, index, row))
             if not candidates:
@@ -526,7 +529,7 @@ def main():
         for path in args.seed:
             crawl.seed(path)
         crawl.log("started", pid=os.getpid(), servers=args.servers,
-                  minimum_delay=60, maximum_delay=120)
+                  minimum_delay=crawl.delay[0], maximum_delay=crawl.delay[1])
         groups = {}
         for server in dict.fromkeys(args.servers):
             host = urllib.parse.urlsplit(SERVERS[server]).hostname

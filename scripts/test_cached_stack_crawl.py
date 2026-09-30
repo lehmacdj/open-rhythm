@@ -188,6 +188,36 @@ class CrawlTests(unittest.TestCase):
         self.assertEqual((state, tries), ("pending", 1))
         self.assertGreaterEqual(ready, time.time() + 899)
 
+    def test_due_engine_retry_precedes_new_level_downloads(self):
+        base = SERVERS["nanaon"]
+        engine_url, level_url = base + "/engine.gz", base + "/level.gz"
+        self.crawl.enqueue("nanaon", "engine", engine_url)
+        self.crawl.enqueue("nanaon", "level", level_url)
+        with self.crawl.db:
+            self.crawl.db.execute(
+                "UPDATE tasks SET tries=1,ready=? WHERE kind='engine'", (time.time() - 1,))
+        page_url = self.crawl.list_url("nanaon", 0)
+        calls = self.run_catalog({
+            engine_url: {"nodes": []}, level_url: {"entities": []},
+            page_url: {"pageCount": 0, "items": []},
+        })
+        self.assertEqual(calls, [engine_url, page_url, level_url])
+
+    def test_due_level_retry_is_not_starved_by_fresh_levels(self):
+        base = SERVERS["nanaon"]
+        retry_url, fresh_url = base + "/retry.gz", base + "/fresh.gz"
+        self.crawl.enqueue("nanaon", "level", retry_url)
+        self.crawl.enqueue("nanaon", "level", fresh_url)
+        with self.crawl.db:
+            self.crawl.db.execute(
+                "UPDATE tasks SET tries=1,ready=? WHERE url=?", (time.time() - 1, retry_url))
+        page_url = self.crawl.list_url("nanaon", 0)
+        calls = self.run_catalog({
+            retry_url: {"entities": []}, fresh_url: {"entities": []},
+            page_url: {"pageCount": 0, "items": []},
+        })
+        self.assertEqual(calls, [page_url, retry_url, fresh_url])
+
     def test_redirects_pass_through_request_gate(self):
         requests = []
 

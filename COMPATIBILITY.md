@@ -1251,10 +1251,40 @@ Independent review found and prompted fixes for shared-resource duplicate
 fetches, unrestricted destination hosts and incomplete HTTP-transfer retries.
 The crawler now accepts only explicitly approved catalog/resource hosts and
 treats truncated HTTP transfers as retryable, including a short bounded read
-that does not raise an HTTP exception. Twenty-three offline regressions
+that does not raise an HTTP exception. Twenty-five offline regressions
 pass, including pacing, host concurrency, cache reuse, restart, pagination,
-hash conflicts, malformed items and graph reachability. Live crawl evidence
-will be recorded separately; this tooling does not close the stack ABI gap.
+hash conflicts, malformed items and graph reachability. Final independent
+re-review found no remaining blocker for the bounded live probe. This tooling
+does not close the stack ABI gap.
+
+The bounded September 30 probe fetched the first page of all three catalogs:
+22/7 reported 28 pages, LLSIF 96 and SEKAI 483. Their three referenced engine
+play-data resources matched seeded hashes, so no engine download was needed;
+all three scanned graphs have zero Stack nodes. The first two milkbun requests
+started 72.268 seconds apart, with SEKAI progressing on its separate host gate.
+This small sample verifies the live catalog format and initial cache reuse,
+not full enumeration or absence of stack consumers elsewhere in the catalogs.
+The user subsequently reaffirmed the 60–120-second pace. It applies to page
+requests, redirects and retries, not only chart-data downloads.
+The probe ended normally after exactly five requests, with 100 chart
+associations queued and no task/item failures or observed page-count drift.
+Follow-up regressions exposed retry starvation both across task kinds and
+among chart downloads: positive retry timestamps were sorted behind fresh
+tasks with a zero timestamp. Due work now normalizes its deadline before
+stable insertion ordering, retaining engine/page priority without letting
+new chart downloads bypass older eligible chart retries. Future retries still
+honor their deadlines. Both regressions failed before their corresponding
+fixes and pass afterward; final independent re-review found no launch blocker.
+
+The full crawl resumed the same cache on September 30 at 05:00:39 UTC as
+detached PID 40431, verified with parent PID 1 and process-group ID 40431.
+It continued at Nanaon/SEKAI page 2 without repeating the five probe downloads.
+Cache and logs are in ignored `tmp/cached-stack-crawl-20260930/`, with live
+summary `report.json`, request history `events.jsonl` and console `worker.log`.
+The first full-run requests succeeded on both hosts. This verifies durable
+launch/resume, not completion of the multi-day crawl. Old hashless fixture
+bytes are not assumed current merely because their former URL is known;
+safe reuse requires a matching declared hash or this crawl's dated URL cache.
 
 The September 25 contract recheck still does not supply an interoperable stack
 layout. The [overview](
@@ -1399,8 +1429,11 @@ No public issue or message has been submitted.
 Public references: [server specifications](https://wiki.sonolus.com/server-specs/)
 and [engine specifications](https://wiki.sonolus.com/engine-specs/).
 Download probes remain in ignored scratch storage; no third-party charts or
-assets belong in the regression fixtures. Avoid catalog crawls: use bounded
-pages and cached shared resources, and state exactly which paths were exercised.
+assets belong in the regression fixtures. Ordinary probes use bounded pages
+and cached shared resources. The separately authorized September 30 slow
+cached corpus crawl is the explicit exception for the three named catalogs;
+it does not authorize unrelated server crawls. State exactly which paths
+were exercised and do not treat partial enumeration as full coverage.
 
 Restart preparation follows the [play lifecycle](
 https://wiki.sonolus.com/engine-specs/play-lifecycle/overview). Synthetic runtime,
