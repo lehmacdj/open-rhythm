@@ -817,8 +817,9 @@ integration probes, including successful inputs and restart/buffering paths.
   Info or Input; reads of those absent blocks return zero, while writes are
   rejected. They can still read original entities through arrays. Host
   initialization bypasses callback permissions, but respects block bounds.
-  Callback context is cleared even when execution throws. Callback-specific
-  availability of host functions remains a separate open check.
+  Callback context is cleared even when execution throws. Host-function
+  availability is reviewed separately in the September 30 host audit below;
+  these memory-access tests do not establish undocumented native behavior.
   Sources: [play-block access tables](
   https://wiki.sonolus.com/engine-specs/play-blocks/overview) and
   [Spawn restrictions](https://wiki.sonolus.com/engine-specs/functions/spawn).
@@ -1437,6 +1438,32 @@ prepared on September 27; permission to post it to the project's designated
 [developer-support repository](https://github.com/Sonolus/feedback) is pending.
 No public issue or message has been submitted.
 
+## Host callback-availability audit — September 30, 2026
+
+Read all 39 function pages corresponding to
+`CommandEngineRuntimeHost.supportedFunctions`, plus the nine play lifecycle
+pages from preprocessing through presentation, at
+[Sonolus/wiki revision e5317da](https://github.com/Sonolus/wiki/tree/e5317da7228fd83346baa0e036c5784061ac3918/src/en/engine-specs).
+This completes a bounded check for **explicit documented callback exclusions**,
+not every function's semantics or independently observed native behavior.
+
+| Surface | Documented availability/lifecycle rule | Implementation and evidence |
+| --- | --- | --- |
+| `AddLifeScheduled` | Only `preprocess` in play/watch. | Host checks the active memory callback; `testScheduledLifeRejectsEveryNonPreprocessingCallback` exercises all other play callbacks. |
+| `DebugLog`, `DebugPause` | Debug mode only; parallel logs are not race-safe. No callback exclusion is listed. | Effective RuntimeEnvironment flag gates effects; debug regressions cover preprocessing overrides, disabled effects and restart. Serial execution avoids introducing a log race. Frame-boundary suspension remains host policy. |
+| `Spawn` | Queued for the next update; spawned entities lack input and four level-backed blocks. | Runtime drains the previous queue before callbacks. Deferred-spawn, memory-access and restart regressions cover these rules. |
+| Draw, six curved draws, audio and particle calls | No callback exclusion is listed. Initialization explicitly gives particle creation as an example; termination gives particle destruction. Presentation retains calls even if their source entity despawns. | Do not add a speculative updateParallel-only drawing or touch-only audio allowlist. Existing host and lifecycle checks remain the behavioral evidence; this document pass adds no new native rendering/audio measurement. |
+| Has-resource, judgment, BPM/time-scale and stream functions | No callback exclusion is listed. | No new exclusion is inferred. Resource availability, judgment windows, timelines and streams have separate regressions. |
+| `ExportValue` | Arguments and zero return are specified; no callback exclusion is listed. | Host retains exports for a selected level entity and declared export slot. The sparse public description does not establish every invalid/spawned-entity call's native behavior. |
+
+The public pages do not supply a general callback/function permission matrix.
+Absence of an exclusion is not independent proof of every possible native call
+combination. Keep the unresolved native-policy questions separate from a known
+missing check: this pass found no additional documented exclusion to implement.
+Memory-block access permissions remain a distinct contract with their own
+explicit tables and tests. Non-play Paint/Print and the deferred stack ABI are
+not covered by this host audit.
+
 ## Remaining checks, including engines we have not sampled
 
 - [StopLoopedScheduled](
@@ -1472,7 +1499,11 @@ No public issue or message has been submitted.
   automatic BGM compensation but do not state the convention. Current tests
   establish the client's explicit wall-clock convention and internal timeline
   consistency, not parity with an independently observed native reference.
-- Optional/missing resource defaults and host-function callback legality.
+- Optional/missing resource defaults and underdocumented native host behavior.
+  The explicit host callback-exclusion review is complete within the pinned
+  source scope above; it found no additional documented exclusion beyond the
+  implemented preprocessing/debug rules. Do not repeatedly reopen that bounded
+  check without new contract evidence, or treat it as full semantic parity.
   September 30 bounded configuration/HUD review found no additional runtime
   blocker, but identified incomplete standardized text resolution. Standard
   time-unit labels now follow the public English templates (`ms`, `s`, `m`,

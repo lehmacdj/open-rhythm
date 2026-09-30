@@ -6,18 +6,26 @@ phone audio alignment, touch handling, or frame pacing is correct.
 
 ## Audit working guidelines — September 30, 2026
 
+The intended outcome is dependable, engine-faithful gameplay and completion of
+the user's requested app features, not an ever-growing count of tests or fixes.
 The user requests breadth-first work, not subsystem-by-subsystem perfection.
+The active goal remains “Finish all of the items in the request audit.” A
+proposed replacement is not authority to change its scope or completion gate.
 
 1. **Discover broadly before choosing the next fix.** Make bounded passes
    across gameplay timing/input, rendering/performance, API/resource
    compatibility, catalog/downloads, and results/settings. Record findings
    promptly instead of immediately implementing every issue encountered.
    Keep reviewed areas and unreviewed areas explicit; a negative spot check
-   does not establish complete coverage.
+   does not establish complete coverage. Normally time-box discovery to
+   10–15 minutes, then choose an action; extend only for a stated concrete
+   question. Do not repeat a negative check without new evidence, a relevant
+   code change, or a previously identified missing path.
 2. **Triage the whole backlog.** Each finding should include evidence or a
    reproduction, user impact, confidence, affected scope, dependencies, and
-   the next bounded action. Distinguish confirmed defects from suspicions,
-   missing coverage, and undocumented contracts. Choose the highest-priority
+   the next bounded action and an observable acceptance criterion. Distinguish
+   confirmed defects from suspicions, missing coverage, and undocumented
+   contracts. Choose the highest-priority
    actionable issue across all discovered findings, not simply the next issue
    in the file or subsystem currently open.
 3. **Prioritize impact and reach.** Crashes, data loss and silent corruption
@@ -33,7 +41,8 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
    appropriate for shared runtime changes and stable release batches, but
    do not endlessly expand an edge-case matrix or chase incidental refinements
    before reconsidering higher-impact work elsewhere. Add follow-up findings
-   to the backlog and re-triage after each completed unit.
+   to the backlog and re-triage after each completed unit. Stop when the unit's
+   acceptance criterion is met, not when every adjacent question is answered.
 5. **Respect dependencies without serializing unrelated work.** Defer issues
    that need unavailable evidence or authorization, with the exact dependency
    recorded, and continue other actionable work. The stack contract and the
@@ -45,8 +54,104 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
    regressions, remaining questions and deferred device checks. Push stable,
    tested units under the existing authorization without treating that subset
    as completion of this audit.
+7. **Batch verification by risk.** Run the focused regression for a fix; run
+   the broader non-cached suite for high-risk shared changes or a coherent
+   release batch. Use expensive full-chart runs for affected runtime, render
+   or audio paths and release acceptance, not documentation-only updates.
+   Review meaningful fix batches independently. An observation timeout does
+   not establish a test failure: inspect the run before launching another.
+   Record exact
+   chart, difficulty, input workload and test environment; no-touch playback
+   does not verify successful taps, flicks, holds or multitouch.
+8. **Preserve the next action across continuations.** Maintain one short
+   current-work record below: outcome, selected action, reason, acceptance
+   check and dependencies. Read it and the latest human request after context
+   recovery. Automatic goal continuations are not new human requests to
+   re-acknowledge or re-document an old policy. Report material progress,
+   findings and decisions; avoid repeating unchanged deferrals. Keep long
+   historical evidence below the working record, not in every status reply.
+9. **Make remaining scope finite and evidence-based.** Classify work as
+   unimplemented, reproduced, implemented but unverified, verified with stated
+   scope, or deferred with an exact dependency. Replace vague “more conformance”
+   tasks with named contracts and acceptance checks. Documented API coverage,
+   fixture coverage and native-client parity are different claims. Do not
+   silently add undocumented native behavior as an indefinite completion gate,
+   or drop actual missing API semantics because sampled engines do not use
+   them. A negative discovery pass is a valid result, not a reason to invent
+   another patch. If all remaining required actions are genuinely gated,
+   report the dependencies instead of cycling through cosmetic audit edits.
+
+## Current work record — September 30, 2026
+
+- **Outcome:** complete the requested features and documented play-mode API;
+  establish dependable timing, input and rendering with the deferred physical
+  validation batch, without claiming that simulator tests prove those outcomes.
+- **Selected next action:** reconcile the remaining compatibility headings
+  against a finite contract/acceptance checklist. Identify actionable non-stack
+  gaps, existing evidence, and exact dependencies; then select the highest
+  impact actionable item across gameplay and the rest of the app.
+- **Why:** repeated narrow verification has not resolved the larger user
+  reports, and vague open-ended conformance items make prioritization and the
+  device-test gate difficult to evaluate. This is a bounded reconciliation,
+  not permission to start another exhaustive subsystem rewrite.
+- **Acceptance:** each currently open compatibility category has a specific
+  contract or user requirement, evidence status and next check or dependency.
+  Existing verified work is not reopened without a reason. Select one next
+  diagnostic/fix, or identify that no required action is currently unblocked.
+- **Dependencies:** stack ABI implementation remains deferred; the dedicated
+  cached crawl is independent, serial within each server with 60–120 second
+  jitter and caching. Physical testing waits for full Sonolus API coverage
+  unless the user explicitly requests an earlier issue-specific check. Stable
+  tested subsets may be pushed, but do not complete the broader goal.
+
+## Workflow retrospective — September 30, 2026
+
+Read all 74 human comments in the canonical five-segment thread history,
+excluding 111 automatic goal continuations and environment/configuration
+messages. At that snapshot there were 816 assistant progress updates and 121
+final replies, totaling about 40,700 whitespace-delimited words. Recorded tool
+events included 473 test calls and 163 build calls; these are calls, not counts
+of successful independent runs, and include failures and observation timeouts.
+At least 11 final replies primarily repeated the device-deferral policy.
+
+The problem is not just message length: repeated policy acknowledgments,
+fine-grained verification cycles and growing historical ledgers displaced
+attention from user-visible acceptance. These counts do not establish that
+every repeated test was unnecessary. The correction is the working record,
+risk-based batch verification and explicit stopping criteria above. Retain
+the useful regression evidence, but measure progress by resolved requirements
+and reduced uncertainty about the remaining important outcomes. Raw history
+analysis stays in ignored temporary files, not in the repository.
 
 ## Breadth-first triage — September 30, 2026
+
+Tenth bounded discovery pass: inspected playback/input clock consumption,
+callback scheduling, audio reservation handling, result payload transactions,
+catalog pagination, download identity and settings/results persistence. An
+independent read-only cross-area review also found no new actionable defect.
+These are bounded negative checks, not proof of general correctness. A suspected
+discovery-time difficulty overwrite was ruled out because the picker is
+disabled during discovery; do not add it as a confirmed bug.
+
+The next action selected was to resolve the scope of the vague remaining
+host-callback legality item, rather than extend tint/memory-limit polish. All
+39 implemented host-function specification pages and nine lifecycle pages at
+the pinned public wiki revision were read. They establish the already-enforced
+preprocessing/debug restrictions, but no further explicit callback exclusion.
+COMPATIBILITY.md now separates that completed documented-exclusion check from
+underdocumented native policy and full function semantics. No timing calibration,
+callback allowlist, resource budget or gameplay behavior was changed.
+
+Current-build cached full-chart/restart verification completed: all seven
+tests passed, using existing assets only. Coverage includes shake it! Hard 18
+with no-touch/restart, repeated contacts and stationary pooled contacts,
+Eleventh, 光/Hikari, SIF Custom and 22/7/Nanaon:
+`RunSomeTests/7F2E5E85-0C70-4053-B9FD-A7ABF49B6BAA.txt`.
+These supplement the earlier 378 non-cached passes; they were not one combined
+385-test run. A short CPU sample of the repeated-contact harness includes both
+dense and sparse interpreter execution and is not a live frame-pacing or clean
+before/after measurement. Physical checks and stack ABI implementation remain
+deferred; neither this source audit nor the independent review closes them.
 
 Ninth bounded discovery pass: inspected atlas decoding, selected crop/tint
 preparation and Metal's eager upload boundary. Atlas/base-crop memory growth
