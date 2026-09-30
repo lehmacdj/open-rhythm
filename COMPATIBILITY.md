@@ -1093,6 +1093,20 @@ reference-client execution was performed. A future candidate needs reachable
 stack calls in its engine graph and a chart that exercises those callbacks;
 even then, successful self-execution alone will not establish reference parity.
 
+A further bounded GitHub code search checked `StackGetFrame` and
+`StackGetPointer`, plus `StackInit` in SonolusHaniwa's repositories. Relevant
+results again consist of declarations, operation metadata and wrappers, not
+verified gameplay consumers. The official compiler's
+[function classification list](https://github.com/Sonolus/sonolus.js-compiler/blob/b67abf697c281003f5c2794653a029edb30a9124/src/utils/funcs.ts#L100-L103)
+is not an emitted stack program. The additional public web-player candidate
+[SonolusWP_dev](https://github.com/1217pond/SonolusWP_dev/blob/61a9b2979934f115fb25403185d8d378c8098599/env/src/as/assembly/node_calc.ts#L647-L660)
+maps all 14 stack functions to `UnimplementedFunction`, so it supplies neither
+an implementation reference nor an executable stack fixture. Sirius's current
+repository tree has only a thumbnail under `dist/`, not a published engine
+graph to verify. These searches do not cover unindexed or compressed engine
+assets, all repository history, or every server. The fixture request remains
+open; no stack implementation or reference-client/device execution was added.
+
 The September 25 contract recheck still does not supply an interoperable stack
 layout. The [overview](
 https://wiki.sonolus.com/engine-specs/functions/stack-functions) locates the

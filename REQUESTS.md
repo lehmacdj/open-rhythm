@@ -20,6 +20,10 @@ and wrappers, including the header bundled with Sirius, but no verified
 gameplay consumer or usable chart. This is not proof that no such chart
 exists. Details and evidence limits are in COMPATIBILITY.md. No song-server
 crawl or reference-client/device execution was used.
+Follow-up searches for stack-frame/pointer functions found no verified
+consumer either: official compiler hits are metadata and the additional
+public web-player hit explicitly leaves these operations unimplemented.
+The chart-fixture request remains open, not completed by these negative hits.
 
 Per the user's latest direction, postpone real-device testing until Sonolus
 API coverage is complete, then perform the outstanding physical checks in one
