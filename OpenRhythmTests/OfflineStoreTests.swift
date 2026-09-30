@@ -2,6 +2,93 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  func testDifficultyStatusReadsOneFreshSnapshotAndVerifiesSharedObjectsOnce()
+    async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("status-batch-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let records = root.appendingPathComponent("Manifests")
+    let objects = root.appendingPathComponent("Objects")
+    for directory in [records, objects] {
+      try FileManager.default.createDirectory(at: directory,
+        withIntermediateDirectories: true)
+    }
+    let bytes = Data("shared resource".utf8)
+    let object = objects.appendingPathComponent(bytes.sha256Hex)
+    try bytes.write(to: object)
+    let server = ServerDescriptor(id: "batch", name: "Fixture",
+      baseURL: URL(string: "https://fixture.example")!)
+    let empty = ResourceLocator(hash: nil, url: nil)
+    var manifests = [OfflineLevelManifest]()
+    for index in 0..<50 {
+      let level = SonolusLevelItem(name: "chart-\(index)", source: nil,
+        version: 1, rating: Double(index % 5 + 1),
+        title: LocalizedText("Song \(index / 5)"), artists: LocalizedText("Fixture"),
+        author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+      let resource = OfflineResource(
+        remoteURL: server.baseURL.appendingPathComponent("alias-\(index)"),
+        objectName: bytes.sha256Hex, expectedSHA1: nil)
+      let manifest = OfflineLevelManifest(id: "chart-\(index)", server: server,
+        level: level, itemData: Data("{}".utf8), resources: [resource],
+        downloadedAt: Date(timeIntervalSinceReferenceDate: Double(index)))
+      manifests.append(manifest)
+      try JSONEncoder().encode(manifest).write(
+        to: records.appendingPathComponent("\(manifest.id).json"))
+    }
+    let reads = RequestRecorder()
+    let store = OfflineStore(rootURL: root, readStoredData: { url in
+      reads.append(url)
+      return try Data(contentsOf: url)
+    })
+    let song = CatalogSong(id: "song", server: server, title: LocalizedText("Song"),
+      artists: LocalizedText("Fixture"), coverURL: nil,
+      variants: manifests.prefix(5).map(\.level), levelOrigins: [])
+    let complete = await store.containsAllDifficulties(of: song,
+      discoverySucceeded: true)
+    XCTAssertTrue(complete)
+    XCTAssertEqual(reads.urls.filter { $0.pathExtension == "json" }.count, 50,
+      "Read one library snapshot, not one full scan per difficulty")
+    XCTAssertEqual(reads.urls.filter { $0 == object }.count, 1,
+      "Remote aliases share one verified content address within this check")
+    var priorReads = reads.urls.count
+    let undiscovered = await store.containsAllDifficulties(of: song,
+      discoverySucceeded: false)
+    XCTAssertFalse(undiscovered)
+    XCTAssertEqual(reads.urls.count, priorReads)
+    // Same-length corruption must be rehashed on the very next call.
+    try Data(repeating: 0, count: bytes.count).write(to: object, options: .atomic)
+    let corrupt = await store.containsAllDifficulties(of: song,
+      discoverySucceeded: true)
+    XCTAssertFalse(corrupt)
+    XCTAssertGreaterThan(reads.urls.count, priorReads)
+    try bytes.write(to: object, options: .atomic)
+    let repaired = await store.containsAllDifficulties(of: song,
+      discoverySucceeded: true)
+    XCTAssertTrue(repaired, "Negative verification results cannot outlive a call")
+    // Do not reuse a positive verification for a contradictory hash contract.
+    let old = manifests[1]
+    let wrong = OfflineLevelManifest(id: old.id, server: old.server,
+      level: old.level, itemData: old.itemData, resources: [OfflineResource(
+        remoteURL: old.resources[0].remoteURL, objectName: bytes.sha256Hex,
+        expectedSHA1: String(repeating: "0", count: 40))],
+      downloadedAt: old.downloadedAt)
+    let record = records.appendingPathComponent("\(old.id).json")
+    try JSONEncoder().encode(wrong).write(to: record, options: .atomic)
+    let mismatched = await store.containsAllDifficulties(of: song,
+      discoverySucceeded: true)
+    XCTAssertFalse(mismatched)
+    try JSONEncoder().encode(old).write(to: record, options: .atomic)
+    priorReads = reads.urls.count
+    let restored = await store.containsAllDifficulties(of: song,
+      discoverySucceeded: true)
+    XCTAssertTrue(restored)
+    XCTAssertEqual(reads.urls.count - priorReads, 51)
+    try FileManager.default.removeItem(at: record)
+    let removed = await store.containsAllDifficulties(of: song,
+      discoverySucceeded: true)
+    XCTAssertFalse(removed, "A removed difficulty is not hidden by a prior snapshot")
+  }
+
   func testMissingConfigurationRejectsOnlineDownloadAndLegacyOfflineBundles() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)

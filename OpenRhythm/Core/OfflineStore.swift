@@ -109,9 +109,15 @@ enum ResourceLocatorCollector {
 actor OfflineStore {
   static let shared = OfflineStore()
 
+  private struct ResourceValidationKey: Hashable {
+    let objectName: String
+    let expectedSHA1: String?
+  }
+
   private let fileManager: FileManager
   private let rootURL: URL
   private let client: SonolusClient
+  private let readStoredData: @Sendable (URL) throws -> Data
   private var activeDownloads = 0
   private var cleanupRequested = false
   private var deletionVersions = [String: Int]()
@@ -119,10 +125,14 @@ actor OfflineStore {
   init(
     rootURL: URL? = nil,
     fileManager: FileManager = .default,
-    client: SonolusClient = SonolusClient()
+    client: SonolusClient = SonolusClient(),
+    readStoredData: @escaping @Sendable (URL) throws -> Data = {
+      try Data(contentsOf: $0)
+    }
   ) {
     self.fileManager = fileManager
     self.client = client
+    self.readStoredData = readStoredData
 
     if let rootURL {
       self.rootURL = rootURL
@@ -209,7 +219,7 @@ actor OfflineStore {
       if let resource = reusedResources[locator.url],
         resource.expectedSHA1 == hash,
         ContentAddress.isSafeObjectName(resource.objectName),
-        let data = try? Data(contentsOf:
+        let data = try? readStoredData(
           objectsURL.appendingPathComponent(resource.objectName)),
         ContentAddress.validates(data, as: resource) {
         resources.append(resource)
@@ -306,7 +316,7 @@ actor OfflineStore {
     for file in files {
       do {
         manifests.append(try JSONDecoder.offline.decode(OfflineLevelManifest.self,
-          from: Data(contentsOf: file)))
+          from: readStoredData(file)))
       } catch {
         let error = error as NSError
         let issue = OfflineManifestIssue(fileName: file.lastPathComponent,
@@ -325,6 +335,15 @@ actor OfflineStore {
     // An unrelated damaged record must not prevent valid offline playback or
     // cause the download-status check to report the whole library as absent.
     let manifests = try readManifests(allowPartial: true).manifests
+    return manifest(level: level, from: server, in: manifests,
+      validating: resourcesAreValid)
+  }
+
+  private func manifest(
+    level: SonolusLevelItem, from server: ServerDescriptor,
+    in manifests: [OfflineLevelManifest],
+    validating: (OfflineLevelManifest) -> Bool
+  ) -> OfflineLevelManifest? {
     if server.id == "offline" {
       let candidates = manifests.filter { $0.level.id == level.id }
       if let exact = candidates.first(where: {
@@ -340,7 +359,7 @@ actor OfflineStore {
     let key = originKey(level: level, server: server)
     return manifests.first {
       originKey(level: $0.level, server: $0.server) == key
-        && resourcesAreValid(in: $0)
+        && validating($0)
     }
   }
 
@@ -386,16 +405,16 @@ actor OfflineStore {
       guard let url = localURL(for: remoteURL, in: manifest) else {
         throw RuntimeBundleError.missingResource("engine ROM")
       }
-      rom = try Data(contentsOf: url)
+      rom = try readStoredData(url)
     } else { rom = nil }
     for (name, remoteURL) in references.presentationURLs {
       guard let url = localURL(for: remoteURL, in: manifest) else {
         throw RuntimeBundleError.missingResource(name)
       }
-      presentation[name] = try Data(contentsOf: url)
+      presentation[name] = try readStoredData(url)
     }
     let engine = try CompressedJSONDecoder.decode(EnginePlayData.self,
-      from: Data(contentsOf: engineURL))
+      from: readStoredData(engineURL))
     let missing = try engine.unsupportedFunctions()
     guard missing.isEmpty else {
       throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
@@ -404,7 +423,7 @@ actor OfflineStore {
       engine: engine,
       level: CompressedJSONDecoder.decode(
         LevelData.self,
-        from: Data(contentsOf: levelURL)
+        from: readStoredData(levelURL)
       ),
       bgmURL: bgmURL,
       isOffline: true,
@@ -419,8 +438,14 @@ actor OfflineStore {
     // A catalog page can contain only some variants of a song. Even if every
     // known chart is cached, that does not establish a complete song download.
     guard discoverySucceeded, !song.variants.isEmpty else { return false }
-    return song.variants.allSatisfy {
-      contains(level: $0, from: song.server(for: $0))
+    guard let listing = try? readManifests(allowPartial: true) else { return false }
+    // All difficulties share one fresh inventory and integrity pass. This
+    // synchronous actor operation does not retain positive/negative results
+    // across requests, downloads, repairs or deletions.
+    var verified = [ResourceValidationKey: Bool]()
+    return song.variants.allSatisfy { level in
+      manifest(level: level, from: song.server(for: level), in: listing.manifests,
+        validating: { resourcesAreValid(in: $0, verified: &verified) }) != nil
     }
   }
 
@@ -664,19 +689,36 @@ actor OfflineStore {
     at url: URL,
     expectedSHA1: String
   ) -> Bool {
-    guard let data = try? Data(contentsOf: url) else { return false }
+    guard let data = try? readStoredData(url) else { return false }
     return data.sha1Hex == expectedSHA1
   }
 
   private func resourcesAreValid(in manifest: OfflineLevelManifest) -> Bool {
+    var verified = [ResourceValidationKey: Bool]()
+    return resourcesAreValid(in: manifest, verified: &verified)
+  }
+
+  private func resourcesAreValid(in manifest: OfflineLevelManifest,
+    verified: inout [ResourceValidationKey: Bool]) -> Bool {
     manifest.resources.allSatisfy { resource in
-      guard ContentAddress.isSafeObjectName(resource.objectName) else {
-        return false
-      }
-      let url = objectsURL.appendingPathComponent(resource.objectName)
-      guard let data = try? Data(contentsOf: url) else { return false }
-      return ContentAddress.validates(data, as: resource)
+      // Remote URL aliases can share bytes, but a contradictory hash claim
+      // must not inherit another resource's successful verification.
+      let key = ResourceValidationKey(objectName: resource.objectName,
+        expectedSHA1: resource.expectedSHA1)
+      if let result = verified[key] { return result }
+      let result = resourceIsValid(resource)
+      verified[key] = result
+      return result
     }
+  }
+
+  private func resourceIsValid(_ resource: OfflineResource) -> Bool {
+    guard ContentAddress.isSafeObjectName(resource.objectName) else {
+      return false
+    }
+    let url = objectsURL.appendingPathComponent(resource.objectName)
+    guard let data = try? readStoredData(url) else { return false }
+    return ContentAddress.validates(data, as: resource)
   }
 
   private func validateResources(
@@ -687,7 +729,7 @@ actor OfflineStore {
         throw OfflineStoreError.checksumMismatch(resource.remoteURL)
       }
       let url = objectsURL.appendingPathComponent(resource.objectName)
-      guard let data = try? Data(contentsOf: url) else {
+      guard let data = try? readStoredData(url) else {
         throw OfflineStoreError.missingCachedResource(resource.remoteURL)
       }
       guard ContentAddress.validates(data, as: resource) else {

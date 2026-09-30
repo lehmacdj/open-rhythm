@@ -60,7 +60,7 @@ or physical-device validation. Findings below are recorded before fixing them.
 | BF-02 / P1 — frame dependence fixed | Velocity now uses consecutive OS samples, including UIKit's coalesced history, independently of display time and the mapped chart clock. No assumed 240 Hz floor or synthetic stationary frame sample remains. | The frame-phase regression failed before and passes now, alongside coalesced hold-to-flick, lifecycle and clock-separation checks. Native estimator parity and contribution to reported early/late bias are not established. | Keep single-sample-after-long-hold uncertainty explicit; physical flick verification remains deferred. Do not add guessed calibration to force a timing distribution. |
 | BF-03 / P1 — interruption and stopped-clock paths fixed | An audio-session interruption previously left the engine interpreting input without a scene change; it now requires an explicit restart. A separate local-player regression confirmed that a stopped music clock still allowed notes to be judged. Normal engine frames now freeze during paused/waiting playback, without aborting the attempt. | Actual local AVPlayer pause/resume regression failed before the fix and passes afterward, including the EOF-tail exception. Pool regressions cover pending taps, held releases and rejected new presses. All 359 non-cached tests, normal build and independent review pass; not a physical or network-stall measurement. | Re-triage below selects BF-05 measurement next. Exact transition-time input discrimination and physical behavior remain deferred. |
 | BF-04 / P2 — fixed | Catalog and lookup reads now recover valid manifests individually and report unreadable records in the Offline UI. Strict manifest inventory, whole-song deletion and asset cleanup still fail closed on unknown references. | Mixed valid/corrupt regression verifies visible songs, download status, offline runtime-bundle preparation with zero network requests, warning lifecycle and byte-for-byte preservation. No current user file was shown corrupt. | Bounded recovery unit verified below. Damaged metadata is retained; no automatic deletion or speculative reconstruction is performed. |
-| BF-05 / P2 diagnosis | Every difficulty's download-status lookup enumerates/decodes the manifest collection and validates resource contents again. | Large-library I/O/performance hypothesis, not a measured phone hitch. | Instrument a synthetic multi-song library, then prioritize from measured cost; retain hash verification rather than bypassing it. |
+| BF-05 / P2 — batch status fixed; catalog cost separate | The five-difficulty status check now reads one fresh inventory and verifies each shared content-address/hash pair once. The same 1,000-manifest/8 MiB-object probe improved from 331–339 ms to 76–79 ms. | Confirmed improvement on song-detail status checks, not per scrolling row. Separate catalog refresh remains about 79–81 ms. Read-count/invalidation regression, 67 focused tests, normal build and independent review pass. | Keep large-library catalog construction and single-lookup scan cost as lower-priority follow-ups; no persistent memoization or relaxed integrity checks. This does not establish the cause of the reported phone scroll hitch. |
 | BF-06 / P2 diagnosis | Metal completion releases its slot and records GPU timing but does not inspect command-buffer failure status; synchronous encoding failures do trigger software fallback. | Asynchronous render-error coverage gap, not a reproduced GPU failure. | Check failure propagation with an injectable completion seam before touching the renderer's successful frame path. |
 | BF-07 / P2 diagnosis | The SDK distinguishes media-services loss/reset from session interruptions. Gameplay/audio currently has no observer for these notifications; the haptic backend's reset handling does not establish audio recovery. | Source-level lifecycle coverage gap; no reproduced media-server reset failure. | Synthetic notification investigation and an audio-object recreation plan if needed; do not expand the bounded interruption fix into an unverified reset implementation. |
 
@@ -256,6 +256,52 @@ unreproduced exceptional failures. Do not skip resource integrity validation
 or introduce a stale cache just to improve the measurement. API/stack,
 intro-classification and deferred physical checks remain open; the crawl
 continues independently and is not a reason to wait on this diagnosis.
+
+BF-05 measurement: an Xcode simulator snippet generated 10, 100 and 1,000
+manifests (five variants per song), sharing an 8 MiB SHA-256-addressed resource.
+Three sequential checks at each size returned complete downloads correctly.
+Five-variant status took 18.9–22.7, 42.1–45.5 and 330.7–338.8 ms respectively;
+separate catalog construction took 0.7–3.9, 7.2–7.8 and 84.0–89.6 ms. Setup was
+outside the measured intervals, generated files were removed afterward, and no
+server requests were made. These are local simulator observations, not device
+performance targets or proof of UI jank. Call-site inspection narrows the
+status path to song details/playback lookup; the list does not run that status
+check for every row. The earlier broad catalog-responsiveness suspicion must
+not be presented as a confirmed scroll diagnosis.
+
+Select a bounded batch-status fix over BF-06/07's unmeasured exceptional paths:
+read manifests once per `containsAllDifficulties` call and validate each shared
+content-address/expected-hash pair once within that synchronous actor operation.
+Discard all memoized results when it returns, so a later corruption, repair,
+download, deletion or changed manifest is observed on the next call. Keep
+standalone lookup, strict destructive inventory and playback validation intact.
+
+BF-05 verification: before batching, the new regression counted 250 manifest
+reads and five shared-object reads where one check needs only 50 and one
+(`RunSomeTests/0C98BE7B-9598-428F-8A7C-EA3A98BDBF2D.txt`). It now passes with
+those exact bounds. Additional assertions cover URL aliases, discovery failure
+without I/O, same-length corruption and repair between calls, contradictory
+hash declarations on the same object, changed metadata and removed difficulty
+records. Integrity memoization keys include both object name and expected
+SHA-1, not just the remote URL or file size. The stored-data reader dependency
+allows deterministic read counting; production still reads the actual bytes.
+
+Repeating the original snippet after the fix produced status times of 4.4–7.4,
+9.4–10.3 and 76.1–78.7 ms for 10/100/1,000 manifests. Catalog construction
+remained separate at 0.8–1.5, 6.9–7.3 and 79.4–80.8 ms. No persistent cache
+was introduced. All 67 OfflineStore/Catalog/ResultStore tests pass without
+skips/failures (`RunSomeTests/CAEF1C83-0611-4409-970C-73B03E26E000.txt`),
+the normal build passes (`BuildProject/BuildProject-Log-20260930-021432.txt`),
+and independent post-fix review found no actionable issue. Gameplay/cached
+engine workloads and physical-device checks were not rerun for this unit.
+
+Re-triage: do the bounded BF-06 asynchronous GPU-error propagation diagnostic
+next. A failed GPU command currently has no route to the existing software
+fallback; this has a clear inspection/injection boundary and can affect visible
+gameplay. BF-07 media-services reset remains a separate lifecycle investigation.
+Do not turn the successful BF-05 batch into an open-ended indexing/cache redesign;
+its remaining full-inventory cost is recorded, not declared solved. The
+broader API, intro, timing and deferred physical requirements remain open.
 
 ## Current verification order — reaffirmed September 27, 2026
 
