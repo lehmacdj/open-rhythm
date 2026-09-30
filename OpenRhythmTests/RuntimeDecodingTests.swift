@@ -2331,6 +2331,62 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
+  func testSavedScoreModeMatchesEffectiveRuntimeOption() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("score-mode-\(UUID())", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = ResultStore(rootURL: root)
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"nodes":[],"buckets":[],
+       "archetypes":[
+         {"name":"TapNote","hasInput":false,"imports":[],"exports":[]},
+         {"name":"SwingNote","hasInput":false,"imports":[],"exports":[]},
+         {"name":"HoldNote","hasInput":false,"imports":[],"exports":[]},
+         {"name":"HoldConnector","hasInput":false,"imports":[],"exports":[]}
+       ]}
+      """#.utf8))
+    let presentation = RuntimePresentation(resources: [
+      "configuration": Data(#"""
+        {"options":[{"name":"Score Mode","type":"select","def":0,
+          "standard":true,"values":["Flat","#COMBO"]}]}
+        """#.utf8)
+    ])
+    let cases: [(dedicated: Int?, generic: Double?, effective: Double)] = [
+      (nil, 1, 1), (1, nil, 1), (0, 1, 0),
+      (nil, nil, 0), (nil, 99, 0), (nil, 0.5, 0)
+    ]
+    for (index, selection) in cases.enumerated() {
+      let model = try gameplayModel(resultStore: store, engine: engine,
+        presentation: presentation)
+      let original = model.settings
+      defer { model.stop(); model.settings = original }
+      model.settings = GameplayPreferences()
+      model.settings.scoreMode = selection.dedicated
+      model.settings.engineOptions["Score Mode"] = selection.generic
+      model.start()
+      model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+      let runtime = try XCTUnwrap(model.engineRuntime)
+      XCTAssertEqual(runtime.memory.value(block: 2002, index: 0),
+        selection.effective, "Case \(index)")
+      // Exercise normal completion/persistence without waiting on audio.
+      // The fixture has no input entities; this is not an audio-clock check.
+      model.playbackEnded(uptime: 100)
+      XCTAssertEqual(model.phase, .finished)
+      await model.resultSaveTask?.value
+      XCTAssertNil(model.resultSaveError)
+      let results = try await store.allResults()
+      XCTAssertEqual(results.count, index + 1)
+      let result = try XCTUnwrap(results.first)
+      let label = selection.effective == 1 ? "Combo" : "Flat"
+      XCTAssertEqual(result.scoreMode, label, "Case \(index)")
+      XCTAssertEqual(result.modifiedOptions?.first {
+        $0.name == "Score Mode"
+      }?.value, selection.effective == 1 ? label : nil)
+    }
+  }
+
+  @MainActor
   func testGameplayCompletesAndSavesAfterAudioEnds() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

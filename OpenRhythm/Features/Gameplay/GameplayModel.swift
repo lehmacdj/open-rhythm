@@ -1251,9 +1251,8 @@ final class GameplayModel {
   }
 
   private var scoreModeName: String? {
-    guard let option = presentationAssets?.scoreModeOption,
-      let values = option.values else { return nil }
-    return option.selectedIndex(settings.scoreMode).map { values[$0].displayValue() }
+    guard let option = presentationAssets?.scoreModeOption else { return nil }
+    return option.valueLabel(option.value(option.preferredValue(in: settings)))
   }
 
   private nonisolated static func recordAudioRoute(_ recorder: PlaybackTimingRecorder) {
