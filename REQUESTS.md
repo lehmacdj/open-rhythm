@@ -25,6 +25,20 @@ consumer either: official compiler hits are metadata and the additional
 public web-player hit explicitly leaves these operations unimplemented.
 The chart-fixture request remains open, not completed by these negative hits.
 
+September 30 scope update: the user explicitly authorizes a slow, cached crawl
+of all chart data on 22/7, Project SEKAI and LLSIF to continue the stack search,
+and authorizes a dedicated crawl subagent. Requests may run in parallel across
+servers, but must remain serial within each server. The implementation plan is
+a persistent queue/cache with randomized 60–120-second request spacing and
+retry backoff. The two milkbun catalogs share their host's rate limit; SEKAI
+can advance in parallel. Scope is catalog metadata, every chart difficulty's
+level data, and associated engine play data, not BGM, artwork or other media.
+Engine bytes are reused by verified content hash while retaining their chart
+associations; scans distinguish callback-reachable calls from orphan nodes.
+Crawl tooling is in preparation; no full crawl has started at this entry.
+This does not authorize stack implementation based on guesses,
+upstream messages, or physical-device testing.
+
 Per the user's latest direction, postpone real-device testing until Sonolus
 API coverage is complete, then perform the outstanding physical checks in one
 large batch. Do not request phone unlocks, install or launch development builds
@@ -1083,7 +1097,15 @@ model level, checking that future judgments and spawned entities do not leak.
    seven cached-chart probes completed at 00:28; the normal build passes.
    The cached run continued after its observer timed out and was not restarted.
    Stored/deflate and existing archive size limits remain;
-   ZIP64 central directories and other compression methods are not implemented.
+   ZIP64 follow-up now resolves bounded extended directory and entry fields,
+   including independently optional sentinels. The new matrix failed before
+   implementation. Independent review found no actionable issue; positive
+   coverage includes externally generated seekable/streamed deflate archives,
+   extensible metadata and directory signatures. Adversarial cases cover
+   overflowing integers, bad offsets, truncated fields and retained safety
+   budgets. All 345 non-cached tests and three cached engine-family checks
+   pass, with a clean normal build. Other compression methods remain outside
+   stored/deflate support.
    Dedicated note-speed/score preferences work inside those categories, and
    legacy controls now resolve/reset generic saved overrides consistently.
    Skin mode selection is now

@@ -1228,6 +1228,34 @@ graph to verify. These searches do not cover unindexed or compressed engine
 assets, all repository history, or every server. The fixture request remains
 open; no stack implementation or reference-client/device execution was added.
 
+September 30 scope expansion: the user authorizes downloading every chart's
+data from 22/7, Project SEKAI and LLSIF through a slow cached crawl, managed by
+a dedicated subagent. `scripts/cached_stack_crawl.py` enumerates catalog pages,
+retains each difficulty's metadata and engine association, and downloads only
+level data and engine play data. No music or presentation media is included.
+Each actual hostname has one request gate with randomized 60–120-second gaps;
+the two milkbun catalogs alternate tasks, while SEKAI can advance concurrently.
+Redirects and retries share the gates; HTTP backoff and checkpointed cooldowns
+survive restart. An exclusive cache lock prevents duplicate workers.
+
+The cache verifies content hashes and reuses existing local chart/engine blobs.
+A resource-level lock also prevents simultaneous cache misses from downloading
+the same content twice. Catalog responses belong to a dated crawl, not a
+permanently fresh snapshot. Failures, incomplete items, cursor loops and changes
+in reported page counts remain visible. A multi-day crawl cannot establish an
+atomic server snapshot. The scan reports all Stack-prefixed nodes separately
+from callback-graph reachability; neither establishes that a chart executes a
+call or that our stack semantics match a reference implementation.
+
+Independent review found and prompted fixes for shared-resource duplicate
+fetches, unrestricted destination hosts and incomplete HTTP-transfer retries.
+The crawler now accepts only explicitly approved catalog/resource hosts and
+treats truncated HTTP transfers as retryable, including a short bounded read
+that does not raise an HTTP exception. Twenty-three offline regressions
+pass, including pacing, host concurrency, cache reuse, restart, pagination,
+hash conflicts, malformed items and graph reachability. Live crawl evidence
+will be recorded separately; this tooling does not close the stack ABI gap.
+
 The September 25 contract recheck still does not supply an interoperable stack
 layout. The [overview](
 https://wiki.sonolus.com/engine-specs/functions/stack-functions) locates the
