@@ -57,7 +57,7 @@ or physical-device validation. Findings below are recorded before fixing them.
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
 | BF-01 / P1 — fixed | `ResultStore.record` silently capped history at 500, removed older timing payloads, and thereby also dropped old-only songs from `playedSongs`. The previous audit described this limit, but the user did not request automatic deletion. | Confirmed by the 501st-play regression; automatic eviction is now removed. | Verification below closes this unit. Previously deleted data cannot be reconstructed. |
-| BF-02 / P1 diagnosis | `EngineTouch.nextFrame` advances the velocity baseline to frame time; a subsequently delivered older touch timestamp can make `moved` divide by its 1/240-second floor. This may inflate velocity after delayed delivery. | Suspected gameplay-input bias; code path is present, field prevalence and correct protocol interpretation are not established. | Reproduce delayed-event sequences and compare event/sample semantics before changing input. No arbitrary calibration or physical test is authorized. |
+| BF-02 / P1 — reproduced, estimator unresolved | `EngineTouch.nextFrame` advances the velocity baseline to frame time. Identical OS movement samples produce different velocities depending on intervening display frames. | Xcode diagnostic confirmed 10 versus 24 units/s for the same 0.1-unit movement over 10 ms. Field prevalence and contribution to reported timing bias remain unknown. | Design an event-sample estimator, considering coalesced UIKit samples and stationary-hold-to-flick behavior. No arbitrary calibration or physical test is authorized. |
 | BF-03 / P1 diagnosis | Gameplay keeps interpreting touches while the BGM clock is stopped; the advancing flag gates effect audio, not runtime input. Scene inactivity stops the model, but a session interruption need not be represented solely by scene state. | Coverage gap with possible false judgments or stuck play; not yet a confirmed real interruption failure. | Synthetic stopped-player/interruption investigation, consulting Apple's interruption contract. Physical behavior remains in the deferred batch. |
 | BF-04 / P2 | One malformed offline manifest makes `manifests()` throw and prevents `catalogSongs()` from returning the otherwise valid library. Cleanup deliberately fails closed to protect unknown shared references. | Confirmed library-availability path; no current user file has been shown corrupt. | Reproduce mixed valid/corrupt manifests; design recoverable listing without deleting data or weakening cleanup safety. |
 | BF-05 / P2 diagnosis | Every difficulty's download-status lookup enumerates/decodes the manifest collection and validates resource contents again. | Large-library I/O/performance hypothesis, not a measured phone hitch. | Instrument a synthetic multi-song library, then prioritize from measured cost; retain hash verification rather than bypassing it. |
@@ -90,6 +90,21 @@ without a phone or new chart files. BF-03 remains a separate high-impact
 diagnostic item; BF-04–06 remain queued. Very-large-history index cost is also
 unmeasured; measure it before redesigning storage, rather than restoring
 silent deletion as a performance shortcut.
+
+BF-02 diagnostic: running the production `EngineTouch` implementation in Xcode
+with samples at 1.000 and 1.010 seconds returns 10 units/s with no intervening
+frame, but 24 after `nextFrame(at: 1.008)` or a delayed delivery following
+`nextFrame(at: 1.020)`. Thus the sensitivity is not limited to out-of-order
+timestamps. The [public touch contract](https://wiki.sonolus.com/engine-specs/play-blocks/runtime-touch-array)
+defines OS event times, per-update position deltas and velocity components,
+but not a velocity estimator. Simply reverting to the preceding event time
+would reintroduce averaging a first flick over an entire stationary hold;
+the existing hold-to-flick regression makes that tradeoff explicit. Keep this
+finding open rather than presenting a guessed constant as a timing fix.
+
+Re-triage after this bounded diagnostic: investigate BF-03 interruption
+handling next, since it has a documented OS event and can be exercised with
+synthetic notifications independently of the unresolved velocity estimator.
 
 ## Current verification order — reaffirmed September 27, 2026
 
