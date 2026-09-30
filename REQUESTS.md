@@ -4,6 +4,48 @@ This ledger distinguishes implemented behavior from remaining compatibility
 work and device verification. Passing simulator tests does not establish that
 phone audio alignment, touch handling, or frame pacing is correct.
 
+## Audit working guidelines — September 30, 2026
+
+The user requests breadth-first work, not subsystem-by-subsystem perfection.
+
+1. **Discover broadly before choosing the next fix.** Make bounded passes
+   across gameplay timing/input, rendering/performance, API/resource
+   compatibility, catalog/downloads, and results/settings. Record findings
+   promptly instead of immediately implementing every issue encountered.
+   Keep reviewed areas and unreviewed areas explicit; a negative spot check
+   does not establish complete coverage.
+2. **Triage the whole backlog.** Each finding should include evidence or a
+   reproduction, user impact, confidence, affected scope, dependencies, and
+   the next bounded action. Distinguish confirmed defects from suspicions,
+   missing coverage, and undocumented contracts. Choose the highest-priority
+   actionable issue across all discovered findings, not simply the next issue
+   in the file or subsystem currently open.
+3. **Prioritize impact and reach.** Crashes, data loss and silent corruption
+   come first; gameplay-affecting timing, input and frame pacing generally
+   outrank narrow compatibility edge cases and presentation polish. Account
+   for prevalence, confidence and risk when ordering work. A low-confidence
+   high-impact report can warrant diagnosis before a confirmed minor defect.
+   Record the reason for choosing the next item; do not invent severity from
+   an unverified hypothesis.
+4. **Bound each implementation pass.** Define the defect and completion check,
+   fix it, add a meaningful regression, and verify in proportion to the risk.
+   Obtain independent post-fix review as requested. Broader tests remain
+   appropriate for shared runtime changes and stable release batches, but
+   do not endlessly expand an edge-case matrix or chase incidental refinements
+   before reconsidering higher-impact work elsewhere. Add follow-up findings
+   to the backlog and re-triage after each completed unit.
+5. **Respect dependencies without serializing unrelated work.** Defer issues
+   that need unavailable evidence or authorization, with the exact dependency
+   recorded, and continue other actionable work. The stack contract and the
+   physical-device testing gate remain in force. The paced cached crawl runs
+   independently under its dedicated agent; do not wait for more files to
+   investigate unrelated issues. Bring back meaningful crawl findings or
+   blockers, not unchanged progress polls.
+6. **Keep completion claims narrow.** Separate implemented behavior, verified
+   regressions, remaining questions and deferred device checks. Push stable,
+   tested units under the existing authorization without treating that subset
+   as completion of this audit.
+
 ## Current verification order — reaffirmed September 27, 2026
 
 September 29 priority update: defer the 14 stack operations and their upstream
@@ -62,8 +104,10 @@ batch, including after the user's earlier unlock confirmation. Do not retry
 that launch or continue other queued device checks in the background. Continue
 API implementation and simulator validation without waiting for the phone.
 
-Prioritize the API contract checklist, implementation gaps and synthetic
-conformance tests, using simulator tests and builds while that work proceeds.
+Continue the API contract checklist, implementation gaps and synthetic
+conformance tests using simulator tests and builds. Select the next actionable
+item using the breadth-first guidelines above; API edge cases do not
+automatically outrank higher-impact gameplay or data-integrity findings.
 The gate is closure of the API contract gaps tracked in COMPATIBILITY.md, not
 merely passing the sampled engines or the current test suite. Collect remaining
 physical checks into the batch as implementation proceeds.
