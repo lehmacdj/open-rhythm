@@ -48,6 +48,46 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
 
 ## Breadth-first triage — September 30, 2026
 
+Fourth bounded discovery pass: independently rechecked imports/defaults,
+prepared-state restart, spawn/callback sequencing, spawned-entity restrictions,
+judgment arguments, scheduled audio compensation and stream interpolation
+against the public [archetype schema](
+https://wiki.sonolus.com/engine-specs/resources/engine-play-data-archetype),
+[play lifecycle](https://wiki.sonolus.com/engine-specs/play-lifecycle/overview),
+[Spawn](https://wiki.sonolus.com/engine-specs/functions/spawn),
+[Judge](https://wiki.sonolus.com/engine-specs/functions/judge),
+[PlayScheduled](https://wiki.sonolus.com/engine-specs/functions/play-scheduled)
+and [StreamGetValue](https://wiki.sonolus.com/engine-specs/functions/stream-get-value).
+No new concrete legal-engine mismatch was established in that pass. These were
+source/contract checks, not new execution tests, native parity evidence or a
+substitute for the deferred stack ABI and physical batch.
+
+BF-11 preparation diagnostic: an Xcode snippet constructed a single 128x128
+white PNG (3,868 encoded bytes) and a selected particle effect with distinct
+declared colors. Production preparation retained 65,536 / 524,288 / 2,097,152
+RGBA bytes for 1 / 8 / 32 colors respectively, before any renderer exists.
+Observed preparation durations were approximately 45 / 46 / 173 ms in this
+single Debug simulator probe; first-use overhead was not controlled, so these
+are not comparative performance claims. The largest retained payload was only
+2 MiB, not an allocation-to-failure or OOM experiment. Combined with the
+source path, this establishes selected-color expansion before the Metal check,
+not an observed crash or the cause of the user's phone slowdown.
+
+Re-triage selects a bounded **selected tint preflight** next: compute the
+required unique `(sprite index, color)` images and actual padded crop sizes,
+then apply explicit preparation accounting before creating any tint surfaces.
+Do not charge repetition count as image count, reject unselected sprites, or
+silently omit/resize a requested effect. Reuse the documented renderer budget
+policy where appropriate instead of inventing a smaller limit. Prove exact
+boundaries, duplicate variants, unused large entries and failure-before-tint
+allocation using small injected budgets. Earlier encoded-atlas decode remains
+a separate risk to investigate; tint preflight must not claim to bound it.
+No higher-confidence gameplay/API defect displaced this work in the new pass.
+
+| ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
+| --- | --- | --- | --- |
+| BF-12 / P3 — queued | `operationLimitExceeded` says a callback exceeded its instruction budget, but the same case is used for audio archive/PCM size, sprite rasterization and other resource limits. | Source-confirmed misleading diagnosis on those exceptional paths; normal playback is unaffected. Metal's new budget errors are already distinct. | Separate resource-budget descriptions from actual callback instruction exhaustion, with focused error-message tests. Do not change budgets or runtime behavior while improving diagnostics. Lower priority than the preparation allocation path. |
+
 Third bounded discovery pass covered random-function ranges, BPM/time-scale
 mapping, scheduled effect pause/resume and sprite preparation/upload.
 [Random](https://wiki.sonolus.com/engine-specs/functions/random) and
