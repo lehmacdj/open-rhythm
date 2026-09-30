@@ -762,7 +762,7 @@ final class EnginePresentationAssets {
   private(set) var skinRenderMode: EngineSkinRenderMode
   private var tintedParticles = [String: UIImage]()
   private var tintBudget: EngineTextureBudget
-  private let makeTint: @MainActor (UIImage, UIColor) -> UIImage
+  private let makeTint: @MainActor (UIImage, UIColor) throws -> UIImage
   private var particleRandomCache = EngineParticleRandomCache()
   private var particlePropertyCache = EngineParticlePropertyCache()
 
@@ -784,8 +784,8 @@ final class EnginePresentationAssets {
 
   init(engine: EnginePlayData, presentation: RuntimePresentation,
     tintByteLimit: Int = EngineTextureBudget.defaultByteLimit,
-    makeTint: @escaping @MainActor (UIImage, UIColor) -> UIImage = {
-      EnginePresentationAssets.tinted($0, color: $1)
+    makeTint: @escaping @MainActor (UIImage, UIColor) throws -> UIImage = {
+      try EnginePresentationAssets.tinted($0, color: $1)
     }
   ) throws {
     tintBudget = EngineTextureBudget(byteLimit: tintByteLimit)
@@ -919,7 +919,7 @@ final class EnginePresentationAssets {
     // fits before the first factory call; no partially allocated failed plan.
     for (key, variant) in variants {
       let source = prepared[variant.index]!.image
-      tintedParticles[key] = makeTint(source, EngineRenderer.color(variant.color))
+      tintedParticles[key] = try makeTint(source, EngineRenderer.color(variant.color))
     }
     tintBudget = planned
   }
@@ -944,7 +944,8 @@ final class EnginePresentationAssets {
     var next = tintBudget
     guard (try? next.reserve(width: source.width, height: source.height)) != nil
     else { return nil }
-    let image = makeTint(sprite.image, EngineRenderer.color(key))
+    guard let image = try? makeTint(sprite.image, EngineRenderer.color(key))
+    else { return nil }
     tintedParticles[cacheKey] = image
     tintBudget = next
     return image
@@ -954,16 +955,25 @@ final class EnginePresentationAssets {
     "\(index):\(color)"
   }
 
-  static func tinted(_ original: UIImage, color: UIColor) -> UIImage {
-    guard let source = original.cgImage else { return original }
-    var red: CGFloat = 1, green: CGFloat = 1, blue: CGFloat = 1, alpha: CGFloat = 1
-    guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha),
-      let context = CGContext(data: nil, width: source.width,
-        height: source.height, bitsPerComponent: 8, bytesPerRow: source.width * 4,
+  static func tinted(_ original: UIImage, color: UIColor,
+    makeContext: (Int, Int) -> CGContext? = { width, height in
+      CGContext(data: nil, width: width, height: height,
+        bitsPerComponent: 8, bytesPerRow: width * 4,
         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo:
           CGImageAlphaInfo.premultipliedLast.rawValue
-            | CGBitmapInfo.byteOrder32Big.rawValue),
-      let buffer = context.data else { return original }
+            | CGBitmapInfo.byteOrder32Big.rawValue)
+    },
+    makeImage: (CGContext) -> CGImage? = { $0.makeImage() }
+  ) throws -> UIImage {
+    guard let source = original.cgImage else {
+      throw EngineInterpreterError.resourcePreparationFailed("particle tint source image")
+    }
+    var red: CGFloat = 1, green: CGFloat = 1, blue: CGFloat = 1, alpha: CGFloat = 1
+    guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha),
+      let context = makeContext(source.width, source.height),
+      let buffer = context.data else {
+      throw EngineInterpreterError.resourcePreparationFailed("particle tint bitmap")
+    }
     context.draw(source, in: CGRect(x: 0, y: 0,
       width: source.width, height: source.height))
     // Multiply premultiplied RGB directly, leaving alpha unchanged. Compositing
@@ -977,7 +987,9 @@ final class EnginePresentationAssets {
           (CGFloat(bytes[offset + channel]) * multiplier).rounded())
       }
     }
-    guard let result = context.makeImage() else { return original }
+    guard let result = makeImage(context) else {
+      throw EngineInterpreterError.resourcePreparationFailed("particle tint image")
+    }
     return UIImage(cgImage: result, scale: original.scale,
       orientation: original.imageOrientation)
   }

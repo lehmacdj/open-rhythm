@@ -48,6 +48,38 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
 
 ## Breadth-first triage — September 30, 2026
 
+Ninth bounded discovery pass: inspected atlas decoding, selected crop/tint
+preparation and Metal's eager upload boundary. Atlas/base-crop memory growth
+still lacks an observed failure or a justified tighter numerical limit, so
+BF-11 remains diagnostic. A separate concrete failure-path defect was found:
+the tint factory silently returns its original, untinted sprite if Core
+Graphics cannot create its context or output image. The caller then caches
+that image as if the engine's color were applied. This is not evidence for
+the reported phone effect bug's cause. Select explicit preparation-failure
+propagation next, with tiny injected-failure fixtures; do not induce OOM or
+invent new resource limits to make the diagnostic look resolved.
+
+BF-17 focused verification: injected nil context/output factories and a missing
+source image produce explicit particle-preparation errors. Declared warmup
+propagates failure; an incidental lookup can retry successfully without a leaked
+budget charge or wrong cache entry. Existing transparency and fractional UV
+checks pass with unchanged pixel math:
+`RunSomeTests/3408DCA8-9C8D-4772-B4DC-690ED4B0C571.txt`.
+The interrupted observer was recovered from its completed Xcode result, not
+restarted. Independent post-fix review found no actionable issue.
+
+A separate cached-resource preparation probe passed for SEKAI, SIF and 22/7,
+including Metal upload. Unique prepared-image nominal RGBA payloads remain
+20,341,844 / 265,796 / 7,440,064 bytes. Atlas metadata reports skin/particle
+dimensions 2048²/1024², 512²/256² and 2048²/1024² respectively. These bounded
+fixtures establish continued resource acceptance, not arbitrary atlas safety,
+resident memory, real-time frame pacing or physical effect correctness.
+All 378 non-cached simulator tests passed:
+`RunSomeTests/7C205261-3773-49B7-ABB0-1EFD825DBCAE.txt`.
+Normal build passed: `BuildProject/BuildProject-Log-20260930-160102.txt`.
+No remote assets were fetched for this unit. Re-triage before expanding the
+remaining atlas-allocation diagnostic; this fix does not close it.
+
 Eighth bounded discovery pass: revisited the public offset/input and scheduled
 audio contracts, BPM/time-scale selection, stream boundary lookups, judgment
 metadata ingestion and catalog grouping. The [offset guide](
@@ -103,6 +135,7 @@ a new concrete compatibility gap, not a reason to reopen URL path resolution.
 | BF-14 / P1 — runtime/offline unit verified | Runtime references and saved resources retain optional URLs and per-role hashes. The collector preserves distinct identities at one URL; verified Downloads objects can serve online playback. | Integration regressions reproduced rejected hash-only engine data and wrong offline music bytes before their fixes. All 375 non-cached tests, normal build and independent post-fix review pass. | Re-triage the whole backlog. Online catalog artwork remains separately tracked as BF-15; do not claim all app SRL support. |
 | BF-15 / P2 — verified | Catalog/detail artwork now retains the cover hash and keys its loading task by the full resource reference. Verified response-cache and Downloads hits support hash-only covers; changed hashes cannot reuse stale URL bytes. | All 74 catalog/download/history tests, normal build and independent review pass. Row IDs/grouping are unchanged; these are transport and identity checks, not rendered-image measurements. | Re-triage across the backlog; no production-server or device request was needed. |
 | BF-16 / P2 — verified | Known URL/hash aliases now connect BGM references for catalog grouping, all-difficulty discovery and offline rows. Existing row IDs survive added aliases; splitting a group reserves its old ID for the original first chart. | Pre-fix execution produced two rows for one BGM. All 377 non-cached tests, normal build and independent review pass after incremental merge correction. Stored results and download manifests retain their existing per-level keys. Real-server prevalence is unmeasured. | Re-triage the broader API/performance/intro backlog. No title-only inference joins resource-bearing charts; a missing bridge remains insufficient evidence of identity. |
+| BF-17 / P2 — verified | Particle tint preparation now throws a descriptive preparation error instead of substituting original pixels. Declared variants fail level preparation; incidental failed lookups return nil without caching or charging budget. | All 378 non-cached tests, normal build and independent review pass; cached SEKAI/SIF/22/7 assets still prepare through Metal. No memory-pressure event was induced and the phone effect report's cause is not established. | Re-triage. Earlier atlas allocation and physical effects remain separate open checks. |
 
 Re-triage selects BF-14 ahead of further diagnostics/resource polish once the
 verified BF-12 unit is complete. Silent stale chart/engine
@@ -848,6 +881,18 @@ stopping or resuming it; neither a stale PID nor the lock-file path proves a
 live worker. See `scripts/README.md` for safe cache/status/resume instructions.
 This does not authorize stack implementation based on guesses,
 upstream messages, or physical-device testing.
+
+September 30 19:57 UTC read-only checkpoint: PID 40431 was verified live with
+the expected command after the session interruption. All initially queued
+catalog pages have been fetched. Completed/pending chart-data tasks are
+22/7 278/272, LLSIF 208/1,708 and SEKAI 123/9,512. Three engine variants have
+been scanned with no stack calls; no chart stack hits have been found so far.
+SEKAI pages 427–445 reported 481 pages instead of the 483 reported elsewhere;
+the report flags that non-atomic enumeration, so it must not be called an
+exhaustive snapshot. One truncated response recovered on retry; no unresolved
+failures were reported. Across 1,217 logged requests, no same-host interval
+was below 60 seconds. This checkpoint made no network requests and did not
+restart the independent worker. It does not complete the corpus search.
 
 Per the user's latest direction, postpone real-device testing until Sonolus
 API coverage is complete, then perform the outstanding physical checks in one

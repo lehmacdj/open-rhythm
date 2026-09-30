@@ -2669,7 +2669,7 @@ final class EngineHostTests: XCTestCase {
     let bounded = try EnginePresentationAssets(engine: engine,
       presentation: repeated, tintByteLimit: 32, makeTint: { image, color in
         tintCalls += 1
-        return EnginePresentationAssets.tinted(image, color: color)
+        return try EnginePresentationAssets.tinted(image, color: color)
       })
     XCTAssertEqual(tintCalls, 1)
     XCTAssertNotNil(bounded.particleImage(index: 2, key: "#fff"))
@@ -2692,11 +2692,32 @@ final class EngineHostTests: XCTestCase {
       presentation: presentation(selected: 2, colors: ["#fff", "#0f0"]),
       tintByteLimit: 64, makeTint: { image, color in
         tintCalls += 1
-        return EnginePresentationAssets.tinted(image, color: color)
+        return try EnginePresentationAssets.tinted(image, color: color)
       })
     XCTAssertEqual(tintCalls, 2)
     XCTAssertNotNil(two.particleImage(index: 2, key: "#0f0"))
     XCTAssertEqual(tintCalls, 2, "All declared images are ready before gameplay")
+    XCTAssertThrowsError(try EnginePresentationAssets(engine: engine,
+      presentation: repeated, makeTint: { _, _ in
+        throw EngineInterpreterError.resourcePreparationFailed("particle tint bitmap")
+      })) { error in
+        XCTAssertTrue(error.localizedDescription.contains("particle tint bitmap"))
+    }
+    tintCalls = 0
+    let retry = try EnginePresentationAssets(engine: engine,
+      presentation: repeated, tintByteLimit: 64, makeTint: { image, color in
+        tintCalls += 1
+        if tintCalls == 2 {
+          throw EngineInterpreterError.resourcePreparationFailed("particle tint bitmap")
+        }
+        return try EnginePresentationAssets.tinted(image, color: color)
+      })
+    XCTAssertNil(retry.particleImage(index: 2, key: "#0f0"))
+    let retried = try XCTUnwrap(retry.particleImage(index: 2, key: "#0f0"),
+      "A failed incidental tint must not consume budget or cache wrong pixels")
+    XCTAssertEqual(tintCalls, 3)
+    XCTAssertTrue(retried === retry.particleImage(index: 2, key: "#0f0"))
+    XCTAssertEqual(tintCalls, 3)
     for index in [0, 1, 3, 4] {
       XCTAssertThrowsError(try EnginePresentationAssets(engine: engine,
         presentation: presentation(selected: index)),
@@ -4128,7 +4149,7 @@ final class EngineHostTests: XCTestCase {
       let rendered = EngineRenderer.sprites(host: host, assets: assets)
       XCTAssertEqual(rendered.count, 2)
       for (index, sprite) in rendered.enumerated() {
-        let source = index == 0 ? atlas : EnginePresentationAssets.tinted(atlas,
+        let source = try index == 0 ? atlas : EnginePresentationAssets.tinted(atlas,
           color: UIColor(red: 0.4, green: 0.8, blue: 0.6, alpha: 1))
         let reference = EngineRenderSprite(image: source, points: sprite.points,
           matrix: sprite.matrix, alpha: sprite.alpha, interpolation: linear,
@@ -6134,6 +6155,37 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticleTintPreparationFailuresNeverSubstituteOriginalPixels() throws {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let original = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2),
+      format: format).image { context in
+        UIColor.white.setFill()
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+      }
+    var contexts = 0, images = 0
+    XCTAssertThrowsError(try EnginePresentationAssets.tinted(original, color: .red,
+      makeContext: { width, height in
+        XCTAssertEqual(width, 2)
+        XCTAssertEqual(height, 2)
+        contexts += 1
+        return nil
+      }, makeImage: { _ in images += 1; return nil })) { error in
+        XCTAssertTrue(error.localizedDescription.contains("particle tint bitmap"))
+    }
+    XCTAssertEqual(contexts, 1)
+    XCTAssertEqual(images, 0, "Context failure must stop before image creation")
+    XCTAssertThrowsError(try EnginePresentationAssets.tinted(original, color: .red,
+      makeImage: { _ in images += 1; return nil })) { error in
+        XCTAssertTrue(error.localizedDescription.contains("particle tint image"))
+    }
+    XCTAssertEqual(images, 1)
+    XCTAssertThrowsError(try EnginePresentationAssets.tinted(UIImage(), color: .red)) {
+      XCTAssertTrue($0.localizedDescription.contains("particle tint source image"))
+    }
+  }
+
+  @MainActor
   func testParticleTintPreservesTransparencyAndDrawRespectsAlpha() throws {
     let format = UIGraphicsImageRendererFormat()
     format.scale = 1
@@ -6142,7 +6194,7 @@ final class EngineHostTests: XCTestCase {
       UIColor.white.setFill()
       $0.fill(CGRect(x: 5, y: 5, width: 10, height: 10))
     }
-    let tinted = EnginePresentationAssets.tinted(original, color: .red)
+    let tinted = try EnginePresentationAssets.tinted(original, color: .red)
     let rendered = UIGraphicsImageRenderer(size: size, format: format).image {
       try! EngineRenderer.drawImage(tinted,
         points: [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
@@ -6169,7 +6221,7 @@ final class EngineHostTests: XCTestCase {
       UIColor.red.withAlphaComponent(0.5).setFill()
       $0.cgContext.fill(CGRect(origin: .zero, size: size))
     }
-    let unchanged = EnginePresentationAssets.tinted(translucent, color: .white)
+    let unchanged = try EnginePresentationAssets.tinted(translucent, color: .white)
     context.clear(CGRect(origin: .zero, size: size))
     context.draw(try XCTUnwrap(unchanged.cgImage),
       in: CGRect(origin: .zero, size: size))
