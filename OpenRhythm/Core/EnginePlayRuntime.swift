@@ -11,6 +11,10 @@ struct EngineTouch: Sendable {
   let delta: EnginePoint
   var velocity: EnginePoint? = nil
   var velocitySampleTime: Double? = nil
+  // Active contacts remain visible between UIKit deliveries, but only a new
+  // event triggers the input lifecycle phase. Zero motion can still be an
+  // event, so neither delta nor timestamp comparisons establish this flag.
+  var hasEvent = true
 
   func moved(to position: EnginePoint, at time: Double, ended: Bool) -> Self {
     let dx = position.x - self.position.x
@@ -31,7 +35,7 @@ struct EngineTouch: Sendable {
     Self(id: id, started: false, ended: false, time: time,
       startTime: startTime, position: position, startPosition: startPosition,
       delta: EnginePoint(x: 0, y: 0), velocity: EnginePoint(x: 0, y: 0),
-      velocitySampleTime: max(time, sampleTime))
+      velocitySampleTime: max(time, sampleTime), hasEvent: false)
   }
 }
 
@@ -546,7 +550,7 @@ final class EnginePlayRuntime {
     for entity in sequentialActive {
       _ = try execute(entity, callback: \.updateSequential)
     }
-    if !touches.isEmpty {
+    if touches.contains(where: \.hasEvent) {
       for entity in touchActive {
         _ = try execute(entity, callback: \.touch)
       }

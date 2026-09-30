@@ -54,6 +54,28 @@ restarts and audio interruptions. Record the tested build and results for
 each check. A user-requested early device check is an exception for that
 specific issue, not permission to resume the rest of the device queue.
 
+Non-stack audit follow-up (September 29, 2026): independent review found that
+stationary held contacts incorrectly invoked `touch` every display frame.
+The input lifecycle requires an event in the current update cycle. Contacts
+now retain a separate event flag: delivered begin/move/end samples set it,
+frame rollover clears it, and the complete active-contact array remains
+readable even when the input callback is not invoked. An event with unchanged
+coordinates or timestamp still counts. The new lifecycle regression failed
+before the fix, and the initial four focused touch/pooling checks pass after
+it. Mixed stationary/new/released contacts are also covered in the final test.
+Independent review found no actionable defect. The full simulator suite
+completed at 20:12 with all 327 tests passing, zero failures or skips, and
+`TEST FINISHED` confirmed in the original run's console. This includes all six
+cached-chart checks and the mixed-contact regression. The five-minute observer
+timeout did not restart the still-running test process. The final normal build
+passes at 20:13. No physical-touch or measured frame-rate improvement is claimed.
+
+The distribution-state Xcode preview was rendered and visually inspected on
+September 29: dense data has jagged peaks using the default Swift Charts
+palette, exact-zero data is centered, and empty and isolated-outlier states
+remain readable. This verifies the results-plot presentation, not acoustic
+alignment. The stack deferral does not imply all non-stack work is complete.
+
 Resolved-sprite intro follow-up (September 27, 2026): fixed computed sprite
 IDs now qualify for stage classification, with identity checked on every
 emitted draw rather than inferred solely from literal graph nodes. All seven

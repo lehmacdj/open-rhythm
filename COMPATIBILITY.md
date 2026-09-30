@@ -11,6 +11,21 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- The [input-system contract](
+  https://wiki.sonolus.com/engine-specs/play-lifecycle/input-system) invokes
+  `touch` only when an input event occurred in the current update cycle.
+  Retained stationary contacts previously triggered it every display frame.
+  Per-contact event provenance now gates that lifecycle phase without filtering
+  the Runtime Touch Array. Same-position/same-timestamp deliveries remain
+  events; frame rollover and generation resets do not fabricate new events.
+  The new regression failed before the change; four initial focused checks
+  pass afterward, including short taps, flicks, coincident contacts and restart
+  pooling. The final regression also covers mixed stationary/new/released
+  contacts. Independent review found no actionable issue. The full September 29
+  simulator suite completed at 20:12 with all 327 tests passing, no failures or
+  skips, and the original run's `TEST FINISHED` marker. All six cached-chart
+  checks are included. The normal build passes at 20:13. This is not physical
+  input or frame-pacing sign-off.
 - Intro-stage candidates can use fixed computed sprite IDs. The graph proof
   establishes stable, side-effect-free arguments and read-only lifecycle;
   the host separately validates each emitted draw's resolved sprite ID against

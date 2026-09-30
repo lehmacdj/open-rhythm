@@ -4325,6 +4325,51 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(unweighted.snapshot.earned, 500_000)
   }
 
+  func testStationaryContactsRemainReadableWithoutRepeatingTouchCallbacks() throws {
+    let builder = RuntimeNodeBuilder()
+    let memory = builder.value(4000)
+    let increment = builder.call("IncrementPost", [memory, builder.value(0)])
+    let contactCount = builder.call("Get", [builder.value(1001), builder.value(3)])
+    let rememberCount = builder.call("Set", [memory, builder.value(1), contactCount])
+    let engine = try builder.engine(archetypes: [["name": "InputProbe",
+      "hasInput": false, "imports": [], "exports": [],
+      "touch": ["index": increment],
+      "updateParallel": ["index": rememberCount]]])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "InputProbe", name: nil, data: [])]),
+      options: [], aspectRatio: 1.8, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    var pool = EngineTouchPool<Int>()
+    let point = EnginePoint(x: 0, y: -0.75)
+    func frame(_ time: Double, calls: Double, contacts: Double) throws {
+      try runtime.update(at: time, touches: pool.touches)
+      XCTAssertEqual(runtime.memory.value(block: 4000, index: 0), calls)
+      XCTAssertEqual(runtime.memory.value(block: 4000, index: 1), contacts)
+      pool.nextFrame(at: time)
+    }
+    pool.receive(key: 0, position: point, time: 1, started: true, ended: false)
+    try frame(1, calls: 1, contacts: 1)
+    try frame(1.01, calls: 1, contacts: 1)
+    // A delivered event can have unchanged coordinates and timestamp.
+    // Neither movement nor timestamp comparison is an event detector.
+    pool.receive(key: 0, position: point, time: 1, started: false, ended: false)
+    try frame(1.02, calls: 2, contacts: 1)
+    pool.receive(key: 0, position: EnginePoint(x: 0.2, y: -0.75),
+      time: 1.025, started: false, ended: false)
+    try frame(1.03, calls: 3, contacts: 1)
+    try frame(1.04, calls: 3, contacts: 1)
+    pool.receive(key: 1, position: point, time: 1.041, started: true, ended: false)
+    try frame(1.042, calls: 4, contacts: 2)
+    try frame(1.044, calls: 4, contacts: 2)
+    pool.receive(key: 0, position: point, time: 1.045, started: false, ended: true)
+    try frame(1.05, calls: 5, contacts: 2)
+    try frame(1.06, calls: 5, contacts: 1)
+    pool.receive(key: 1, position: point, time: 1.065, started: false, ended: true)
+    try frame(1.07, calls: 6, contacts: 1)
+    try frame(1.08, calls: 6, contacts: 0)
+  }
+
   func testTouchPoolKeepsTenCoincidentContactsAndReusedIdentities() throws {
     var pool = EngineTouchPool<Int>()
     let point = EnginePoint(x: 0, y: -0.75)
@@ -4340,6 +4385,7 @@ final class EngineHostTests: XCTestCase {
       started: true, ended: false)
     XCTAssertEqual(pool.touches.count, 11)
     XCTAssertTrue(pool.touches[0].started && pool.touches[0].ended)
+    XCTAssertTrue(pool.touches.allSatisfy(\.hasEvent))
     XCTAssertEqual(pool.touches.last?.startTime, 1.02)
     let engine = try RuntimeNodeBuilder().engine(archetypes: [])
     let runtime = try EnginePlayRuntime(engine: engine,
@@ -4354,6 +4400,7 @@ final class EngineHostTests: XCTestCase {
     pool.nextFrame(at: 1.03)
     XCTAssertEqual(pool.touches.count, 10)
     XCTAssertFalse(pool.touches.contains { $0.started || $0.ended })
+    XCTAssertFalse(pool.touches.contains(where: \.hasEvent))
   }
 
   func testTouchPoolingPreservesShortTapsAndFlicksAfterStationaryHolds() throws {
@@ -4364,13 +4411,16 @@ final class EngineHostTests: XCTestCase {
       at: 1.01, ended: false)
     let end = moved.moved(to: moved.position, at: 1.02, ended: true)
     XCTAssertTrue(end.started && end.ended)
+    XCTAssertTrue(end.hasEvent)
     XCTAssertEqual(end.startTime, 1)
     XCTAssertEqual(end.delta, EnginePoint(x: 0.1, y: 0.2))
     XCTAssertEqual(end.velocity?.y ?? 0, 20, accuracy: 0.001)
     let held = start.nextFrame(at: 3)
+    XCTAssertFalse(held.hasEvent)
     XCTAssertEqual(held.time, 1, "Keep the OS event timestamp intact")
     let flick = held.moved(to: EnginePoint(x: 0, y: 0.2), at: 3.01, ended: false)
     XCTAssertFalse(flick.started)
+    XCTAssertTrue(flick.hasEvent)
     XCTAssertEqual(flick.velocity?.y ?? 0, 20, accuracy: 0.001)
     XCTAssertEqual(flick.nextFrame(at: 3.02).delta, p)
 
