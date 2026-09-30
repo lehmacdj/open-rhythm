@@ -300,6 +300,8 @@ final class GameplayModel {
       audioOffset: playAudioOffset)
   }
   private var player: AVPlayer?
+  private let audioSession: PlaybackAudioSession
+  private let audioSessionOwner = UUID()
   private var eventClock: PlaybackEventClock?
   var eventClockDiagnosticObservations: [PlaybackEventClock.Observation] {
     eventClock?.diagnosticObservations ?? []
@@ -351,10 +353,16 @@ final class GameplayModel {
 
   init(
     loader: RuntimeBundleLoader = RuntimeBundleLoader(),
-    resultStore: ResultStore = .shared
+    resultStore: ResultStore = .shared,
+    audioSession: PlaybackAudioSession? = nil
   ) {
     self.loader = loader
     self.resultStore = resultStore
+    self.audioSession = audioSession ?? .shared
+  }
+
+  deinit {
+    audioSession.release(owner: audioSessionOwner)
   }
 
   func prepare(
@@ -553,6 +561,20 @@ final class GameplayModel {
     let mediaTime = max(0, clockMapping.mediaTime(chartTime: currentTime))
     skippedIntroDuration = mediaTime
     Task {
+      guard phase == .playing, playbackGeneration == generation else { return }
+      // Own the audio session before seeking can prepare player I/O. This
+      // also reports activation failure instead of waiting on a blocked seek.
+      do {
+        try await audioSession.activate(owner: audioSessionOwner)
+      } catch {
+        guard phase == .playing, playbackGeneration == generation else { return }
+        stop()
+        let error = error as NSError
+        phase = .failed("Audio playback could not start. "
+          + "\(error.localizedDescription) (\(error.domain), \(error.code))")
+        return
+      }
+      guard phase == .playing, playbackGeneration == generation else { return }
       let sought = await player.seek(to: CMTime(
         seconds: mediaTime, preferredTimescale: 60_000),
         toleranceBefore: .zero, toleranceAfter: .zero)
@@ -562,8 +584,6 @@ final class GameplayModel {
         phase = .failed("The music could not seek to the chart's start.")
         return
       }
-      await Self.setAudioSession(active: true)
-      guard phase == .playing, playbackGeneration == generation else { return }
       audioSeekCompleted = true
       startPreparedAudio()
     }
@@ -800,10 +820,7 @@ final class GameplayModel {
     activeHolds.removeAll()
     if phase == .playing { phase = .ready }
     if deactivateAudio {
-      Task {
-        guard phase != .playing else { return }
-        await Self.setAudioSession(active: false)
-      }
+      audioSession.release(owner: audioSessionOwner)
     }
   }
 
@@ -1119,13 +1136,4 @@ final class GameplayModel {
       bufferDuration: session.ioBufferDuration)
   }
 
-  private nonisolated static func setAudioSession(active: Bool) async {
-    await Task.detached(priority: .userInitiated) {
-      let session = AVAudioSession.sharedInstance()
-      if active {
-        try? session.setCategory(.playback)
-      }
-      try? session.setActive(active)
-    }.value
-  }
 }

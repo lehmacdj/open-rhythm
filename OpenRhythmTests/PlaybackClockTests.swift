@@ -5,6 +5,183 @@ import UIKit
 @testable import OpenRhythm
 
 final class PlaybackClockTests: XCTestCase {
+  @MainActor
+  func testAudioSessionLeaseReleaseCannotStopAnotherModel() async throws {
+    let probe = AudioSessionProbe()
+    let ended = expectation(description: "Both final-owner releases complete")
+    ended.expectedFulfillmentCount = 2
+    let session = PlaybackAudioSession { active in
+      probe.record(active)
+      if !active { ended.fulfill() }
+    }
+    let first = UUID(), second = UUID(), third = UUID()
+    try await session.activate(owner: first)
+    try await session.activate(owner: second)
+    session.release(owner: first)
+    session.release(owner: first)
+    session.release(owner: UUID())
+    // Reactivation is also a queue barrier for preceding cleanup operations.
+    try await session.activate(owner: second)
+    XCTAssertEqual(probe.values, [true, true, true])
+    session.release(owner: second)
+    try await session.activate(owner: third)
+    XCTAssertEqual(probe.values, [true, true, true, false, true])
+    session.release(owner: third)
+    await fulfillment(of: [ended], timeout: 2)
+    XCTAssertEqual(probe.values, [true, true, true, false, true, false])
+    XCTAssertFalse(probe.usedMainThread)
+  }
+
+  @MainActor
+  func testAudioSessionOrdersReleaseDuringPendingActivation() async throws {
+    let probe = AudioSessionProbe()
+    let entered = expectation(description: "Activation is pending off-main")
+    let ended = expectation(description: "Both leases released")
+    ended.expectedFulfillmentCount = 2
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    let session = PlaybackAudioSession { active in
+      let count = probe.record(active)
+      if count == 1 {
+        entered.fulfill()
+        guard gate.wait(timeout: .now() + 2) == .success else {
+          throw NSError(domain: "AudioSessionProbe", code: 1)
+        }
+      }
+      if !active { ended.fulfill() }
+    }
+    let first = UUID(), second = UUID()
+    let activation = Task { try await session.activate(owner: first) }
+    await fulfillment(of: [entered], timeout: 2)
+    session.release(owner: first)
+    let replacement = Task { try await session.activate(owner: second) }
+    gate.signal()
+    try await activation.value
+    try await replacement.value
+    XCTAssertEqual(probe.values, [true, false, true])
+    session.release(owner: first)
+    session.release(owner: second)
+    await fulfillment(of: [ended], timeout: 2)
+    XCTAssertEqual(probe.values, [true, false, true, false])
+    XCTAssertFalse(probe.usedMainThread)
+  }
+
+  @MainActor
+  func testAudioSessionActivationFailureDoesNotAcquireLease() async throws {
+    let probe = AudioSessionProbe()
+    let ended = expectation(description: "Successful lease released")
+    let session = PlaybackAudioSession { active in
+      if probe.record(active) == 1 {
+        throw NSError(domain: "AudioSessionProbe", code: 7,
+          userInfo: [NSLocalizedDescriptionKey: "Injected activation failure"])
+      }
+      if !active { ended.fulfill() }
+    }
+    let first = UUID(), second = UUID()
+    do {
+      try await session.activate(owner: first)
+      XCTFail("Activation failures must propagate")
+    } catch {
+      XCTAssertEqual((error as NSError).domain, "AudioSessionProbe")
+      XCTAssertEqual((error as NSError).code, 7)
+    }
+    session.release(owner: first)
+    try await session.activate(owner: second)
+    XCTAssertEqual(probe.values, [true, true])
+    session.release(owner: second)
+    await fulfillment(of: [ended], timeout: 2)
+  }
+
+  @MainActor
+  func testGameplayReportsActivationFailureAndStopsPendingStartup() async throws {
+    let session = PlaybackAudioSession { _ in
+      throw NSError(domain: "AudioSessionProbe", code: 7,
+        userInfo: [NSLocalizedDescriptionKey: "Injected activation failure"])
+    }
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("session-failure-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = try makeSessionModel(session, directory: directory)
+    defer { model.stop() }
+    model.start()
+    for _ in 0..<200 where model.phase == .playing {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(model.phase, .failed("Audio playback could not start. "
+      + "Injected activation failure (AudioSessionProbe, 7)"))
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertEqual(model.currentTime, 0)
+  }
+
+  @MainActor
+  func testAbandonedRestartReleasesSessionWhenModelDeallocates() async throws {
+    let probe = AudioSessionProbe()
+    let entered = expectation(description: "Model owns a pending activation")
+    let ended = expectation(description: "Deallocation releases the lease")
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    let session = PlaybackAudioSession { active in
+      probe.record(active)
+      if active {
+        entered.fulfill()
+        guard gate.wait(timeout: .now() + 2) == .success else {
+          throw NSError(domain: "AudioSessionProbe", code: 1)
+        }
+      } else { ended.fulfill() }
+    }
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("session-lifetime-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var model: GameplayModel? = try makeSessionModel(session, directory: directory)
+    weak var weakModel = model
+    model?.start()
+    await fulfillment(of: [entered], timeout: 2)
+    // Preserve ownership as restart does, then abandon that restart. The
+    // pending activation holds the model until its stale-generation guard.
+    model?.stop(deactivateAudio: false)
+    model = nil
+    gate.signal()
+    await fulfillment(of: [ended], timeout: 2)
+    XCTAssertNil(weakModel)
+    XCTAssertEqual(probe.values, [true, false])
+  }
+
+  @MainActor
+  private func makeSessionModel(_ session: PlaybackAudioSession,
+    directory: URL) throws -> GameplayModel {
+    let audio = directory.appendingPathComponent("tone.caf")
+    let format = try XCTUnwrap(AVAudioFormat(
+      standardFormatWithSampleRate: 48000, channels: 1))
+    let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+      frameCapacity: 480))
+    buffer.frameLength = buffer.frameCapacity
+    for frame in 0..<480 { buffer.floatChannelData![0][frame] = 0 }
+    do {
+      let file = try AVAudioFile(forWriting: audio, settings: format.settings)
+      try file.write(from: buffer)
+    }
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let resource = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "session-failure", source: nil,
+      version: 1, rating: 1, title: LocalizedText("Session failure"),
+      artists: LocalizedText("Generated"), author: "Fixture", tags: [],
+      cover: resource, bgm: resource, data: resource)
+    let model = GameplayModel(audioSession: session)
+    model.prepare(bundle: RuntimeBundle(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: []), bgmURL: audio,
+      isOffline: true, playbackMode: .basicLanes), level: level,
+      server: ServerDescriptor(id: "session-failure", name: "Fixture",
+        baseURL: URL(string: "https://example.com")!), title: "Session failure")
+    return model
+  }
+
   func testVisualCalibrationMapsMusicAndInputOnceAtEverySpeed() {
     for speed in [0.5, 1.0, 2.0] {
       let neutral = BGMClockMapping(offset: 0.4, speed: speed)
@@ -738,5 +915,32 @@ final class PlaybackClockTests: XCTestCase {
     model.release(lane: 0, at: 2)
     XCTAssertEqual(model.noteTimings.last?.accuracy, 0)
     XCTAssertEqual(model.noteTimings.count, 2)
+  }
+}
+
+private final class AudioSessionProbe: @unchecked Sendable {
+  private let lock = NSLock()
+  private var transitions = [Bool]()
+  private var mainThread = false
+
+  @discardableResult
+  func record(_ active: Bool) -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    transitions.append(active)
+    mainThread = mainThread || Thread.isMainThread
+    return transitions.count
+  }
+
+  var values: [Bool] {
+    lock.lock()
+    defer { lock.unlock() }
+    return transitions
+  }
+
+  var usedMainThread: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return mainThread
   }
 }

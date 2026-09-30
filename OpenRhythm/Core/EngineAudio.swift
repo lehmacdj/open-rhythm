@@ -2,6 +2,73 @@ import AVFoundation
 import CoreHaptics
 import zlib
 
+/// Serializes the process-wide session without blocking the main actor. Each
+/// model owns one lease; an old model's cleanup cannot stop a newer model.
+@MainActor
+final class PlaybackAudioSession {
+  static let shared = PlaybackAudioSession { active in
+    let session = AVAudioSession.sharedInstance()
+    if active { try session.setCategory(.playback) }
+    try session.setActive(active)
+  }
+
+  private let queue = DispatchQueue(label: "OpenRhythm.AudioSession",
+    qos: .userInitiated)
+  private let worker: PlaybackAudioSessionWorker
+
+  init(setActive: @escaping @Sendable (Bool) throws -> Void) {
+    worker = PlaybackAudioSessionWorker(setActive: setActive)
+  }
+
+  func activate(owner: UUID) async throws {
+    // Submission happens on the main actor before suspending. stop() submits
+    // release synchronously to the same queue, so it cannot overtake this.
+    try await withCheckedThrowingContinuation { continuation in
+      let worker = worker
+      queue.async {
+        do {
+          try worker.activate(owner: owner)
+          continuation.resume()
+        } catch {
+          continuation.resume(throwing: error)
+        }
+      }
+    }
+  }
+
+  nonisolated func release(owner: UUID) {
+    let worker = worker
+    queue.async { worker.release(owner: owner) }
+  }
+}
+
+// All mutable state is confined to PlaybackAudioSession's serial queue.
+private final class PlaybackAudioSessionWorker: @unchecked Sendable {
+  private let setActive: @Sendable (Bool) throws -> Void
+  private var owners = Set<UUID>()
+
+  init(setActive: @escaping @Sendable (Bool) throws -> Void) {
+    self.setActive = setActive
+  }
+
+  func activate(owner: UUID) throws {
+    // Reassert activation even for an existing owner after an interruption.
+    // A failed activation must not create a new lease.
+    try setActive(true)
+    owners.insert(owner)
+  }
+
+  func release(owner: UUID) {
+    guard owners.remove(owner) != nil, owners.isEmpty else { return }
+    do { try setActive(false) }
+    catch {
+      // Cleanup cannot restart playback. Preserve diagnostics rather than
+      // swallowing a failure or retaining a dead owner's lease forever.
+      NSLog("Audio session deactivation failed: %@", String(describing: error))
+    }
+  }
+}
+
 extension EngineHaptic {
   // The engine contract names strengths, not platform-specific waveforms.
   // Use short transients for impacts and a bounded continuous event for Long.
