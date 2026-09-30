@@ -293,6 +293,144 @@ final class OfflineStoreTests: XCTestCase {
   }
 
   @MainActor
+  func testCorruptManifestDoesNotHideValidDownloadsOrPermitUnsafeCleanup()
+    async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("partial-offline-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("Manifests")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://example.com")!)
+    let level = SonolusLevelItem(name: "chart", source: nil, version: 1, rating: 1,
+      title: LocalizedText("Retained song"), artists: LocalizedText("Artist"),
+      author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+    let objects = root.appendingPathComponent("Objects")
+    try FileManager.default.createDirectory(at: objects,
+      withIntermediateDirectories: true)
+    let payloads: [String: Data] = [
+      "music.mp3": Data("Local music bytes".utf8),
+      "chart": Data(#"{"bgmOffset":0,"entities":[]}"#.utf8),
+      "configuration": Data(#"{"options":[]}"#.utf8),
+      "engine": Data(#"""
+        {"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},
+         "nodes":[],"buckets":[],"archetypes":[]}
+        """#.utf8)
+    ]
+    let resources = try payloads.map { name, bytes in
+      try bytes.write(to: objects.appendingPathComponent(bytes.sha256Hex))
+      return OfflineResource(remoteURL: server.baseURL.appendingPathComponent(name),
+        objectName: bytes.sha256Hex, expectedSHA1: nil)
+    }
+    let itemData = Data(#"""
+      {"bgm":{"url":"/music.mp3"},"data":{"url":"/chart"},
+       "engine":{"version":13,"playData":{"url":"/engine"},
+       "configuration":{"url":"/configuration"}}}
+      """#.utf8)
+    let manifest = OfflineLevelManifest(
+      id: Data("\(server.id):\(level.id)".utf8).sha256Hex,
+      server: server, level: level, itemData: itemData, resources: resources,
+      downloadedAt: Date(timeIntervalSinceReferenceDate: 12345))
+    let validURL = directory.appendingPathComponent("\(manifest.id).json")
+    let validData = try JSONEncoder().encode(manifest)
+    try validData.write(to: validURL)
+    let brokenURL = directory.appendingPathComponent("damaged.json")
+    let brokenData = Data("{incomplete metadata".utf8)
+    try brokenData.write(to: brokenURL)
+    let unknownData = Data("May belong to the damaged manifest".utf8)
+    let unknownURL = objects.appendingPathComponent(unknownData.sha256Hex)
+    try unknownData.write(to: unknownURL)
+    let store = OfflineStore(rootURL: root)
+
+    let songs = try await store.catalogSongs()
+    XCTAssertEqual(songs.count, 1)
+    XCTAssertEqual(songs.first?.variants.map(\.id), [level.id])
+    let lookup = try await store.manifest(level: level, from: server)
+    XCTAssertEqual(lookup, manifest)
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      throw URLError(.notConnectedToInternet)
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let loader = RuntimeBundleLoader(client: SonolusClient(session: session),
+      offlineStore: store)
+    let bundle = try await loader.load(level: level, from: server)
+    XCTAssertTrue(bundle.isOffline)
+    XCTAssertEqual(bundle.playbackMode, .engine)
+    XCTAssertEqual(try Data(contentsOf: bundle.bgmURL), payloads["music.mp3"])
+    XCTAssertEqual(bundle.presentation?.resources["configuration"],
+      payloads["configuration"])
+    XCTAssertTrue(recorder.urls.isEmpty,
+      "A damaged neighbor must not force a valid offline song onto the network")
+    let downloaded = await store.contains(level: level, from: server)
+    XCTAssertTrue(downloaded)
+    let snapshot = try await store.catalogSnapshot()
+    XCTAssertEqual(snapshot.songs.count, 1)
+    XCTAssertEqual(snapshot.issues.map(\.fileName), ["damaged.json"])
+    XCTAssertTrue(snapshot.issues[0].localizedDescription
+      .contains("Couldn’t read download record damaged.json"))
+    XCTAssertFalse(snapshot.issues[0].diagnostic.isEmpty)
+    let model = OfflineCatalogModel(offlineStore: store,
+      resultStore: ResultStore(rootURL: root.appendingPathComponent("Results")))
+    await model.refresh(playedSongs: false)
+    XCTAssertEqual(model.visibleSongs.count, 1)
+    XCTAssertEqual(model.issues.count, 1)
+    XCTAssertNil(model.errorMessage, "Partial recovery is not a failed catalog")
+    do {
+      _ = try await store.manifests()
+      XCTFail("Destructive callers still need a complete reference inventory")
+    } catch { }
+    do {
+      try await store.remove(song: XCTUnwrap(songs.first))
+      XCTFail("Do not start whole-song removal with unreadable references")
+    } catch { }
+    XCTAssertEqual(try Data(contentsOf: validURL), validData)
+    XCTAssertEqual(try Data(contentsOf: brokenURL), brokenData)
+    XCTAssertEqual(try Data(contentsOf: unknownURL), unknownData)
+    await model.refresh(playedSongs: true)
+    XCTAssertTrue(model.issues.isEmpty, "Download warnings do not belong to history")
+    // A repaired record is re-read on refresh; no persistent negative cache.
+    try validData.write(to: brokenURL, options: .atomic)
+    await model.refresh(playedSongs: false)
+    XCTAssertEqual(model.visibleSongs.count, 1, "Canonical aliases still deduplicate")
+    XCTAssertTrue(model.issues.isEmpty)
+    XCTAssertNil(model.errorMessage)
+    XCTAssertEqual(try Data(contentsOf: unknownURL), unknownData)
+  }
+
+  func testOfflineCatalogDistinguishesEmptyAllDamagedAndEnumerationFailure()
+    async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("unreadable-offline-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = OfflineStore(rootURL: root)
+    let empty = try await store.catalogSnapshot()
+    XCTAssertTrue(empty.songs.isEmpty)
+    XCTAssertTrue(empty.issues.isEmpty)
+    let directory = root.appendingPathComponent("Manifests")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    try Data("not a manifest".utf8).write(to: directory.appendingPathComponent("bad.json"))
+    let damaged = try await store.catalogSnapshot()
+    XCTAssertTrue(damaged.songs.isEmpty)
+    XCTAssertEqual(damaged.issues.count, 1)
+    // Replacing this test-only directory with a file makes enumeration fail.
+    // This is not equivalent to one unreadable record or an empty library.
+    try FileManager.default.removeItem(at: directory)
+    try Data("not a directory".utf8).write(to: directory)
+    do {
+      _ = try await store.catalogSnapshot()
+      XCTFail("An unavailable manifest directory must remain a catalog failure")
+    } catch { }
+  }
+
+  @MainActor
   func testReaddingServerReusesDownloadsAndLegacyAliasesCanUpdateAndDelete()
     async throws {
     let root = FileManager.default.temporaryDirectory

@@ -59,7 +59,7 @@ or physical-device validation. Findings below are recorded before fixing them.
 | BF-01 / P1 — fixed | `ResultStore.record` silently capped history at 500, removed older timing payloads, and thereby also dropped old-only songs from `playedSongs`. The previous audit described this limit, but the user did not request automatic deletion. | Confirmed by the 501st-play regression; automatic eviction is now removed. | Verification below closes this unit. Previously deleted data cannot be reconstructed. |
 | BF-02 / P1 — frame dependence fixed | Velocity now uses consecutive OS samples, including UIKit's coalesced history, independently of display time and the mapped chart clock. No assumed 240 Hz floor or synthetic stationary frame sample remains. | The frame-phase regression failed before and passes now, alongside coalesced hold-to-flick, lifecycle and clock-separation checks. Native estimator parity and contribution to reported early/late bias are not established. | Keep single-sample-after-long-hold uncertainty explicit; physical flick verification remains deferred. Do not add guessed calibration to force a timing distribution. |
 | BF-03 / P1 — interruption path fixed; other stalls open | An audio-session interruption previously left the engine interpreting input without a scene change. The model now stops the attempt, invalidates startup/input generations and returns to Ready with an explanation; only an explicit Start restarts it. | Synthetic active-engine regression reproduced the defect and now passes, as do pending-activation, notification parsing and advancing-restart checks. Not a real-device interruption measurement. | Investigate ordinary buffering/stopped-player input separately; do not treat every temporary wait or normal EOF as an interruption. Physical behavior remains in the deferred batch. |
-| BF-04 / P2 | One malformed offline manifest makes `manifests()` throw and prevents `catalogSongs()` from returning the otherwise valid library. Cleanup deliberately fails closed to protect unknown shared references. | Confirmed library-availability path; no current user file has been shown corrupt. | Reproduce mixed valid/corrupt manifests; design recoverable listing without deleting data or weakening cleanup safety. |
+| BF-04 / P2 — fixed | Catalog and lookup reads now recover valid manifests individually and report unreadable records in the Offline UI. Strict manifest inventory, whole-song deletion and asset cleanup still fail closed on unknown references. | Mixed valid/corrupt regression verifies visible songs, download status, offline runtime-bundle preparation with zero network requests, warning lifecycle and byte-for-byte preservation. No current user file was shown corrupt. | Bounded recovery unit verified below. Damaged metadata is retained; no automatic deletion or speculative reconstruction is performed. |
 | BF-05 / P2 diagnosis | Every difficulty's download-status lookup enumerates/decodes the manifest collection and validates resource contents again. | Large-library I/O/performance hypothesis, not a measured phone hitch. | Instrument a synthetic multi-song library, then prioritize from measured cost; retain hash verification rather than bypassing it. |
 | BF-06 / P2 diagnosis | Metal completion releases its slot and records GPU timing but does not inspect command-buffer failure status; synchronous encoding failures do trigger software fallback. | Asynchronous render-error coverage gap, not a reproduced GPU failure. | Check failure propagation with an injectable completion seam before touching the renderer's successful frame path. |
 | BF-07 / P2 diagnosis | The SDK distinguishes media-services loss/reset from session interruptions. Gameplay/audio currently has no observer for these notifications; the haptic backend's reset handling does not establish audio recovery. | Source-level lifecycle coverage gap; no reproduced media-server reset failure. | Synthetic notification investigation and an audio-object recreation plan if needed; do not expand the bounded interruption fix into an unverified reset implementation. |
@@ -182,6 +182,38 @@ question and BF-05–07 remain queued for diagnosis; no additional failure in
 those paths was established during this touch-input unit. Preserve the
 remaining API/stack and physical-verification gates rather than extending
 this unit into undocumented native filtering behavior.
+
+BF-04 recovery: `catalogSnapshot()` returns valid songs plus per-file issues,
+which the Offline view displays separately from a whole-library failure.
+Each issue includes a readable explanation, filename and original error
+domain/code. Empty libraries, all-unreadable records and directory-enumeration
+failure remain distinguishable. Lookup/status and runtime preparation no
+longer fail because of an unrelated malformed record. Reads never delete,
+quarantine or rewrite that record, and a repaired file is re-read on refresh.
+
+Destructive callers still use strict `manifests()`: whole-song deletion fails
+before changing any manifests if references cannot be inventoried, and garbage
+collection does not treat resources referenced by unreadable metadata as
+unreferenced. This intentionally does not add an automatic damaged-record
+purge or relax the pre-existing shared-resource safety policy.
+
+Two regressions cover mixed valid/corrupt files, per-record diagnostics,
+visible catalog/model state, offline bundle preparation with a fail-on-network
+stub, strict deletion refusal, preservation of both manifests and potentially
+referenced object bytes, refresh after repair, warning removal in history mode,
+and empty/all-damaged/enumeration-failure distinctions. The synthetic music
+bytes are checked for preservation, not decoded or played. All 66 focused
+OfflineStore/Catalog/ResultStore tests pass
+(`RunSomeTests/48968286-B2D2-4006-91B2-200DAF9758F7.txt`), the normal build
+passes (`BuildProject/BuildProject-Log-20260930-015036.txt`), and independent
+post-fix review is clean, including the added runtime-bundle coverage. The
+shared engine and physical suites were not rerun for this offline-only unit.
+
+Re-triage: investigate BF-03's remaining ordinary-stall input behavior next,
+with controlled player state and no guessed timing correction. Its gameplay
+impact warrants diagnosis before optimizing BF-05's unmeasured library I/O.
+BF-06/07 and the existing API/intro/device items remain open; a successful
+partial-library read does not certify those separate areas.
 
 ## Current verification order — reaffirmed September 27, 2026
 

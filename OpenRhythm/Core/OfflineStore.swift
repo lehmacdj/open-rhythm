@@ -26,6 +26,20 @@ struct OfflineLevelManifest: Codable, Hashable, Identifiable, Sendable {
   }
 }
 
+struct OfflineManifestIssue: Identifiable, Sendable, LocalizedError {
+  let fileName: String
+  let diagnostic: String
+  var id: String { fileName }
+  var errorDescription: String? {
+    "Couldn’t read download record \(fileName). \(diagnostic)"
+  }
+}
+
+struct OfflineCatalogSnapshot: Sendable {
+  let songs: [CatalogSong]
+  let issues: [OfflineManifestIssue]
+}
+
 private struct OfflineResourceDownload: Sendable {
   let resource: OfflineResource
   let data: Data
@@ -275,26 +289,44 @@ actor OfflineStore {
   }
 
   func manifests() throws -> [OfflineLevelManifest] {
-    guard fileManager.fileExists(atPath: manifestsURL.path) else {
-      return []
-    }
+    try readManifests(allowPartial: false).manifests
+  }
 
-    return try fileManager.contentsOfDirectory(
-      at: manifestsURL,
-      includingPropertiesForKeys: nil
-    )
-    .filter { $0.pathExtension == "json" }
-    .map { try Data(contentsOf: $0) }
-    .map { try JSONDecoder.offline.decode(OfflineLevelManifest.self, from: $0) }
-    .sorted { $0.downloadedAt > $1.downloadedAt }
+  private func readManifests(allowPartial: Bool) throws
+    -> (manifests: [OfflineLevelManifest], issues: [OfflineManifestIssue]) {
+    guard fileManager.fileExists(atPath: manifestsURL.path) else { return ([], []) }
+    // Enumeration failures still fail the whole read. Only individual record
+    // failures can yield a partial, explicitly diagnosed catalog.
+    let files = try fileManager.contentsOfDirectory(at: manifestsURL,
+      includingPropertiesForKeys: nil)
+      .filter { $0.pathExtension == "json" }
+      .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    var manifests = [OfflineLevelManifest]()
+    var issues = [OfflineManifestIssue]()
+    for file in files {
+      do {
+        manifests.append(try JSONDecoder.offline.decode(OfflineLevelManifest.self,
+          from: Data(contentsOf: file)))
+      } catch {
+        let error = error as NSError
+        let issue = OfflineManifestIssue(fileName: file.lastPathComponent,
+          diagnostic: "\(error.localizedDescription) (\(error.domain), \(error.code))")
+        guard allowPartial else { throw issue }
+        issues.append(issue)
+      }
+    }
+    return (manifests.sorted { $0.downloadedAt > $1.downloadedAt }, issues)
   }
 
   func manifest(
     level: SonolusLevelItem,
     from server: ServerDescriptor
   ) throws -> OfflineLevelManifest? {
+    // An unrelated damaged record must not prevent valid offline playback or
+    // cause the download-status check to report the whole library as absent.
+    let manifests = try readManifests(allowPartial: true).manifests
     if server.id == "offline" {
-      let candidates = try manifests().filter { $0.level.id == level.id }
+      let candidates = manifests.filter { $0.level.id == level.id }
       if let exact = candidates.first(where: {
         $0.level.source == level.source
       }) {
@@ -306,7 +338,7 @@ actor OfflineStore {
     // Always resolve the newest valid canonical copy, including when an old
     // exact-ID manifest still exists. No metadata needs destructive migration.
     let key = originKey(level: level, server: server)
-    return try manifests().first {
+    return manifests.first {
       originKey(level: $0.level, server: $0.server) == key
         && resourcesAreValid(in: $0)
     }
@@ -400,9 +432,19 @@ actor OfflineStore {
   }
 
   func catalogSongs() throws -> [CatalogSong] {
+    try catalogSnapshot().songs
+  }
+
+  func catalogSnapshot() throws -> OfflineCatalogSnapshot {
+    let listing = try readManifests(allowPartial: true)
+    return OfflineCatalogSnapshot(songs: catalogSongs(from: listing.manifests),
+      issues: listing.issues)
+  }
+
+  private func catalogSongs(from manifests: [OfflineLevelManifest]) -> [CatalogSong] {
     // Older builds may have retained one manifest per alias of a server.
     // Prefer the newest copy without deleting recoverable on-disk metadata.
-    let entries = Dictionary(try manifests().map {
+    let entries = Dictionary(manifests.map {
       (originKey(level: $0.level, server: $0.server), $0)
     }, uniquingKeysWith: { first, _ in first }).values
     let offlineServer = ServerDescriptor(

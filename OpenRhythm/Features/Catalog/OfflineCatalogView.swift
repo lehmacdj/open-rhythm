@@ -3,8 +3,11 @@ import SwiftUI
 
 @MainActor
 @Observable
-private final class OfflineCatalogModel {
+final class OfflineCatalogModel {
+  private let offlineStore: OfflineStore
+  private let resultStore: ResultStore
   var songs = [CatalogSong]()
+  var issues = [OfflineManifestIssue]()
   var filter = CatalogFilter() {
     didSet {
       if !selectedEngineKey.isEmpty {
@@ -23,18 +26,30 @@ private final class OfflineCatalogModel {
   var engines: [CatalogEngineChoice] { CatalogEngineChoice.choices(in: songs) }
   var errorMessage: String?
 
+  init(offlineStore: OfflineStore = .shared, resultStore: ResultStore = .shared) {
+    self.offlineStore = offlineStore
+    self.resultStore = resultStore
+  }
+
   var visibleSongs: [CatalogSong] {
     filter.apply(to: songs.filter { $0.engineKey == selectedEngineKey })
   }
 
   func refresh(playedSongs: Bool) async {
     do {
-      songs = try await playedSongs ? ResultStore.shared.playedSongs()
-        : OfflineStore.shared.catalogSongs()
+      if playedSongs {
+        songs = try await resultStore.playedSongs()
+        issues = []
+      } else {
+        let snapshot = try await offlineStore.catalogSnapshot()
+        songs = snapshot.songs
+        issues = snapshot.issues
+      }
       if !engines.contains(where: { $0.id == selectedEngineKey }),
         let first = engines.first { selectedEngineKey = first.id }
       errorMessage = nil
     } catch {
+      issues = []
       errorMessage = error.localizedDescription
     }
   }
@@ -50,13 +65,31 @@ struct OfflineCatalogView: View {
 
   var body: some View {
     List {
+      if !model.issues.isEmpty {
+        Section {
+          Label("Some downloads couldn’t be read",
+            systemImage: "exclamationmark.triangle")
+          Text("Unreadable records are omitted from this list. Existing files "
+            + "have been kept; downloading an affected chart again can repair "
+            + "its record.")
+            .font(.callout)
+          DisclosureGroup("Details (\(model.issues.count))") {
+            ForEach(model.issues) { issue in
+              Text(issue.localizedDescription)
+                .font(.caption)
+                .textSelection(.enabled)
+            }
+          }
+        }
+      }
       if let errorMessage = model.errorMessage {
         ContentUnavailableView(
           playedSongs ? "Couldn’t Load Played Songs" : "Couldn’t Load Downloads",
           systemImage: "exclamationmark.triangle",
           description: Text(errorMessage)
         )
-      } else if model.visibleSongs.isEmpty {
+      } else if model.visibleSongs.isEmpty
+        && (model.issues.isEmpty || !model.songs.isEmpty) {
         ContentUnavailableView(
           model.filter.query.isEmpty
             ? (playedSongs ? "No Played Songs" : "No Offline Songs") : "No Results",

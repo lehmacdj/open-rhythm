@@ -11,6 +11,19 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Offline listing and lookup tolerate individual unreadable manifests while
+  exposing per-file warnings in the Offline UI. Directory-enumeration failure
+  remains a whole-library error. Strict inventory for deletion/garbage
+  collection is unchanged, so unknown resource references cannot be silently
+  dropped. Mixed valid/corrupt fixtures prove valid song visibility/status,
+  zero-network runtime-bundle preparation, retained metadata/object bytes,
+  deletion refusal, warning lifecycle and recovery after repair. Empty and
+  all-unreadable libraries remain distinguishable. All 66 focused offline,
+  catalog and history tests pass
+  (`RunSomeTests/48968286-B2D2-4006-91B2-200DAF9758F7.txt`); normal build and
+  independent review pass. This does not reconstruct damaged metadata or
+  prove audio playback of the fixture's synthetic music bytes.
+
 - Touch velocity now uses consecutive measured OS timestamps and positions,
   not display-frame times or an assumed 240 Hz sampling limit. UIKit's
   [coalesced history](https://developer.apple.com/documentation/uikit/getting-high-fidelity-input-with-coalesced-touches)
