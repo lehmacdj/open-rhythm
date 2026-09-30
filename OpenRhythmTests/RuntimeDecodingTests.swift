@@ -16,6 +16,11 @@ final class CachedEngineIntegrationTests: XCTestCase {
     try await checkChart(engineFolder: "sekai", chart: "shake-it.gz",
       repeatedContacts: true)
   }
+
+  func testShakeItHard18WithStationaryContactFrames() async throws {
+    try await checkChart(engineFolder: "sekai", chart: "shake-it.gz",
+      repeatedContacts: true, pooledContacts: true)
+  }
   func testEleventhLifecycleAndRestart() async throws {
     try await checkChart(engineFolder: "sekai", chart: "eleventh.gz")
   }
@@ -76,7 +81,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
   }
 
   private func checkChart(engineFolder: String, chart: String,
-    repeatedContacts: Bool = false) async throws {
+    repeatedContacts: Bool = false, pooledContacts: Bool = false) async throws {
     let cache = try XCTUnwrap(FileManager.default.urls(
       for: .cachesDirectory, in: .userDomainMask).first)
       .appendingPathComponent("OpenRhythmIntegrationFixtures")
@@ -144,12 +149,27 @@ final class CachedEngineIntegrationTests: XCTestCase {
     var lastTime = startTime
     var successfulInputs = 0
     var successfulTypes = [String: Int]()
+    var touchPool = EngineTouchPool<Int>()
+    var stationaryContactFrames = 0
+    var stationarySuccessfulTypes = [String: Int]()
     // A deterministic load case, not an autoplay implementation or a captured
     // physical play. Eight contacts exercise touch callbacks, holds and hit
     // effects; every contact ends before its next ID is introduced.
     func contacts(_ frame: Int, _ time: Double) -> [EngineTouch] {
       guard repeatedContacts else { return [] }
       let phase = frame % 12
+      if pooledContacts {
+        // Deliver only begin/end events, as UIKit does for a stationary hold.
+        // Still expose every held contact during the intervening update frames.
+        if phase == 0 || phase == 11 {
+          for lane in 0..<8 {
+            touchPool.receive(key: lane,
+              position: EnginePoint(x: -1.05 + Double(lane) * 0.3, y: -0.75),
+              time: time, started: phase == 0, ended: phase == 11)
+          }
+        }
+        return touchPool.touches
+      }
       return (0..<8).map { lane in
         let point = EnginePoint(x: -1.05 + Double(lane) * 0.3, y: -0.75)
         return EngineTouch(id: (frame / 12) * 8 + lane + 1,
@@ -161,6 +181,9 @@ final class CachedEngineIntegrationTests: XCTestCase {
     for frame in 0..<18000 {
       lastTime = startTime + Double(frame) / 60
       let touches = contacts(frame, lastTime)
+      let stationary = pooledContacts && !touches.isEmpty
+        && frame % 12 != 0 && frame % 12 != 11
+      if stationary { stationaryContactFrames += 1 }
       var runtimeDuration = 0.0
       func updateDense() throws {
         let started = ProcessInfo.processInfo.systemUptime
@@ -200,8 +223,9 @@ final class CachedEngineIntegrationTests: XCTestCase {
         if input.grade > 0 {
           successfulInputs += 1
           if level.entities.indices.contains(input.entityIndex) {
-            successfulTypes[level.entities[input.entityIndex].archetype,
-              default: 0] += 1
+            let type = level.entities[input.entityIndex].archetype
+            successfulTypes[type, default: 0] += 1
+            if stationary { stationarySuccessfulTypes[type, default: 0] += 1 }
           }
         }
         XCTAssertTrue(seen.insert(input.entityIndex).inserted,
@@ -215,6 +239,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
       if frame == 0 || firstResolutionFrame.map({ frame < $0 + 120 }) == true {
         opening.append((frame, snapshot))
       }
+      touchPool.nextFrame(at: lastTime)
       try await yieldToDevice()
       if runtime.resolvedInputCount == runtime.inputCount { break }
     }
@@ -231,15 +256,23 @@ final class CachedEngineIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(successfulTypes[type, default: 0], 0, type)
       }
     }
+    if pooledContacts {
+      XCTAssertGreaterThan(stationaryContactFrames, 0)
+      XCTAssertGreaterThan(stationarySuccessfulTypes["NormalTickNote", default: 0],
+        0, "Held contacts must still resolve hold ticks without new events")
+    }
     runtime.restart()
     sparse.restart()
+    touchPool = EngineTouchPool<Int>()
     var sample = 0
     for frame in 0...opening.last!.index {
       let time = startTime + Double(frame) / 60
-      try runtime.update(at: time, touches: contacts(frame, time))
+      let touches = contacts(frame, time)
+      try runtime.update(at: time, touches: touches)
       let actual = Frame(runtime)
-      try sparse.update(at: time, touches: contacts(frame, time))
+      try sparse.update(at: time, touches: touches)
       XCTAssertEqual(actual, Frame(sparse), "\(chart), restart frame \(frame)")
+      touchPool.nextFrame(at: time)
       try await yieldToDevice()
       guard frame == opening[sample].index else { continue }
       let expected = opening[sample].snapshot
@@ -257,6 +290,8 @@ final class CachedEngineIntegrationTests: XCTestCase {
       + "through frame \(opening.last!.index). "
       + "\(successfulInputs) successful inputs; repeated contacts: \(repeatedContacts). "
       + "Lifecycle loop excludes physical touches, music and GPU submission.")
+    print("Pooled contacts: \(pooledContacts); "
+      + "\(stationaryContactFrames) stationary frames.")
     if repeatedContacts { print("SUCCESSFUL INPUT TYPES: \(successfulTypes)") }
     for (name, values) in [("runtime", runtimeDurations), ("sprites", spriteDurations)] {
       let sorted = values.sorted()

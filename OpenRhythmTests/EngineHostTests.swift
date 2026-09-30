@@ -4325,7 +4325,44 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(unweighted.snapshot.earned, 500_000)
   }
 
-  func testStationaryContactsRemainReadableWithoutRepeatingTouchCallbacks() throws {
+  func testStationaryHoldBeginningBeforeInputWindowStillResolves() throws {
+    let builder = RuntimeNodeBuilder()
+    let now = builder.call("Get", [builder.value(1001), builder.value(0)])
+    let inWindow = builder.call("GreaterOr", [now, builder.value(1.05)])
+    let hasTouch = builder.call("Get", [builder.value(1001), builder.value(3)])
+    let judge = builder.call("Set", [builder.value(4005), builder.value(0),
+      builder.value(1)])
+    let despawn = builder.call("Set", [builder.value(4004), builder.value(0),
+      builder.value(1)])
+    let hit = builder.call("Execute", [judge, despawn])
+    let touch = builder.call("If", [builder.call("And", [inWindow, hasTouch]),
+      hit, builder.value(0)])
+    let engine = try builder.engine(archetypes: [["name": "HoldTick",
+      "hasInput": true, "imports": [], "exports": [],
+      "touch": ["index": touch]]])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "HoldTick", name: nil, data: [])]),
+      options: [], aspectRatio: 1.8, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    var pool = EngineTouchPool<Int>()
+    pool.receive(key: 0, position: EnginePoint(x: 0, y: -0.75),
+      time: 1, started: true, ended: false)
+    try runtime.update(at: 1, touches: pool.touches)
+    XCTAssertEqual(runtime.resolvedInputCount, 0)
+    pool.nextFrame(at: 1)
+    try runtime.update(at: 1.02, touches: pool.touches)
+    XCTAssertEqual(runtime.resolvedInputCount, 0)
+    pool.nextFrame(at: 1.02)
+    XCTAssertFalse(try XCTUnwrap(pool.touches.first).started)
+    XCTAssertEqual(pool.touches.first?.time, 1)
+    try runtime.update(at: 1.06, touches: pool.touches)
+    XCTAssertEqual(runtime.resolvedInputCount, 1,
+      "A held finger remains valid input when the note's window opens")
+    XCTAssertEqual(runtime.judgments.first?.grade, 1)
+  }
+
+  func testStationaryContactsContinueCallbacksWithoutFabricatingPresses() throws {
     let builder = RuntimeNodeBuilder()
     let memory = builder.value(4000)
     let increment = builder.call("IncrementPost", [memory, builder.value(0)])
@@ -4350,24 +4387,26 @@ final class EngineHostTests: XCTestCase {
     }
     pool.receive(key: 0, position: point, time: 1, started: true, ended: false)
     try frame(1, calls: 1, contacts: 1)
-    try frame(1.01, calls: 1, contacts: 1)
+    XCTAssertFalse(try XCTUnwrap(pool.touches.first).started)
+    XCTAssertEqual(pool.touches.first?.time, 1)
+    try frame(1.01, calls: 2, contacts: 1)
     // A delivered event can have unchanged coordinates and timestamp.
-    // Neither movement nor timestamp comparison is an event detector.
+    // It must not become a new press or stop continuous hold evaluation.
     pool.receive(key: 0, position: point, time: 1, started: false, ended: false)
-    try frame(1.02, calls: 2, contacts: 1)
+    try frame(1.02, calls: 3, contacts: 1)
     pool.receive(key: 0, position: EnginePoint(x: 0.2, y: -0.75),
       time: 1.025, started: false, ended: false)
-    try frame(1.03, calls: 3, contacts: 1)
-    try frame(1.04, calls: 3, contacts: 1)
+    try frame(1.03, calls: 4, contacts: 1)
+    try frame(1.04, calls: 5, contacts: 1)
     pool.receive(key: 1, position: point, time: 1.041, started: true, ended: false)
-    try frame(1.042, calls: 4, contacts: 2)
-    try frame(1.044, calls: 4, contacts: 2)
+    try frame(1.042, calls: 6, contacts: 2)
+    try frame(1.044, calls: 7, contacts: 2)
     pool.receive(key: 0, position: point, time: 1.045, started: false, ended: true)
-    try frame(1.05, calls: 5, contacts: 2)
-    try frame(1.06, calls: 5, contacts: 1)
+    try frame(1.05, calls: 8, contacts: 2)
+    try frame(1.06, calls: 9, contacts: 1)
     pool.receive(key: 1, position: point, time: 1.065, started: false, ended: true)
-    try frame(1.07, calls: 6, contacts: 1)
-    try frame(1.08, calls: 6, contacts: 0)
+    try frame(1.07, calls: 10, contacts: 1)
+    try frame(1.08, calls: 10, contacts: 0)
   }
 
   func testTouchPoolKeepsTenCoincidentContactsAndReusedIdentities() throws {
@@ -4385,7 +4424,6 @@ final class EngineHostTests: XCTestCase {
       started: true, ended: false)
     XCTAssertEqual(pool.touches.count, 11)
     XCTAssertTrue(pool.touches[0].started && pool.touches[0].ended)
-    XCTAssertTrue(pool.touches.allSatisfy(\.hasEvent))
     XCTAssertEqual(pool.touches.last?.startTime, 1.02)
     let engine = try RuntimeNodeBuilder().engine(archetypes: [])
     let runtime = try EnginePlayRuntime(engine: engine,
@@ -4400,7 +4438,6 @@ final class EngineHostTests: XCTestCase {
     pool.nextFrame(at: 1.03)
     XCTAssertEqual(pool.touches.count, 10)
     XCTAssertFalse(pool.touches.contains { $0.started || $0.ended })
-    XCTAssertFalse(pool.touches.contains(where: \.hasEvent))
   }
 
   func testTouchPoolingPreservesShortTapsAndFlicksAfterStationaryHolds() throws {
@@ -4411,16 +4448,13 @@ final class EngineHostTests: XCTestCase {
       at: 1.01, ended: false)
     let end = moved.moved(to: moved.position, at: 1.02, ended: true)
     XCTAssertTrue(end.started && end.ended)
-    XCTAssertTrue(end.hasEvent)
     XCTAssertEqual(end.startTime, 1)
     XCTAssertEqual(end.delta, EnginePoint(x: 0.1, y: 0.2))
     XCTAssertEqual(end.velocity?.y ?? 0, 20, accuracy: 0.001)
     let held = start.nextFrame(at: 3)
-    XCTAssertFalse(held.hasEvent)
     XCTAssertEqual(held.time, 1, "Keep the OS event timestamp intact")
     let flick = held.moved(to: EnginePoint(x: 0, y: 0.2), at: 3.01, ended: false)
     XCTAssertFalse(flick.started)
-    XCTAssertTrue(flick.hasEvent)
     XCTAssertEqual(flick.velocity?.y ?? 0, 20, accuracy: 0.001)
     XCTAssertEqual(flick.nextFrame(at: 3.02).delta, p)
 

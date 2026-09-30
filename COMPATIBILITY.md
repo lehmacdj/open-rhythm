@@ -11,21 +11,23 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
-- The [input-system contract](
-  https://wiki.sonolus.com/engine-specs/play-lifecycle/input-system) invokes
-  `touch` only when an input event occurred in the current update cycle.
-  Retained stationary contacts previously triggered it every display frame.
-  Per-contact event provenance now gates that lifecycle phase without filtering
-  the Runtime Touch Array. Same-position/same-timestamp deliveries remain
-  events; frame rollover and generation resets do not fabricate new events.
-  The new regression failed before the change; four initial focused checks
-  pass afterward, including short taps, flicks, coincident contacts and restart
-  pooling. The final regression also covers mixed stationary/new/released
-  contacts. Independent review found no actionable issue. The full September 29
-  simulator suite completed at 20:12 with all 327 tests passing, no failures or
-  skips, and the original run's `TEST FINISHED` marker. All six cached-chart
-  checks are included. The normal build passes at 20:13. This is not physical
-  input or frame-pacing sign-off.
+- Stationary contacts continue `touch` evaluation without new presses or
+  timestamps. The September 29 per-delivery gate in `ed27b682` misinterpreted
+  "input event" in the [input-system documentation](
+  https://wiki.sonolus.com/engine-specs/play-lifecycle/input-system);
+  the prior compatibility claim and independent approval are retracted.
+  Public [Next-SEKAI note logic](
+  https://github.com/Next-SEKAI/sonolus-next-sekai-engine/blob/03f0d6a0f583949fb2d66bae0b5fa8fad02b09d3/sekai/play/note.py)
+  handles ticks and traces in `touch`, including held-before-window contacts.
+  A new synthetic regression failed with the gate and passes after restoring
+  continuous evaluation. Six focused checks pass, including a cached “shake
+  it!” Hard 18 run with 6,705 genuine stationary pool frames, successful ticks
+  during those frames, dense/sparse equality and restart determinism. The
+  normal build passes at 22:32 September 29; independent correction review
+  found no actionable issue. The earlier 327-test pass did not cover this
+  scenario: a counter assertion mirrored the wrong assumption and cached
+  contact tests delivered samples every frame. The full suite was not rerun
+  for this correction. This is not physical input or frame-pacing sign-off.
 - Intro-stage candidates can use fixed computed sprite IDs. The graph proof
   establishes stable, side-effect-free arguments and read-only lifecycle;
   the host separately validates each emitted draw's resolved sprite ID against
