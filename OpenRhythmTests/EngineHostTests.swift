@@ -1436,6 +1436,15 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testGameplayIntroPassesInitializedScratchStageAndPreservesChanges() async throws {
+    for movesAt: Double? in [nil, 0.25] {
+      try await checkGameplayIntro(appearanceTime: 0.5, spriteName: "#LANE",
+        earlyInput: true, preparedStage: true, stageMovesAt: movesAt,
+        stageMemoryBlock: 10000, computedStageSprite: true)
+    }
+  }
+
+  @MainActor
   func testGameplayIntroPassesComputedStageIDAndPreservesChanges() async throws {
     let moveTimes: [Double?] = [nil, 0.25]
     for movesAt in moveTimes {
@@ -1581,7 +1590,8 @@ final class EngineHostTests: XCTestCase {
       archetypes.append(["name": "Stage", "hasInput": false,
         "imports": [], "exports": [],
         "preprocess": ["index": b.call("Execute0", writes)],
-        "updateParallel": ["index": stage]])
+        "updateParallel": ["index": stageMemoryBlock == 10000
+          ? b.call("Execute0", writes + [stage]) : stage]])
       if stagePureCallbacks {
         for callback in ["shouldSpawn", "initialize", "updateSequential",
           "touch", "terminate"] {
@@ -1718,6 +1728,111 @@ final class EngineHostTests: XCTestCase {
       XCTAssertEqual(runtime.resolvedInputCount, resolvesFutureInput ? 1 : 0)
       XCTAssertEqual(runtime.host.takeSpawnCommands().count, 1)
     }
+  }
+
+  func testStaticIntroScratchProofTracksInitializationAndLazyBranches() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1), scratch = b.value(10000)
+    let read = b.call("Get", [scratch, zero])
+    let write = b.call("Set", [scratch, zero, one])
+    let add = b.call("SetAdd", [scratch, zero, one])
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, read])
+    let choice = b.call("Get", [b.value(2002), zero])
+    let sequence: ([Int]) -> Int = { b.call("Execute0", $0) }
+    let valid = [sequence([write, draw]), sequence([write, add, draw]),
+      sequence([b.call("If", [choice, write, write]), draw]),
+      sequence([write, b.call("If", [choice, add, zero]), draw]),
+      b.call("If", [choice, sequence([write, draw]), zero])]
+    let invalid = [draw, sequence([draw, write]), sequence([add, draw]),
+      sequence([b.call("If", [choice, write, zero]), draw]),
+      sequence([b.call("And", [zero, write]), draw]),
+      sequence([b.call("Or", [one, write]), draw]),
+      sequence([b.call("SwitchInteger", [choice, write]), draw]),
+      sequence([b.call("Switch", [choice, zero, read, write, zero]), draw]),
+      sequence([b.call("Set", [scratch, zero,
+        b.call("Get", [b.value(1001), zero])]), draw]),
+      sequence([b.call("Set", [scratch, zero,
+        b.call("Random", [zero, one])]), draw]),
+      sequence([write, b.call("Set", [b.value(4000), zero, read]), draw])]
+    let archetypes: [[String: Any]] = (valid + invalid).map {
+      ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
+        "updateParallel": ["index": $0]]
+    }
+    let engine = try b.engine(archetypes: archetypes,
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, Set(valid.indices))
+    let reversed = try b.engine(archetypes: Array(archetypes.reversed()),
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(reversed.staticIntroArchetypes,
+      Set(valid.indices.map { archetypes.count - 1 - $0 }),
+      "A shared read proof must not inherit another callback's initialization")
+    let crossCallback = try b.engine(archetypes: [[
+      "name": "Stage", "hasInput": false, "imports": [], "exports": [],
+      "initialize": ["index": write], "updateParallel": ["index": draw]]],
+      sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertTrue(crossCallback.staticIntroArchetypes.isEmpty,
+      "Scratch initialization never carries across callbacks")
+  }
+
+  func testStaticIntroScratchReadModifyWriteRequiresOldValue() throws {
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1), scratch = b.value(10000)
+    let write = b.call("Set", [scratch, zero, one])
+    let draw = b.call("Draw", [one] + quad.map(b.value) + [zero, one])
+    let binary = ["SetAdd", "SetSubtract", "SetMultiply", "SetDivide",
+      "SetPower", "SetMod", "SetRem"]
+    let unary = ["IncrementPre", "IncrementPost", "DecrementPre", "DecrementPost"]
+    var callbacks = [Int]()
+    var accepted = Set<Int>()
+    for function in binary + unary {
+      // Reading the old value precedes evaluation of even a same-slot Set.
+      let operand = binary.contains(function) ? [write] : []
+      let operation = b.call(function, [scratch, zero] + operand)
+      callbacks.append(b.call("Execute0", [operation, draw]))
+      accepted.insert(callbacks.count)
+      callbacks.append(b.call("Execute0", [write, operation, draw]))
+    }
+    let engine = try b.engine(archetypes: callbacks.map {
+      ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
+        "updateParallel": ["index": $0]]
+    }, sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, accepted)
+  }
+
+  func testStaticIntroScratchAddressesAndSummaryBudget() throws {
+    func makeEngine(slotCount: Int) throws -> EnginePlayData {
+      let b = RuntimeNodeBuilder()
+      let zero = b.value(0), one = b.value(1), scratch = b.value(10000)
+      var callback = zero
+      for slot in 0..<slotCount {
+        callback = b.call("Execute0", [callback,
+          b.call("Set", [scratch, b.value(Double(slot)), one])])
+      }
+      callback = b.call("Execute0", [callback,
+        b.call("Draw", [one] + quad.map(b.value) + [zero, one])])
+      return try b.engine(archetypes: [["name": "Stage", "hasInput": false,
+        "imports": [], "exports": [], "updateParallel": ["index": callback]]],
+        sprites: [["name": "#LANE", "id": 1]])
+    }
+    XCTAssertEqual(try makeEngine(slotCount: 8).staticIntroArchetypes, [0])
+    XCTAssertTrue(try makeEngine(slotCount: 512).staticIntroArchetypes.isEmpty,
+      "Small graphs with growing dependency sets must still have bounded work")
+
+    let b = RuntimeNodeBuilder()
+    let zero = b.value(0), one = b.value(1), scratch = b.value(10000)
+    let addresses = [-0.5, 0.9, -1, 4096, Double.greatestFiniteMagnitude]
+      .map(b.value) + [b.call("Add", [zero, zero])]
+    let callbacks = addresses.map { address in
+      b.call("Execute0", [b.call("Set", [scratch, zero, one]),
+        b.call("Draw", [one] + quad.map(b.value)
+          + [zero, b.call("Get", [scratch, address])])])
+    }
+    let engine = try b.engine(archetypes: callbacks.map {
+      ["name": "Stage", "hasInput": false, "imports": [], "exports": [],
+        "updateParallel": ["index": $0]]
+    }, sprites: [["name": "#LANE", "id": 1]])
+    XCTAssertEqual(engine.staticIntroArchetypes, [0, 1],
+      "Direct addresses truncate toward zero; computed scratch stays unproven")
   }
 
   func testStaticIntroProofAcceptsPreparedExpressionsAndSharedDraws() throws {

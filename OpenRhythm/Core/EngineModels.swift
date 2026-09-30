@@ -140,13 +140,14 @@ struct EnginePlayData: Decodable, Sendable {
     })
   }
 
-  /// Persistent non-input candidates with fixed draws and read-only callbacks.
+  /// Persistent non-input candidates with fixed draws and no persistent writes.
+  /// Callback-local scratch calculations require initialization before use.
   /// Each actual draw must also resolve to an unambiguous stage sprite ID in
   /// the host. Neither a fixed expression nor a stage name alone is sufficient.
   var staticIntroArchetypes: Set<Int> {
     // Do not infer purity from supportedFunctions: streams and random values
     // can change even when their arguments are fixed. Drawing is a separate
-    // proof result and must never qualify as a side-effect-free argument.
+    // proof result and must never qualify as a fixed scalar argument.
     let pure: Set<String> = Set([
       "Abs", "Add", "And", "Arccos", "Arcsin", "Arctan", "Arctan2",
       "Ceil", "Clamp", "Cos", "Cosh", "Degree", "Divide", "Equal",
@@ -168,14 +169,63 @@ struct EnginePlayData: Decodable, Sendable {
     // Entity Data's array alias. Only level-backed entities receive the flag.
     let fixedBlocks: Set<Double> = [2001, 2002, 3000, 4001]
     // Entity Memory (4000) has no cross-entity alias. It is also stable once
-    // preparation finishes IF all subsequent callbacks are read-only. The
+    // preparation finishes IF subsequent callbacks never write it. The
     // whole-archetype checks below establish that condition: any possible
     // write disqualifies the entity, even when a shared read node was memoized.
     // Spawned copies never receive this flag; their memory is initialized at
     // spawn rather than at level preparation.
-    enum Proof { case constant, drawing, unsafe }
+    struct Proof {
+      enum Kind { case constant, drawing, unsafe }
+      var kind: Kind
+      // A summary is independent of the caller's scratch state, so it can be
+      // memoized even when a shared node is read before and after a write.
+      var required = Set<Int>()
+      var written = Set<Int>()
+      static let constant = Proof(kind: .constant)
+      static let unsafe = Proof(kind: .unsafe)
+    }
     var proofs = [Int: Proof]()
     var remainingWork = 100_000
+    func scratchAccess(_ node: EngineDataNode)
+      -> (slot: Int, reads: Bool, writes: Bool)? {
+      let function = node.function ?? ""
+      let count: Int
+      switch function {
+      case "Get", "IncrementPre", "IncrementPost", "DecrementPre", "DecrementPost":
+        count = 2
+      case "Set", "SetAdd", "SetSubtract", "SetMultiply", "SetDivide",
+        "SetPower", "SetMod", "SetRem": count = 3
+      default: return nil
+      }
+      guard node.arguments.count == count,
+        nodes.indices.contains(node.arguments[0]),
+        nodes.indices.contains(node.arguments[1]),
+        nodes[node.arguments[0]].value == 10000,
+        let index = nodes[node.arguments[1]].value,
+        let slot = Int(exactly: index.rounded(.towardZero)),
+        (0..<4096).contains(slot) else { return nil }
+      return (slot, function != "Set", function != "Get")
+    }
+    func sequence(_ children: [Proof], kind: Proof.Kind) -> Proof {
+      var result = Proof(kind: kind)
+      for child in children {
+        result.required.formUnion(child.required.subtracting(result.written))
+        result.written.formUnion(child.written)
+      }
+      return result
+    }
+    // Only the first expression is guaranteed to run in lazy choices. Require
+    // later paths to be safe independently; do not borrow writes from a branch
+    // or short-circuited operand that may never execute.
+    func choice(_ children: [Proof], kind: Proof.Kind) -> Proof {
+      guard let first = children.first else { return Proof(kind: kind) }
+      var result = first
+      result.kind = kind
+      for child in children.dropFirst() {
+        result.required.formUnion(child.required.subtracting(first.written))
+      }
+      return result
+    }
     func proof(_ root: Int) -> Proof {
       var pending = [(index: root, expanded: false)]
       var active = Set<Int>()
@@ -189,28 +239,59 @@ struct EnginePlayData: Decodable, Sendable {
         if expanded {
           active.remove(index)
           let arguments = node.arguments.map { proofs[$0] ?? .unsafe }
-          let combined: Proof = arguments.contains(.unsafe) ? .unsafe
-              : arguments.contains(.drawing) ? .drawing : .constant
+          // Bound data-flow set work as well as graph traversal. Large shared
+          // DAGs must not multiply the cost of copying dependency summaries.
+          let setWork = arguments.reduce(0) {
+            $0 + $1.required.count + $1.written.count
+          }
+          guard setWork < remainingWork else { return .unsafe }
+          remainingWork -= setWork
+          let combined: Proof.Kind = arguments.contains { $0.kind == .unsafe }
+            ? .unsafe : arguments.contains { $0.kind == .drawing }
+              ? .drawing : .constant
           switch function {
-          case "Execute", "Execute0": proofs[index] = combined
+          case "Execute", "Execute0":
+            proofs[index] = sequence(arguments, kind: combined)
           case "If":
-            proofs[index] = arguments.count == 3 && arguments[0] == .constant
-              ? combined : .unsafe
+            guard arguments.count == 3, arguments[0].kind == .constant else {
+              proofs[index] = .unsafe
+              continue
+            }
+            var result = choice(arguments, kind: combined)
+            result.written.formUnion(
+              arguments[1].written.intersection(arguments[2].written))
+            proofs[index] = result
           case "Switch", "SwitchWithDefault":
             let end = arguments.count - (function == "SwitchWithDefault" ? 1 : 0)
             let fixedSelection = end >= 1 && (end - 1).isMultiple(of: 2)
-              && arguments[0] == .constant
+              && arguments[0].kind == .constant
               && stride(from: 1, to: end, by: 2).allSatisfy {
-                arguments[$0] == .constant
+                arguments[$0].kind == .constant
               }
-            proofs[index] = fixedSelection ? combined : .unsafe
+            proofs[index] = fixedSelection
+              ? choice(arguments, kind: combined) : .unsafe
           case "SwitchInteger", "SwitchIntegerWithDefault":
             let minimum = function == "SwitchIntegerWithDefault" ? 2 : 1
-            proofs[index] = arguments.count >= minimum && arguments[0] == .constant
-              ? combined : .unsafe
+            proofs[index] = arguments.count >= minimum
+              && arguments[0].kind == .constant
+              ? choice(arguments, kind: combined) : .unsafe
+          case "And", "Or":
+            proofs[index] = combined == .constant
+              ? choice(arguments, kind: combined) : .unsafe
           default:
-            proofs[index] = arguments.allSatisfy { $0 == .constant }
-              ? (drawing.contains(function) ? .drawing : .constant) : .unsafe
+            guard combined == .constant else {
+              proofs[index] = .unsafe
+              continue
+            }
+            var result = sequence(arguments,
+              kind: drawing.contains(function) ? .drawing : .constant)
+            if let access = scratchAccess(node) {
+              // RMW operations read the old value before evaluating their
+              // operand. An operand's write cannot initialize that old read.
+              if access.reads { result.required.insert(access.slot) }
+              if access.writes { result.written.insert(access.slot) }
+            }
+            proofs[index] = result
           }
           continue
         }
@@ -239,12 +320,13 @@ struct EnginePlayData: Decodable, Sendable {
           && first.map { fixedBlocks.contains($0) || $0 == 4000 } == true
         // Identity is checked per emitted draw by the host, including literal
         // IDs. An unselected custom draw must not taint a selected stage draw.
-        // Every draw argument still requires constant, side-effect-free proof.
+        // Draw arguments must be fixed, with no external/persistent effects.
         let fixedDraw = drawing.contains(function) && !node.arguments.isEmpty
         let fixedResourceQuery = resourceQueries.contains(function)
           && node.arguments.count == 1
         guard pure.contains(function) || branching.contains(function)
           || fixedRead || fixedDraw || fixedResourceQuery
+          || scratchAccess(node) != nil
           || function == "Execute" || function == "Execute0" else {
           proofs[index] = .unsafe
           active.remove(index)
@@ -259,16 +341,20 @@ struct EnginePlayData: Decodable, Sendable {
       let a = archetypes[index]
       guard !a.hasInput,
         let update = a.updateParallel else { return false }
-      // Compiler-generated callbacks may exist without changing anything.
-      // Their results must be fixed and side-effect-free, not merely safe
-      // stage drawings. Only shouldSpawn consumes their returned value;
+      // Compiler-generated callbacks may calculate through local scratch.
+      // Results must be fixed with no external/persistent effects, not merely
+      // safe stage drawings. Only shouldSpawn consumes their returned value;
       // a fixed false result never introduces a later visual change.
       let lifecycle = [a.shouldSpawn, a.initialize, a.updateSequential,
         a.touch, a.terminate].compactMap { $0 }
-      guard lifecycle.allSatisfy({ proof($0.index) == .constant }) else {
+      guard lifecycle.allSatisfy({
+        let result = proof($0.index)
+        return result.kind == .constant && result.required.isEmpty
+      }) else {
         return false
       }
-      return proof(update.index) != .unsafe
+      let result = proof(update.index)
+      return result.kind != .unsafe && result.required.isEmpty
     })
   }
 
