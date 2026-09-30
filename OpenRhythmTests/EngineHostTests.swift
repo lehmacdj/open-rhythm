@@ -552,6 +552,132 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testScheduledEffectsExcludeVoiceAllocationTimeFromDelay() throws {
+    var now = 0.0
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      // The first eight voices are warmed before playback, not timed work.
+      if voices.count >= 8 { now += 0.1 }
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    defer { audio.stop() }
+    try audio.update(Array(repeating:
+      EngineAudioCommand(clipID: 1, time: 0.5, minimumDistance: 0), count: 10),
+      at: 0, currentTime: { now })
+    XCTAssertEqual(voices.count, 10)
+    XCTAssertEqual(voices[8].delays.first ?? -1, 0.4, accuracy: 1e-12)
+    XCTAssertEqual(voices[9].delays.first ?? -1, 0.3, accuracy: 1e-12,
+      "A chord must share a deadline, not accumulate voice setup delays")
+  }
+
+  @MainActor
+  func testScheduledLoopsRecheckTimeAfterAllocationAndBeforeStop() throws {
+    var now = 0.0
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      if voices.count >= 8 {
+        now += 0.1
+        voice.onPlay = { now += 0.05 }
+      }
+      voices.append(voice)
+      return voice
+    }
+    defer { audio.stop() }
+    try audio.update([], at: 0, loopCommands: (1...8).map {
+      .start(id: $0, clipID: 1, time: 0)
+    })
+    try audio.update([], at: 0, loopCommands: [
+      .start(id: 9, clipID: 1, time: 0.25), .stop(id: 9, time: 0.45)
+    ], currentTime: { now })
+    let voice = try XCTUnwrap(voices.last)
+    XCTAssertEqual(voice.delays.first ?? -1, 0.15, accuracy: 1e-12)
+    XCTAssertEqual(voice.stopDelays.first ?? -1, 0.3, accuracy: 1e-12)
+  }
+
+  @MainActor
+  func testResumedLoopStopUsesTimeAfterOtherVoicesResume() throws {
+    var now = 0.0
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    defer { audio.stop() }
+    try audio.update([EngineAudioCommand(clipID: 1, time: 0,
+      minimumDistance: 0)], at: 0, loopCommands: [
+        .start(id: 1, clipID: 1, time: 0), .stop(id: 1, time: 0.8)
+      ], currentTime: { now })
+    let loop = try XCTUnwrap(voices.first { $0.looping == [true] })
+    let effect = try XCTUnwrap(voices.first { $0.looping == [false] })
+    audio.pause(at: 0.4)
+    now = 0.4
+    effect.onResume = { now += 0.1 }
+    loop.events.removeAll()
+    try audio.update([], at: 0.4, currentTime: { now })
+    XCTAssertEqual(loop.events, ["scheduledStop", "resume"],
+      "Publish the current stop deadline before any resumed samples")
+    XCTAssertEqual(loop.stopDelays.last ?? -1, 0.3, accuracy: 1e-12)
+  }
+
+  @MainActor
+  func testLoopExpiredDuringAllocationNeverStartsAndVoiceIsReusable() throws {
+    var now = 0.0
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      if voices.count >= 8 { now += 0.6 }
+      voices.append(voice)
+      return voice
+    }
+    defer { audio.stop() }
+    try audio.update([], at: 0, loopCommands: (1...8).map {
+      .start(id: $0, clipID: 1, time: 0)
+    })
+    try audio.update([], at: 0, loopCommands: [
+      .start(id: 9, clipID: 1, time: 0.25), .stop(id: 9, time: 0.5)
+    ], currentTime: { now })
+    let voice = try XCTUnwrap(voices.last)
+    XCTAssertTrue(voice.delays.isEmpty,
+      "A loop whose end passed during setup must never publish a start")
+    try audio.update([], at: now, loopCommands: [
+      .start(id: 10, clipID: 1, time: now)
+    ], currentTime: { now })
+    XCTAssertEqual(voices.count, 9)
+    XCTAssertEqual(voice.delays, [0])
+  }
+
+  @MainActor
+  func testNativeScheduledEffectDeadlineSurvivesControllerWork() throws {
+    let (engine, voice, output) = try nativeEffectFixture()
+    defer { engine.stop() }
+    var allocations = 0
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      allocations += 1
+      if allocations <= 8 { return MockEffectVoice() }
+      // Advance the real native render clock during controller work. This is
+      // deterministic and does not use sleeps or a relaxed timing tolerance.
+      XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+      return voice
+    }
+    defer { audio.stop() }
+    try audio.update([], at: 0, loopCommands: (1...8).map {
+      .start(id: $0, clipID: 1, time: 0)
+    })
+    try audio.update([EngineAudioCommand(clipID: 1,
+      time: 1024.0 / 48000, minimumDistance: 0)], at: 0,
+      currentTime: { Double(engine.manualRenderingSampleTime) / 48000 })
+    XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    XCTAssertTrue((0..<512).allSatisfy { output.floatChannelData![0][$0] == 0 })
+    XCTAssertEqual(try engine.renderOffline(512, to: output), .success)
+    XCTAssertEqual(output.floatChannelData![0][511], 512.0 / 8192,
+      accuracy: 1e-6, "Audio must start at frame 1024, not setup-delayed frame 1536")
+  }
+
+  @MainActor
   func testLoopControllerArmsFutureStopsBeforeResuming() throws {
     var voices = [MockEffectVoice]()
     let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
@@ -5289,14 +5415,21 @@ private final class MockEffectVoice: EngineEffectVoice {
   var pauseCount = 0
   var resumeCount = 0
   var events = [String]()
+  var onPlay: (() -> Void)?
+  var onResume: (() -> Void)?
 
   func pause() { pauseCount += 1 }
-  func resume() { resumeCount += 1; events.append("resume") }
+  func resume() {
+    resumeCount += 1
+    events.append("resume")
+    onResume?()
+  }
 
   func play(after delay: Double, looped: Bool) {
     delays.append(delay)
     looping.append(looped)
     isPlaying = true
+    onPlay?()
   }
 
   func stop(after delay: Double) {

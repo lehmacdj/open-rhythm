@@ -984,7 +984,8 @@ final class GameplayModel {
       // hit sounds inherit the entire interpreter delay.
       try engineAudio?.update(runtime.host.takeAudioCommands(), at: playbackTime,
         advancing: tailStart != nil || player?.timeControlStatus == .playing,
-        loopCommands: runtime.host.takeLoopCommands())
+        loopCommands: runtime.host.takeLoopCommands(),
+        currentTime: { self.playbackTime })
       finishIfReady()
     } catch {
       stop()

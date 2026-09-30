@@ -397,8 +397,18 @@ final class EngineAudioPlayback {
 
   func update(
     _ commands: [EngineAudioCommand], at time: Double, advancing: Bool = true,
-    loopCommands: [EngineLoopCommand] = []
+    loopCommands: [EngineLoopCommand] = [], currentTime: (() -> Double)? = nil
   ) throws {
+    // Voice allocation, graph changes and earlier commands can take time.
+    // Translate each deadline at publication, not from the batch's old sample.
+    // Deterministic callers without a moving clock retain the supplied time.
+    let readTime = { () throws -> Double in
+      let value = currentTime?() ?? time
+      guard value.isFinite else {
+        throw EngineInterpreterError.invalidArguments("effect playback clock")
+      }
+      return value
+    }
     guard loopCommands.count <= 16_384 - pausedLoopCommands.count else {
       throw EngineInterpreterError.operationLimitExceeded
     }
@@ -427,12 +437,27 @@ final class EngineAudioPlayback {
       guard advancing else { return }
       // Apply stopped/expired handles while voices are still silent. Resuming
       // first could briefly replay a loop whose stop arrived during the pause.
-      try updateLoops(pausedLoopCommands, at: time, advancing: false)
+      try updateLoops(pausedLoopCommands, at: time, advancing: false,
+        currentTime: readTime)
       pausedLoopCommands.removeAll(keepingCapacity: true)
       effectiveLoopCommands = []
       try nativeBank?.start()
       for player in players.values { player.voice.resume() }
-      for loop in loops.values { loop.voice?.resume() }
+      for id in Array(loops.keys) {
+        guard let loop = loops[id], let voice = loop.voice else { continue }
+        let now = try readTime()
+        if loop.end <= now {
+          removeFinishedLoop(id, at: now)
+          continue
+        }
+        // Re-arm only after graph startup and other voices' resume work, but
+        // before this voice can publish any unpaused samples.
+        if loop.end <= now + 0.5 {
+          voice.stop(after: loop.end - now)
+          loops[id]?.scheduledEnd = loop.end
+        }
+        voice.resume()
+      }
       isPaused = false
     }
     if let nativeBank, !nativeBank.engine.isRunning {
@@ -443,7 +468,8 @@ final class EngineAudioPlayback {
       for id in Array(loops.keys) { releaseLoopVoice(id) }
       try nativeBank.start()
     }
-    try updateLoops(effectiveLoopCommands, at: time, advancing: true)
+    try updateLoops(effectiveLoopCommands, at: time, advancing: true,
+      currentTime: readTime)
     var prior = lastPlayed
     var retained = [Pending]()
     for event in pending {
@@ -469,7 +495,7 @@ final class EngineAudioPlayback {
           voice = try makeVoice(command.clipID, bytes)
           allocatedVoiceCount += 1
         }
-        voice.play(after: max(0, command.time - time), looped: false)
+        voice.play(after: max(0, command.time - (try readTime())), looped: false)
         players[event.id] = (command.clipID, voice)
       }
       if command.time <= time {
@@ -482,7 +508,7 @@ final class EngineAudioPlayback {
   }
 
   private func updateLoops(_ commands: [EngineLoopCommand], at time: Double,
-    advancing: Bool) throws {
+    advancing: Bool, currentTime: () throws -> Double) throws {
     guard commands.count <= 16_384 else {
       throw EngineInterpreterError.operationLimitExceeded
     }
@@ -512,15 +538,18 @@ final class EngineAudioPlayback {
         loops[id] = nil
         continue
       }
-      if let voice = loop.voice, loop.end <= time + 0.5,
+      if !advancing { continue }
+      let now = try currentTime()
+      if loop.end <= now {
+        removeFinishedLoop(id, at: now)
+        continue
+      }
+      if let voice = loop.voice, loop.end <= now + 0.5,
         loop.scheduledEnd != loop.end {
-        // Re-arm surviving deadlines while paused, before resume can publish
-        // an audible voice to a concurrent native render callback.
-        voice.stop(after: max(0, loop.end - time))
+        voice.stop(after: loop.end - now)
         loops[id]?.scheduledEnd = loop.end
       }
-      if !advancing { continue }
-      guard loop.voice == nil, loop.start <= time + 0.5,
+      guard loop.voice == nil, loop.start <= now + 0.5,
         let bytes = clips[loop.clipID] else { continue }
       let voice: any EngineEffectVoice
       if let ready = available[loop.clipID]?.popLast() { voice = ready }
@@ -531,12 +560,19 @@ final class EngineAudioPlayback {
         voice = try makeVoice(loop.clipID, bytes)
         allocatedVoiceCount += 1
       }
-      voice.play(after: max(0, loop.start - time), looped: true)
-      if loop.end <= time + 0.5 {
-        voice.stop(after: max(0, loop.end - time))
-        loops[id]?.scheduledEnd = loop.end
+      let startTime = try currentTime()
+      guard loop.end > startTime else {
+        available[loop.clipID, default: []].append(voice)
+        loops[id] = nil
+        continue
       }
       loops[id]?.voice = voice
+      voice.play(after: max(0, loop.start - startTime), looped: true)
+      let stopTime = try currentTime()
+      if loop.end <= stopTime + 0.5 {
+        voice.stop(after: max(0, loop.end - stopTime))
+        loops[id]?.scheduledEnd = loop.end
+      }
     }
   }
 

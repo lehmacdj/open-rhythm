@@ -11,6 +11,23 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Scheduled effects translate deadlines using a fresh playback-clock read
+  immediately before voice publication, after allocation or earlier commands.
+  Loop setup cannot start an already-expired loop, and buffering recovery
+  refreshes each surviving stop after graph startup/other resume work but
+  before that loop resumes. Five regressions failed before the change and
+  now pass: accumulated allocation delay, separate loop start/stop sampling,
+  resume order, expired-loop recycling, and a native PCM deadline. The native
+  test advances 512 frames during lazy allocation beyond the eight warmed
+  voices, then requires output to start at frame 1024, not 1536. Existing
+  native buffering and stop-before-resume tests pass too. Independent review
+  found no actionable issue. No arbitrary calibration was applied. Read and
+  publication are not atomic; acoustic/device alignment remains deferred.
+  All 327 non-cached simulator tests pass after the scheduler change, including
+  native audio and live player/display-clock checks; the normal build passes
+  at 22:55 September 29. The seven cached graph probes passed before this edit
+  and do not exercise the audio controller. No device or remote-song testing
+  was performed.
 - Stationary contacts continue `touch` evaluation without new presses or
   timestamps. The September 29 per-delivery gate in `ed27b682` misinterpreted
   "input event" in the [input-system documentation](
@@ -26,8 +43,12 @@ integration probes, including successful inputs and restart/buffering paths.
   normal build passes at 22:32 September 29; independent correction review
   found no actionable issue. The earlier 327-test pass did not cover this
   scenario: a counter assertion mirrored the wrong assumption and cached
-  contact tests delivered samples every frame. The full suite was not rerun
-  for this correction. This is not physical input or frame-pacing sign-off.
+  contact tests delivered samples every frame. The subsequent full simulator
+  run finished at 22:49 with all 329 compiled tests passing and the original
+  process's `TEST FINISHED` marker. Five audio tests added to source while it
+  ran were enumerated as "No result" rather than present in that binary; their
+  separate red/green checks are described above. This is not physical input
+  or frame-pacing sign-off.
 - Intro-stage candidates can use fixed computed sprite IDs. The graph proof
   establishes stable, side-effect-free arguments and read-only lifecycle;
   the host separately validates each emitted draw's resolved sprite ID against

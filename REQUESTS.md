@@ -78,8 +78,33 @@ before the correction. Six focused checks now pass, including “shake it!”
 Hard 18 with actual pooled contacts and 6,705 stationary frames; successful
 hold ticks during those frames are required, as are dense/sparse equivalence
 and restart determinism. The normal build passes at 22:32. Independent review
-of the correction found no actionable issue. The full suite was not rerun
-for this correction. No physical-touch or frame-rate improvement is claimed.
+of the correction found no actionable issue. The subsequent full simulator
+run finished at 22:49 with all 329 compiled tests passing and `TEST FINISHED`
+confirmed. Its summary also enumerated five newly edited audio tests as
+"No result"; those were not in that run's binary and were run separately
+below. The observer timeout did not restart the original test process.
+No physical-touch or frame-rate improvement is claimed.
+
+Scheduled-effect timing follow-up (September 29): voice allocation and prior
+commands could consume time after the audio controller sampled the playback
+clock. Reusing that sample delayed later starts/stops in a batch, including
+loop-stop re-arming during buffering recovery. The controller now reads the
+live chart clock immediately before each publication and checks for loops
+that expired during setup before starting them. Resumed loops are re-armed
+after graph startup/other voice work but before publishing unpaused samples.
+No input timestamps, judgment windows, BGM mapping or calibration defaults
+were shifted. Five new regressions failed before the fix and pass afterward,
+including native PCM that advances 512 samples during voice setup and must
+still start at sample 1024 rather than 1536. The fixtures exhaust the eight
+prewarmed voices before injecting allocation work. Existing native buffering
+and pre-resume stop-order checks also pass. Independent review found no
+actionable issue. This removes stale batch-clock delay; it does not make the
+clock read/publication atomic or establish physical alignment.
+All 327 non-cached simulator tests pass after this scheduler change, including
+native audio and live player/display-clock probes. The normal build passes
+at 22:55. The seven cached engine-graph tests passed in the preceding 329-test
+baseline; they do not exercise this audio controller and were not repeated
+after the scheduler edit. No device tests or song-server requests were used.
 
 The distribution-state Xcode preview was rendered and visually inspected on
 September 29: dense data has jagged peaks using the default Swift Charts
