@@ -1059,6 +1059,15 @@ model level, checking that future judgments and spawned entities do not leak.
    still archive an unsupported engine, but cannot play it through basic lanes.
    Engine option categories are now decoded and rendered in their declared
    order, with runtime option indices and per-engine persistence unchanged.
+   September 30 display follow-up: standard time units now render as `ms`,
+   `s`, etc., without converting engine values. The new regression failed
+   before the fix; all 79 RuntimeDecodingTests and the normal build pass.
+   Independent post-fix review found no actionable issue; saved standard-option
+   summaries are also covered by the unit-formatting regression.
+   General standardized text translation remains open: identifier title-casing
+   still displays labels such as `#STAGE_ALPHA` incorrectly as "Stage Alpha"
+   instead of "Stage Transparency". This affects settings and saved option
+   labels, not the runtime option values.
    Dedicated note-speed/score preferences work inside those categories, and
    legacy controls now resolve/reset generic saved overrides consistently.
    Skin mode selection is now

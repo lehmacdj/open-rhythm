@@ -91,7 +91,20 @@ struct EngineConfiguration: Decodable {
       if unit == "#PERCENTAGE_UNIT" {
         return (value * 100).formatted(.number.precision(.fractionLength(0...2))) + "%"
       }
-      let suffix = unit.map { " " + Self.label($0) } ?? ""
+      // Standard time units use the public Sonolus text templates. They
+      // describe the supplied number; milliseconds must not rescale it.
+      let suffix: String
+      switch unit {
+      case "#YEAR_UNIT": suffix = "yr"
+      case "#MONTH_UNIT": suffix = "mo"
+      case "#DAY_UNIT": suffix = "d"
+      case "#HOUR_UNIT": suffix = "h"
+      case "#MINUTE_UNIT": suffix = "m"
+      case "#SECOND_UNIT": suffix = "s"
+      case "#MILLISECOND_UNIT": suffix = "ms"
+      case nil, "": suffix = ""
+      default: suffix = " " + Self.label(unit!)
+      }
       return value.formatted(.number.precision(.fractionLength(0...3))) + suffix
     }
 

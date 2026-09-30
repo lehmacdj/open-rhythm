@@ -1243,6 +1243,17 @@ No public issue or message has been submitted.
   establish the client's explicit wall-clock convention and internal timeline
   consistency, not parity with an independently observed native reference.
 - Optional/missing resource defaults and host-function callback legality.
+  September 30 bounded configuration/HUD review found no additional runtime
+  blocker, but identified incomplete standardized text resolution. Standard
+  time-unit labels now follow the public English templates (`ms`, `s`, `m`,
+  `h`, `d`, `mo`, `yr`) without altering stored/runtime numbers. Percentage
+  scaling remains unchanged. Source: [Sonolus English text templates](
+  https://github.com/Sonolus/i18n/blob/develop/src/localizations/en/Localization.json).
+  The regression failed before the fix; all 79 RuntimeDecodingTests pass at
+  00:03 and the normal build passes at 00:04. General standardized labels
+  remain open (for example, `#STAGE_ALPHA` should display "Stage Transparency",
+  not title-cased identifier text). This is not full language localization or
+  proof of the remaining resource-default contracts.
   The resource acceptance table above names the current boundaries and
   outstanding evidence; unrelated bad particle crop bounds no longer broaden
   the selected effect's validation scope.

@@ -705,6 +705,33 @@ final class RuntimeDecodingTests: XCTestCase {
     }
   }
 
+  func testEngineOptionTimeUnitsFormatWithoutChangingRuntimeValues() throws {
+    let units = [
+      ("#YEAR_UNIT", "yr"), ("#MONTH_UNIT", "mo"), ("#DAY_UNIT", "d"),
+      ("#HOUR_UNIT", "h"), ("#MINUTE_UNIT", "m"), ("#SECOND_UNIT", "s"),
+      ("#MILLISECOND_UNIT", "ms"), ("samples", " samples"),
+      ("#FUTURE_UNIT", " Future Unit"), ("", "")
+    ]
+    for (unit, suffix) in units {
+      let config = try JSONDecoder().decode(EngineConfiguration.self,
+        from: JSONSerialization.data(withJSONObject: ["options": [[
+          "name": "Offset", "type": "slider", "def": -20, "standard": true,
+          "min": -100, "max": 100, "step": 0.25, "unit": unit
+        ]]]))
+      let option = config.options[0]
+      for value in [-20.0, 0, 1.25] {
+        let number = value.formatted(.number.precision(.fractionLength(0...3)))
+        XCTAssertEqual(option.valueLabel(value), number + suffix, unit)
+      }
+      XCTAssertEqual(config.runtimeOptions(preferences: GameplayPreferences()),
+        [-20], "Units are presentation only, never a timing conversion")
+      XCTAssertEqual(config.modifiedStandardOptions(preferences:
+        GameplayPreferences(engineOptions: ["Offset": 1.25])), [
+          EngineOptionOverride(name: "Offset", value: option.valueLabel(1.25))
+        ])
+    }
+  }
+
   func testGenericEngineOptionsValidatePersistedValuesAndKeepProtocolOrder() throws {
     let config = try JSONDecoder().decode(EngineConfiguration.self, from: Data(#"""
       {"options":[
