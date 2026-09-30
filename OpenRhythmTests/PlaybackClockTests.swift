@@ -2,6 +2,7 @@ import XCTest
 import CoreMedia
 import AVFoundation
 import UIKit
+import Metal
 @testable import OpenRhythm
 
 final class PlaybackClockTests: XCTestCase {
@@ -478,6 +479,120 @@ final class PlaybackClockTests: XCTestCase {
         }
       }
     }
+  }
+
+  @MainActor
+  func testAsynchronousGPUFailureSwitchesToSoftwareWithoutChangingPlayback()
+    async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gpu-recovery-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }.first)
+    let priorKeyWindow = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    let controller = UIViewController()
+    window.rootViewController = controller
+    defer { window.isHidden = true; priorKeyWindow?.makeKey() }
+    let playfield = EnginePlayfieldView(frame:
+      CGRect(x: 0, y: 0, width: 300, height: 500))
+    let model = try makeSessionModel(PlaybackAudioSession { _ in },
+      directory: directory, nativeEngine: true)
+    defer { model.stop() }
+    model.settings = GameplayPreferences(recordTimingDiagnostics: true)
+    playfield.model = model
+    playfield.prepareAssets()
+    controller.view.addSubview(playfield)
+    window.makeKeyAndVisible()
+    let renderer = try XCTUnwrap(playfield.metal)
+    XCTAssertTrue(playfield.isUsingMetalDisplayLink)
+    model.start()
+    for _ in 0..<200 {
+      if !model.isStartingPlayback && model.currentTime > 0 { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertGreaterThan(model.currentTime, 0)
+    let generation = model.playbackGeneration
+    let runtime = try XCTUnwrap(model.engineRuntime)
+    let recorder = try XCTUnwrap(model.timingRecorder)
+    await Task.detached {
+      renderer.didCompleteFrame(status: .completed, error: nil)
+    }.value
+    XCTAssertTrue(playfield.isUsingMetalDisplayLink,
+      "Successful completion must keep the Metal presentation path")
+    await Task.detached {
+      renderer.didCompleteFrame(status: .error, error: NSError(
+        domain: MTLCommandBufferErrorDomain,
+        code: Int(MTLCommandBufferError.timeout.rawValue)),
+        gpuStartTime: 1, gpuEndTime: 2,
+        timing: PlaybackFrameTiming(recorder: recorder, sampleHostTime: 1))
+    }.value
+    for _ in 0..<20 {
+      if !playfield.isUsingMetalDisplayLink { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertFalse(playfield.isUsingMetalDisplayLink,
+      "An asynchronous failed GPU frame must reach the software fallback")
+    XCTAssertNil(playfield.metal)
+    XCTAssertNil(renderer.layer.superlayer)
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertEqual(model.playbackGeneration, generation)
+    XCTAssertTrue(model.engineRuntime === runtime)
+    XCTAssertTrue(try XCTUnwrap(renderer.failureDescription)
+      .contains("The graphics processor couldn’t finish a frame."))
+    XCTAssertTrue(try XCTUnwrap(renderer.failureDescription)
+      .contains(MTLCommandBufferErrorDomain))
+    XCTAssertEqual(recorder.snapshot().counters[
+      PlaybackTimingCounter.gpuFailed.rawValue], 1)
+    let time = model.currentTime
+    try await Task.sleep(for: .milliseconds(80))
+    XCTAssertGreaterThan(model.currentTime, time,
+      "Software display frames must keep advancing the same runtime")
+    XCTAssertGreaterThan(recorder.snapshot().counters[
+      PlaybackTimingCounter.software.rawValue] ?? 0, 0)
+    playfield.removeFromSuperview()
+    controller.view.addSubview(playfield)
+    XCTAssertFalse(playfield.isUsingMetalDisplayLink,
+      "Reattachment must not restore a renderer that failed")
+  }
+
+  @MainActor
+  func testGPUCompletionReportsFailureOnceAndKeepsSuccessMetricsSeparate()
+    async throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let renderer = try EngineMetalRenderer(device: device)
+    let recorder = PlaybackTimingRecorder()
+    let timing = PlaybackFrameTiming(recorder: recorder, sampleHostTime: 1)
+    var failures = [String]()
+    renderer.onFailure = { failures.append($0) }
+    await Task.detached {
+      renderer.didCompleteFrame(status: .completed, error: nil,
+        gpuStartTime: 1, gpuEndTime: 1.002, timing: timing)
+    }.value
+    XCTAssertTrue(failures.isEmpty)
+    // A missing NSError still denotes failure; later commands may also fail
+    // after the first command has already triggered recovery.
+    await Task.detached {
+      renderer.didCompleteFrame(status: .error, error: nil,
+        gpuStartTime: 1, gpuEndTime: 2, timing: timing)
+      renderer.didCompleteFrame(status: .error, error: nil, timing: timing)
+    }.value
+    for _ in 0..<20 {
+      if !failures.isEmpty { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    // Yield to delivery tasks; this is not a guaranteed scheduler barrier.
+    await Task.yield()
+    XCTAssertEqual(failures, ["The graphics processor couldn’t finish a frame."])
+    let report = recorder.snapshot()
+    XCTAssertEqual(report.counters[PlaybackTimingCounter.gpuFailed.rawValue], 2)
+    XCTAssertEqual(report.metrics[PlaybackTimingMetric.gpu.rawValue]?.count, 1)
+    XCTAssertEqual(try XCTUnwrap(report.metrics[
+      PlaybackTimingMetric.gpu.rawValue]?.meanMS), 2, accuracy: 0.001)
   }
 
   @MainActor

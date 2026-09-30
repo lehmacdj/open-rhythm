@@ -23,6 +23,7 @@ enum PlaybackTimingCounter: String, Sendable {
   case presented = "Presented frames"
   case unavailable = "Unavailable presentation timestamps"
   case queueFull = "GPU queue full"
+  case gpuFailed = "Failed Metal frames"
   case noDrawable = "Unavailable drawable or command buffer"
   case software = "Software-rendered frames (presentation unmeasured)"
   case routeChanges = "Observed output port-type changes"

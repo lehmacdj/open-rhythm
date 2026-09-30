@@ -14,6 +14,8 @@ final class EngineMetalRenderer {
   let device: MTLDevice
   let queue: MTLCommandQueue
   let layer = CAMetalLayer()
+  var onFailure: ((String) -> Void)?
+  private(set) var failureDescription: String?
   private let pipeline: MTLRenderPipelineState
   private let linear: MTLSamplerState
   private let nearest: MTLSamplerState
@@ -118,13 +120,11 @@ final class EngineMetalRenderer {
       throw error
     }
     let semaphore = inFlight
-    buffer.addCompletedHandler { completed in
+    buffer.addCompletedHandler { [weak self] completed in
       semaphore.signal()
-      if let timing, completed.gpuStartTime > 0,
-        completed.gpuEndTime >= completed.gpuStartTime {
-        timing.recorder.record(.gpu,
-          seconds: completed.gpuEndTime - completed.gpuStartTime)
-      }
+      self?.didCompleteFrame(status: completed.status, error: completed.error,
+        gpuStartTime: completed.gpuStartTime, gpuEndTime: completed.gpuEndTime,
+        timing: timing)
     }
     if let timing {
       #if targetEnvironment(simulator)
@@ -138,6 +138,30 @@ final class EngineMetalRenderer {
     timing?.recorder.increment(.submitted)
     buffer.present(drawable)
     buffer.commit()
+  }
+
+  nonisolated func didCompleteFrame(status: MTLCommandBufferStatus,
+    error: Error?, gpuStartTime: Double = 0, gpuEndTime: Double = 0,
+    timing: PlaybackFrameTiming? = nil) {
+    if status == .error {
+      timing?.recorder.increment(.gpuFailed)
+      let detail = error.map { value -> String in
+        let value = value as NSError
+        return " \(value.localizedDescription) (\(value.domain), \(value.code))"
+      } ?? ""
+      let description = "The graphics processor couldn’t finish a frame." + detail
+      // Metal invokes completion off-main. Only failure needs an actor hop;
+      // successful frames keep their existing low-overhead diagnostics path.
+      Task { @MainActor [weak self] in
+        guard let self, failureDescription == nil else { return }
+        failureDescription = description
+        onFailure?(description)
+      }
+      return
+    }
+    if let timing, gpuStartTime > 0, gpuEndTime >= gpuStartTime {
+      timing.recorder.record(.gpu, seconds: gpuEndTime - gpuStartTime)
+    }
   }
 
   func encode(_ sprites: [EngineRenderSprite], size: CGSize,

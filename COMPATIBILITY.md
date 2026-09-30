@@ -11,6 +11,18 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Asynchronous failed Metal commands now reach the existing software fallback,
+  not just synchronous encoding errors. Completion releases its frame slot
+  before dispatching failure once to the main actor; weak identity-checked
+  callbacks cannot replace another renderer. Music/runtime/input state survives
+  fallback, and reattachment does not restore failed Metal. Successful frames
+  need no actor task. Failed frames have a separate diagnostic counter and do
+  not become successful GPU timing samples. Injected completion regressed
+  before the fix; local-audio integration now verifies software display-driven
+  advancement, plus duplicate/nil-error and metric separation checks. All 362
+  non-cached simulator tests, the normal build and independent review pass.
+  This does not reproduce a real GPU fault or certify device performance.
+
 - Offline listing and lookup tolerate individual unreadable manifests while
   exposing per-file warnings in the Offline UI. Directory-enumeration failure
   remains a whole-library error. Strict inventory for deletion/garbage

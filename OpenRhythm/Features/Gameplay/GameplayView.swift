@@ -933,7 +933,7 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
   private var metalDisplayLink: CAMetalDisplayLink?
   var isUsingMetalDisplayLink: Bool { metalDisplayLink != nil }
   private var touchPool = EngineTouchPool<ObjectIdentifier>()
-  private var metal: EngineMetalRenderer?
+  private(set) var metal: EngineMetalRenderer?
   private let backgroundLayer = EngineBackgroundLayer()
   private let softwareSurface = EngineSoftwareSurfaceView()
 
@@ -947,6 +947,10 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
     if let device = MTLCreateSystemDefaultDevice(),
       let renderer = try? EngineMetalRenderer(device: device) {
       metal = renderer
+      renderer.onFailure = { [weak self, weak renderer] _ in
+        guard let self, let renderer, self.metal === renderer else { return }
+        self.fallBackToSoftware()
+      }
       layer.addSublayer(renderer.layer)
       softwareSurface.isHidden = true
     }
@@ -966,6 +970,7 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
   }
 
   func fallBackToSoftware() {
+    metal?.onFailure = nil
     metal?.layer.removeFromSuperlayer()
     metal = nil
     softwareSurface.isHidden = false

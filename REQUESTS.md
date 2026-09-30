@@ -61,7 +61,7 @@ or physical-device validation. Findings below are recorded before fixing them.
 | BF-03 / P1 — interruption and stopped-clock paths fixed | An audio-session interruption previously left the engine interpreting input without a scene change; it now requires an explicit restart. A separate local-player regression confirmed that a stopped music clock still allowed notes to be judged. Normal engine frames now freeze during paused/waiting playback, without aborting the attempt. | Actual local AVPlayer pause/resume regression failed before the fix and passes afterward, including the EOF-tail exception. Pool regressions cover pending taps, held releases and rejected new presses. All 359 non-cached tests, normal build and independent review pass; not a physical or network-stall measurement. | Re-triage below selects BF-05 measurement next. Exact transition-time input discrimination and physical behavior remain deferred. |
 | BF-04 / P2 — fixed | Catalog and lookup reads now recover valid manifests individually and report unreadable records in the Offline UI. Strict manifest inventory, whole-song deletion and asset cleanup still fail closed on unknown references. | Mixed valid/corrupt regression verifies visible songs, download status, offline runtime-bundle preparation with zero network requests, warning lifecycle and byte-for-byte preservation. No current user file was shown corrupt. | Bounded recovery unit verified below. Damaged metadata is retained; no automatic deletion or speculative reconstruction is performed. |
 | BF-05 / P2 — batch status fixed; catalog cost separate | The five-difficulty status check now reads one fresh inventory and verifies each shared content-address/hash pair once. The same 1,000-manifest/8 MiB-object probe improved from 331–339 ms to 76–79 ms. | Confirmed improvement on song-detail status checks, not per scrolling row. Separate catalog refresh remains about 79–81 ms. Read-count/invalidation regression, 67 focused tests, normal build and independent review pass. | Keep large-library catalog construction and single-lookup scan cost as lower-priority follow-ups; no persistent memoization or relaxed integrity checks. This does not establish the cause of the reported phone scroll hitch. |
-| BF-06 / P2 diagnosis | Metal completion releases its slot and records GPU timing but does not inspect command-buffer failure status; synchronous encoding failures do trigger software fallback. | Asynchronous render-error coverage gap, not a reproduced GPU failure. | Check failure propagation with an injectable completion seam before touching the renderer's successful frame path. |
+| BF-06 / P2 — recovery fixed | A `.error` completion now triggers the existing software fallback on the main actor, once per renderer, instead of leaving Metal active after failed GPU work. The frame slot is released first; normal successful completions do not dispatch an actor task. | Injected background completion reproduced missing fallback before the fix. Strengthened regression passes with actual local audio/runtime advancement, preserved playback generation, software redraw and detach/reattach. All 362 non-cached tests, normal build and independent review pass. No real GPU fault was induced. | Physical GPU-failure/performance behavior remains deferred; this is recovery-path coverage, not a diagnosis of curved-hold slowdown. Re-triage below selects BF-07 next. |
 | BF-07 / P2 diagnosis | The SDK distinguishes media-services loss/reset from session interruptions. Gameplay/audio currently has no observer for these notifications; the haptic backend's reset handling does not establish audio recovery. | Source-level lifecycle coverage gap; no reproduced media-server reset failure. | Synthetic notification investigation and an audio-object recreation plan if needed; do not expand the bounded interruption fix into an unverified reset implementation. |
 
 BF-01 is selected over speculative timing/render changes because it has a
@@ -302,6 +302,53 @@ gameplay. BF-07 media-services reset remains a separate lifecycle investigation.
 Do not turn the successful BF-05 batch into an open-ended indexing/cache redesign;
 its remaining full-inventory cost is recorded, not declared solved. The
 broader API, intro, timing and deferred physical requirements remain open.
+
+BF-06 diagnostic/fix: the active SDK's `MTLCommandBuffer.h` defines `.error`
+as aborted execution and exposes optional error details. Previously the draw
+completion handler released its in-flight slot but never examined that status.
+After extracting the same completion path for injection, a background `.error`
+left the Metal layer/display link active
+(`RunSomeTests/99B42561-53D0-448F-9347-88D23CFA5D06.txt`). The initial fixture
+needed an explicit UInt-to-Int conversion for the SDK error enum before this
+runtime regression could execute.
+
+Failed completions now count separately from successful GPU timing samples,
+retain a readable explanation plus available original domain/code, and dispatch
+recovery to the main actor. Weak references, renderer identity checks and
+once-per-renderer notification protect against late/duplicate completions.
+Fallback removes the failed Metal layer and replaces its display link, without
+changing the engine, touch pool, playback generation or music. Nil error
+metadata still triggers recovery. Successful frames retain the original
+diagnostics path without main-actor task creation.
+
+The strengthened integration regression now passes
+(`RunSomeTests/A2A30959-3ED2-4C58-8CCA-DC4F41518AA7.txt`): it starts generated
+local audio, injects failure on a background task, verifies the same playing
+runtime advances through software display frames, and confirms reattachment
+does not restore failed Metal. Independent post-fix review found no actionable
+issue. A separate duplicate/nil-error/metric-separation check passes too. All
+362 non-cached simulator tests pass without skips/failures
+(`RunSomeTests/5F1EBD47-2D8C-4C3F-BC1C-A80719B10FD4.txt`), and the normal
+build passes (`BuildProject/BuildProject-Log-20260930-022219.txt`). The seven
+cached-chart workloads were not repeated for this completion-handling change.
+No GPU hang, real resource fault, physical-device check or remote chart request
+was induced by this diagnostic.
+
+Final review noted a bounded test limitation: `Task.yield()` is not a guaranteed
+barrier for both queued duplicate-failure deliveries. Nil-error handling and
+metric separation are verified; the once-only guard is also confirmed by
+source inspection, but this is not deterministic scheduler-interleaving proof.
+Record that limit rather than expanding this recovery unit into a concurrency
+test-framework redesign before re-triage.
+
+Re-triage: investigate BF-07 media-services loss/reset next. The active SDK's
+`AVAudioSessionTypes.h` explicitly requires reinitializing audio objects after
+the media server restarts; the current interruption handler alone does not
+provide that recovery. Diagnose with isolated notifications and object-lifetime
+checks, not by killing the host audio service or resuming deferred device tests.
+Remaining catalog cost, intro classification, API/stack contract and physical
+timing/rendering requirements stay open. Do not expand BF-06 into speculative
+GPU fault generation or renderer tuning before that next bounded diagnosis.
 
 ## Current verification order — reaffirmed September 27, 2026
 
