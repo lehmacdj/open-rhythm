@@ -3822,6 +3822,64 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testMetalTextureBudgetCountsUniqueImagesAndRejectsBeforeCaching()
+    throws {
+    let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+    let renderer = try EngineMetalRenderer(device: device, textureByteLimit: 32)
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    func image(_ color: UIColor, width: Int = 2) -> UIImage {
+      UIGraphicsImageRenderer(size: CGSize(width: width, height: 2),
+        format: format).image {
+        color.setFill()
+        $0.fill(CGRect(x: 0, y: 0, width: width, height: 2))
+      }
+    }
+    let red = image(.red), blue = image(.blue), green = image(.green)
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+      pixelFormat: .bgra8Unorm, width: 2, height: 2, mipmapped: false)
+    descriptor.storageMode = .shared
+    descriptor.usage = [.renderTarget]
+    let target = try XCTUnwrap(device.makeTexture(descriptor: descriptor))
+    func encode(_ images: [UIImage], with renderer: EngineMetalRenderer) throws {
+      let command = try XCTUnwrap(renderer.queue.makeCommandBuffer())
+      let sprites = images.map {
+        EngineRenderSprite(image: $0,
+          points: [EnginePoint(x: -1, y: -1), EnginePoint(x: -1, y: 1),
+            EnginePoint(x: 1, y: 1), EnginePoint(x: 1, y: -1)],
+          matrix: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+          alpha: 1, interpolation: false)
+      }
+      try renderer.encode(sprites, size: CGSize(width: 2, height: 2),
+        target: target, commandBuffer: command)
+      command.commit()
+      command.waitUntilCompleted()
+      XCTAssertNil(command.error)
+    }
+    try encode([red, red], with: renderer)
+    XCTAssertEqual(renderer.textureBytes, 16, "An alias is not an allocation")
+    try encode([red, blue], with: renderer)
+    XCTAssertEqual(renderer.textureBytes, 32, "The exact boundary is accepted")
+    for _ in 0..<2 {
+      XCTAssertThrowsError(try encode([green], with: renderer)) {
+        XCTAssertEqual($0 as? EngineMetalRenderer.TextureBudgetError, .totalSize)
+        XCTAssertTrue($0.localizedDescription.contains("graphics-memory budget"))
+      }
+      XCTAssertEqual(renderer.textureBytes, 32, "Rejected uploads are not cached")
+    }
+    try encode([red, blue], with: renderer)
+    let small = try EngineMetalRenderer(device: device, textureByteLimit: 15)
+    XCTAssertThrowsError(try encode([red], with: small))
+    XCTAssertEqual(small.textureBytes, 0)
+    let normal = try EngineMetalRenderer(device: device)
+    // About 64 KiB, safely checks the dimension guard without an OOM probe.
+    XCTAssertThrowsError(try encode([image(.white, width: 8193)], with: normal)) {
+      XCTAssertEqual($0 as? EngineMetalRenderer.TextureBudgetError, .imageSize)
+    }
+    XCTAssertEqual(normal.textureBytes, 0)
+  }
+
+  @MainActor
   func testSkinAliasesShareCropsWithoutSharingTransformsOrResourceLifetime()
     throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""

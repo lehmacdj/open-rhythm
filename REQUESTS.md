@@ -60,7 +60,7 @@ was supported. These spot checks are not exhaustive API coverage.
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
 | BF-10 / P2 — fixed | Skin preparation shares exact atlas crops, so Metal's image-identity cache reuses their uploads. Actual cached assets now prepare SEKAI 175 sprites / 136 unique images, SIF 17 / 11, 22/7 15 / 13. | Alias regression failed before and passes after; all 367 non-cached tests, normal build and independent review pass. SEKAI nominal RGBA payload falls from 18,752,256 to 15,662,844 bytes; not a resident-memory/frame-latency measurement. | Bounded unit verified below. Per-sprite transforms/UVs and per-presentation lifetimes remain independent. Aggregate allocation accounting is separate BF-11. |
-| BF-11 / P2 — diagnostic backlog | Metal upload and particle tint preparation lack an aggregate texture-allocation budget, unlike the software renderer. Many distinct large selected rectangles/colors could expand a compact atlas into substantial memory. | Source-level risk, not a reproduced allocation failure or observed crash. Existing selected sprites are not evidence of an excessive real chart. | Investigate bounded pre-allocation accounting and actual selected-resource totals before choosing a limit or redesign. Avoid deliberately exhausting host/device memory; new host limits must be documented, not presented as protocol constraints. |
+| BF-11 / P2 — Metal guard verified; preparation still open | Metal now applies the existing software numeric budgets before conversion/upload allocation: 8 million pixels / 8192 per side per image and 128 million aggregate RGBA bytes. Only successful unique uploads are charged. Particle tint preparation still precedes renderer checks. | Tiny injected-budget regression, actual cached engine preparation, all 368 non-cached tests, normal build and independent review pass. No memory-pressure crash was reproduced. | Keep pre-render atlas/tint allocation as a separate open diagnostic. These are host limits, not Sonolus resource constraints or a process-RSS bound. Metal accounting spans its persistent cache; software accounting spans one render call. |
 
 BF-10 is selected as the demonstrated cross-engine redundancy with a narrow,
 semantics-preserving fix. BF-11 remains a separate diagnostic rather than an
@@ -90,6 +90,30 @@ Establish which allocations occur before existing safety checks and whether
 selected-resource aliases or unused entries affect them. Keep supported-resource
 semantics and explicit host-budget policy separate; this is not authorization
 to pick an arbitrary restrictive limit and declare general compatibility done.
+
+BF-11 Metal verification: tiny 15/32-byte budgets exercise rejection, exact
+capacity, repeated image reuse and repeated rejected uploads without charging
+or caching. A roughly 64 KiB overwide image exercises dimension rejection
+without a memory-exhaustion probe. Both focused tests passed:
+`RunSomeTests/F55A7900-E335-40A4-AE60-8B33E8043614.txt`.
+Actual cached engine preparation and repeat preparation succeeded, accounting
+20,341,844 RGBA bytes for SEKAI, 265,796 for SIF and 7,440,064 for 22/7; repeating
+preparation did not add charges. Selected tint payloads alone were 4,679,000,
+67,396 and 663,552 bytes respectively, so these fixtures do not demonstrate an
+excessive chart. All 368 non-cached tests passed:
+`RunSomeTests/96D1D5ED-BD13-487B-B6C5-C542085EDCB7.txt`.
+Normal build passed:
+`BuildProject/BuildProject-Log-20260930-025617.txt`.
+Independent read-only review found no actionable findings. Existing software
+fallback remains; no silent texture omission or downscaling was added. Cached
+chart replays, driver allocation-to-failure and physical tests were not run.
+
+Re-triage: the earlier atlas/tint allocation path remains a memory-risk
+diagnostic, not a completed requirement. Inspect encoded-image metadata and
+selected crop/color expansion before further GPU optimization. Prefer evidence
+from bounded accounting fixtures and retain the selected-resource boundary;
+do not reject unused sprites merely to simplify a safety check. Full API,
+conservative intro and physical timing/input verification remain open.
 
 Second bounded discovery pass: catalog filtering/pagination, engine option
 defaults, result metadata and persistence were inspected. No new defect was
