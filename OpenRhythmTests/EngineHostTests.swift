@@ -6182,6 +6182,79 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testParticleTintMatchesArithmeticForEveryChannelByte() throws {
+    for (width, height) in [(1, 1), (2, 2), (127, 2), (128, 2), (256, 2)] {
+      try checkParticleTintArithmetic(width: width, height: height)
+    }
+  }
+
+  @MainActor
+  private func checkParticleTintArithmetic(width: Int, height: Int) throws {
+    let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+      | CGBitmapInfo.byteOrder32Big.rawValue
+    func context() throws -> CGContext {
+      try XCTUnwrap(CGContext(data: nil, width: width, height: height,
+        bitsPerComponent: 8, bytesPerRow: width * 4,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: bitmapInfo))
+    }
+    let source = try context()
+    let pixels = try XCTUnwrap(source.data).bindMemory(to: UInt8.self,
+      capacity: source.bytesPerRow * height)
+    for value in 0..<width {
+      let offset = value * 4
+      // Every byte value occurs in each RGB channel, in different orders.
+      pixels[offset] = UInt8(value)
+      pixels[offset + 1] = UInt8(255 - value)
+      pixels[offset + 2] = UInt8((value * 37) % 256)
+      pixels[offset + 3] = 255
+      // Also exercise valid premultiplied pixels at every alpha, including 0.
+      if height > 1 {
+        let translucent = source.bytesPerRow + offset
+        pixels[translucent] = UInt8(value)
+        pixels[translucent + 1] = UInt8(value / 2)
+        pixels[translucent + 2] = UInt8(value / 3)
+        pixels[translucent + 3] = UInt8(value)
+      }
+    }
+    let original = UIImage(cgImage: try XCTUnwrap(source.makeImage()),
+      scale: 2, orientation: .left)
+    for color in [UIColor.white, .black, .red,
+      UIColor(white: 0.5, alpha: 0.2),
+      UIColor(red: 0.1, green: 0.5, blue: 0.9, alpha: 0.3),
+      UIColor(red: 1.2, green: -0.2, blue: 1.0 / 3, alpha: 1)] {
+      // Independent reference: the original per-pixel arithmetic after the
+      // same Core Graphics conversion, without sharing any lookup table.
+      let reference = try context()
+      reference.draw(try XCTUnwrap(original.cgImage),
+        in: CGRect(x: 0, y: 0, width: width, height: height))
+      let length = reference.bytesPerRow * height
+      let expected = try XCTUnwrap(reference.data).bindMemory(to: UInt8.self,
+        capacity: length)
+      var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+      XCTAssertTrue(color.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+      let multipliers = [red, green, blue].map { min(1, max(0, $0)) }
+      for offset in stride(from: 0, to: length, by: 4) {
+        for channel in 0..<3 {
+          expected[offset + channel] = UInt8(
+            (CGFloat(expected[offset + channel]) * multipliers[channel]).rounded())
+        }
+      }
+      var checked = false
+      let tinted = try EnginePresentationAssets.tinted(original, color: color,
+        makeImage: { actual in
+          XCTAssertEqual(actual.bytesPerRow, reference.bytesPerRow)
+          XCTAssertEqual(Data(bytes: actual.data!, count: length),
+            Data(bytes: expected, count: length))
+          checked = true
+          return actual.makeImage()
+        })
+      XCTAssertTrue(checked)
+      XCTAssertEqual(tinted.scale, original.scale)
+      XCTAssertEqual(tinted.imageOrientation, original.imageOrientation)
+    }
+  }
+
+  @MainActor
   func testParticleTintPreparationFailuresNeverSubstituteOriginalPixels() throws {
     let format = UIGraphicsImageRendererFormat()
     format.scale = 1

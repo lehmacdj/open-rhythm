@@ -93,22 +93,24 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** approved BF-19 policy implemented. Actual GameplayModel
-  startup skips 7.72 / 7.02 / 8.40 seconds on cached Eleventh / 光 / shake it!
-  with controlled generated audio, stopping at visible input-owned notes and
-  repeating after restart. All 381 non-cached tests, the cached startup check,
-  normal build and independent review pass. Work remains local, not pushed.
-- **Selected next action:** reconcile existing runtime/render preparation/frame
-  profiles with the remaining performance reports, then select one measured
-  cost or missing measurement for a bounded diagnostic. Inspect the existing
-  cached-run artifacts before rerunning workloads; cover interpreter, input,
-  sprites/particles, upload/draw and preparation rather than only curved holds.
-- **Why:** broad gameplay performance remains an explicit user priority. Stage
-  recognition should not turn into another open-ended proof-polishing task.
-- **Acceptance:** identify the measured cost, workload/build and evidence limit,
-  or record a negative finding with a specific deferred measurement. Do not
-  infer phone frame pacing from a simulator or from a harness that also runs
-  the reference interpreter. Do not invent tighter memory limits for BF-11.
+- **Completed action:** broad performance-evidence reconciliation identified
+  and measured expensive particle tint preparation (BF-22). Exact byte lookup
+  tables reduce paired Debug presentation means from 462 to 312 ms for SEKAI,
+  10.6 to 8.6 ms for SIF and 61.3 to 40.6 ms for 22/7. Tiny images retain the
+  original arithmetic. Twenty focused tests, normal build and independent
+  review pass. Work remains local, not pushed; this is not live-FPS evidence.
+- **Selected next action:** close the measurement blind spot around actual
+  GameplayModel judgment bookkeeping and native effect-audio dispatch with
+  one bounded simulator diagnostic, using cached assets and generated music.
+  Existing full-chart harness timings exclude both, and saved frame diagnostics
+  currently measure runtime/sprites/Metal but not these CPU phases separately.
+- **Why:** broad gameplay performance remains an explicit user priority. The
+  measured loading improvement must not replace investigation of in-song work.
+- **Acceptance:** quantify those phases with the workload/build and limits, or
+  name the exact deferred measurement if the simulator cannot measure it.
+  Preserve scheduling and calibration. Add permanent instrumentation only if
+  needed to make the deferred physical batch actionable; no speculative audio
+  queue optimization. Do not infer phone frame pacing from simulator timings.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -155,6 +157,30 @@ The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
 | BF-19 / P2 — approved policy implemented and verified | Initial non-input scenery, including first-cycle deferred stage spawns, may remain onscreen while silence advances. Initial changes/disappearance rewind; visible input-owned graphics, particles and later additions stop advancing. | Cached GameplayModel startup passes Eleventh, 光 and shake it! twice each; all 381 non-cached tests, normal build and independent review pass. No engine-name exception or timing shift. Physical behavior and semantic note imagery drawn by non-input managers remain outside this bounded evidence. |
 | BF-20 / P2 — verified | Catalog artwork and relative BGM identity ignored the level source. The regression reproduced wrong cover URLs, incorrectly joined different-origin audio, and a missed absolute-URL alias. | Shared level resource-base resolution now matches runtime/offline behavior. All 77 catalog/offline tests, normal build and independent review pass. Absolute URLs, absent-source fallback, existing incremental row IDs and persisted result/download identities are preserved. |
 | BF-21 / bounded regression verified | New opt-in Eleventh normal-flick regression resolves entity 6: stationary control misses, measured upward movement succeeds at +1/60 s, and restart repeats the result. | Pooled/coalesced sample path, cached engine and unchanged windows/options; independent review clean. This closes the named cached-workload gap, not other flick variants, UIKit/physical delivery or acoustic timing. No gameplay code or calibration was changed. |
+| BF-22 / P2 — verified | Cross-engine preparation profiling isolated repeated per-pixel tint arithmetic as a main-actor loading cost. Exact 256-entry channel tables now amortize that work; below 256 pixels the original arithmetic avoids table setup. | Paired Debug presentation means: SEKAI 461.9→312.2 ms, SIF 10.6→8.6 ms, 22/7 61.3→40.6 ms. Exhaustive channel-byte equivalence, tiny/cutoff images, alpha, metadata and allocation-failure checks pass in 20 focused tests. Normal build and independent review pass. Loading improvement only; in-song/device performance remains open. |
+
+BF-22 profiling covered compressed engine/chart decode, cached asset reads,
+presentation, native effect-bank construction, runtime preprocessing, Metal
+pipeline creation and texture upload across all three engine families. No BGM
+or remote assets were fetched and no music was played. SEKAI's initial warm
+presentation cost was 475–476 ms, including 417–419 ms for 131 tint variants /
+1,169,750 pixels; runtime preprocessing was 235–237 ms, audio-bank construction
+111–112 ms and texture upload 50–55 ms. These phases happen before play, and
+their Debug simulator timings are not Release/device frame-time measurements.
+The selected optimization addresses the largest measured preparation phase,
+not an inferred cause of the reported curved-hold slowdown.
+
+The final paired probe alternated the original tint arithmetic and the new
+implementation through the same factory seam, discarded the first warm-up
+pair, then averaged three pairs. Tint-subset means were 402.3→253.8 ms (SEKAI),
+5.88→3.89 ms (SIF) and 56.65→36.06 ms (22/7). The temporary probes and output
+are retained under ignored `tmp/preparation-profile.swift`,
+`tmp/tint-paired-profile.swift` and `tmp/tint-paired-profile-results.txt`.
+Independent review found a tiny-image setup regression in the first version;
+the retained direct-arithmetic path fixes it. The final 20-test run is
+`RunSomeTests/FA8E0CD2-60BC-423B-865F-E983EFD04F51.txt`; normal build is
+`BuildProject/BuildProject-Log-20260930-171108.txt`. No full-chart replay or
+physical check was needed for this byte-equivalent preparation-only change.
 
 BF-21 initial verification: the new cached flick test and the two coalesced
 input regressions pass in

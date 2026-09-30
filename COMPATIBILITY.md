@@ -992,6 +992,23 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Interpreter performance validation
 
+### Particle tint preparation — September 30, 2026
+
+Cached cross-engine preparation profiling separately measured resource decode,
+presentation, audio-bank construction, preprocessing and Metal setup/upload.
+Particle color preparation was the largest measured SEKAI loading phase.
+RGB multiplication/rounding now uses exact 256-entry lookup tables, except
+below 256 processed pixels, where the original arithmetic avoids setup cost.
+Alpha, premultiplication, metadata, preparation failures and budgets are unchanged.
+
+Alternating original/new tint factories after one warm-up pair gave these
+three-pair mean presentation times in the Debug simulator: SEKAI 461.9→312.2 ms,
+SIF 10.6→8.6 ms and 22/7 61.3→40.6 ms. The reference regression covers every
+channel byte, varied colors/alpha, clamping, tiny images and the cutoff.
+Twenty focused tests, normal build and independent review pass. See BF-22 in
+REQUESTS.md for artifacts. This is cached loading work, not proof of Release
+speed, live frame pacing or a fix for the reported curved-hold slowdown.
+
 ### Active callback dispatch — September 21, 2026
 
 The runtime previously sorted all active entities separately for sequential

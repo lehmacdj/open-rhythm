@@ -980,11 +980,29 @@ final class EnginePresentationAssets {
     // an opaque tint then masking it bleaches semitransparent colored pixels.
     let bytes = buffer.bindMemory(to: UInt8.self,
       capacity: context.bytesPerRow * source.height)
-    let multipliers = [red, green, blue].map { min(1, max(0, $0)) }
-    for offset in stride(from: 0, to: context.bytesPerRow * source.height, by: 4) {
-      for (channel, multiplier) in multipliers.enumerated() {
-        bytes[offset + channel] = UInt8(
-          (CGFloat(bytes[offset + channel]) * multiplier).rounded())
+    // A channel has only 256 possible inputs. Compute the exact rounded
+    // mapping once per tint instead of repeating floating-point arithmetic
+    // (and channel enumeration) for every pixel during loading.
+    func table(_ multiplier: CGFloat) -> [UInt8] {
+      let clamped = min(1, max(0, multiplier))
+      return (0...255).map { UInt8((CGFloat($0) * clamped).rounded()) }
+    }
+    let byteCount = context.bytesPerRow * source.height
+    if byteCount / 4 < 256 {
+      // Do not build 256-entry tables for fewer than 256 pixels per channel.
+      let multipliers = [red, green, blue].map { min(1, max(0, $0)) }
+      for offset in stride(from: 0, to: byteCount, by: 4) {
+        for (channel, multiplier) in multipliers.enumerated() {
+          bytes[offset + channel] = UInt8(
+            (CGFloat(bytes[offset + channel]) * multiplier).rounded())
+        }
+      }
+    } else {
+      let reds = table(red), greens = table(green), blues = table(blue)
+      for offset in stride(from: 0, to: byteCount, by: 4) {
+        bytes[offset] = reds[Int(bytes[offset])]
+        bytes[offset + 1] = greens[Int(bytes[offset + 1])]
+        bytes[offset + 2] = blues[Int(bytes[offset + 2])]
       }
     }
     guard let result = makeImage(context) else {
