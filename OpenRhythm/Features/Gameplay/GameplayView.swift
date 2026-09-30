@@ -1045,7 +1045,8 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
     }
   }
 
-  private func receive(_ touches: Set<UITouch>, started: Bool, ended: Bool) {
+  private func receive(_ touches: Set<UITouch>, event: UIEvent?,
+    started: Bool, ended: Bool) {
     let deliveryTime = model?.timingRecorder.map { _ in CACurrentMediaTime() }
     guard bounds.height > 0, let model else { return }
     touchPool.beginPlayback(generation: model.playbackGeneration,
@@ -1058,13 +1059,18 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
           seconds: deliveryTime - touch.timestamp)
       }
       let key = ObjectIdentifier(touch)
-      let point = touch.location(in: self)
-      let position = EnginePoint(
-        x: (point.x - bounds.midX) * 2 / bounds.height,
-        y: (bounds.midY - point.y) * 2 / bounds.height
-      )
-      let time = model.inputTime(at: touch.timestamp)
-      touchPool.receive(key: key, position: position, time: time,
+      // Capture history during delivery: UIKit does not retain it afterward.
+      // The final auxiliary sample already represents the main touch. Never
+      // append it a second time or use predicted positions for judgment.
+      let history = event?.coalescedTouches(for: touch) ?? []
+      let samples = (history.isEmpty ? [touch] : history).map { sample in
+        let point = sample.location(in: self)
+        return EngineTouchSample(position: EnginePoint(
+          x: (point.x - bounds.midX) * 2 / bounds.height,
+          y: (bounds.midY - point.y) * 2 / bounds.height
+        ), time: model.inputTime(at: sample.timestamp), timestamp: sample.timestamp)
+      }
+      touchPool.receive(key: key, samples: samples,
         started: started, ended: ended)
     }
     // Pool events until the next display tick. Started and ended can both be
@@ -1072,19 +1078,19 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
   }
 
   override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-    receive(touches, started: true, ended: false)
+    receive(touches, event: event, started: true, ended: false)
   }
 
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-    receive(touches, started: false, ended: false)
+    receive(touches, event: event, started: false, ended: false)
   }
 
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-    receive(touches, started: false, ended: true)
+    receive(touches, event: event, started: false, ended: true)
   }
 
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-    receive(touches, started: false, ended: true)
+    receive(touches, event: event, started: false, ended: true)
   }
 }
 

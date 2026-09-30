@@ -11,6 +11,26 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Touch velocity now uses consecutive measured OS timestamps and positions,
+  not display-frame times or an assumed 240 Hz sampling limit. UIKit's
+  [coalesced history](https://developer.apple.com/documentation/uikit/getting-high-fidelity-input-with-coalesced-touches)
+  is consumed during delivery under the original contact identity, including
+  its final sample exactly once. Raw uptime determines speed; chart-mapped
+  timestamps still determine judgments. Per-frame delta/lifecycle pooling and
+  within-frame release velocity are retained. The frame-phase regression
+  failed before the fix; three new regressions plus the updated stationary
+  sample check pass, and all 355 non-cached simulator tests pass
+  (`RunSomeTests/956803CF-4C73-40FB-B0FC-CA70758A98AD.txt`). Independent review
+  found no actionable issue. The seven cached probes also pass in the original
+  `Test-OpenRhythm-2026.09.30_01-35-23--0400.xcresult` run, which completed
+  after observer expiry without being restarted: 362 total passes across
+  both runs, no failures/skips. The normal build passes at 01:47. These probes
+  retain their bounded lifecycle/contact/restart scope.
+  If no intermediate samples exist after a long
+  hold, only a long-interval average is known until another sample arrives;
+  do not describe it as native Sonolus estimator parity or proof of physical
+  flick recognition. No timing calibration or judgment window was changed.
+
 - Audio-session interruption begins now stop both gameplay and audio even
   without a scene-phase change. Ready explains the interruption and requires
   an explicit restart; no partial result is saved and `.ended` does not resume

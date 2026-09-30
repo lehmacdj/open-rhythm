@@ -4682,6 +4682,24 @@ final class EngineHostTests: XCTestCase {
     XCTAssertFalse(pool.touches.contains { $0.started || $0.ended })
   }
 
+  func testTouchVelocityDoesNotDependOnDisplayFramePhase() throws {
+    let p = EnginePoint(x: 0, y: 0)
+    let start = EngineTouch(id: 1, started: true, ended: false,
+      time: 1, startTime: 1, position: p, startPosition: p, delta: p)
+    for frameTime in [1, 1.005, 1.008, 1.02, 4] {
+      let moved = start.nextFrame(at: frameTime).moved(
+        to: EnginePoint(x: 0, y: 0.1), at: 1.01, ended: false)
+      XCTAssertEqual(moved.velocity?.y ?? 0, 10, accuracy: 1e-9,
+        "Display time \(frameTime) must not rewrite an OS sampling interval")
+      XCTAssertEqual(moved.time, 1.01)
+      XCTAssertEqual(moved.delta, EnginePoint(x: 0, y: 0.1))
+    }
+    let shortInterval = start.moved(to: EnginePoint(x: 0, y: 0.1),
+      at: 1.001, ended: false)
+    XCTAssertEqual(shortInterval.velocity?.y ?? 0, 100, accuracy: 1e-8,
+      "Use measured intervals rather than assuming a maximum sampling rate")
+  }
+
   func testTouchPoolingPreservesShortTapsAndFlicksAfterStationaryHolds() throws {
     let p = EnginePoint(x: 0, y: 0)
     let start = EngineTouch(id: 1, started: true, ended: false,
@@ -4695,7 +4713,11 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(end.velocity?.y ?? 0, 20, accuracy: 0.001)
     let held = start.nextFrame(at: 3)
     XCTAssertEqual(held.time, 1, "Keep the OS event timestamp intact")
-    let flick = held.moved(to: EnginePoint(x: 0, y: 0.2), at: 3.01, ended: false)
+    // A display tick cannot establish a stationary sample at time 3. Supply
+    // a real timestamped sample instead of fabricating one from rendering.
+    let stationary = held.moved(to: p, at: 3, ended: false)
+    let flick = stationary.moved(to: EnginePoint(x: 0, y: 0.2),
+      at: 3.01, ended: false)
     XCTAssertFalse(flick.started)
     XCTAssertEqual(flick.velocity?.y ?? 0, 20, accuracy: 0.001)
     XCTAssertEqual(flick.nextFrame(at: 3.02).delta, p)
@@ -4708,6 +4730,74 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(runtime.memory.value(block: 1002, index: 13), 20, accuracy: 0.001)
     XCTAssertEqual(runtime.memory.value(block: 1002, index: 14), .pi / 2,
       accuracy: 0.001)
+  }
+
+  func testCoalescedFlickUsesRecentPhysicalSamplesAfterAStationaryHold() throws {
+    // Chart time may be clamped at startup or frozen during a player stall.
+    // Velocity still uses the physical interval, with no calibration added.
+    for chartTime in [1.0, 3.0, 10.0] {
+      var pool = EngineTouchPool<Int>()
+      pool.receive(key: 0, samples: [EngineTouchSample(
+        position: EnginePoint(x: 0, y: 0), time: 1, timestamp: 100)],
+        started: true, ended: false)
+      pool.nextFrame(at: 3.1)
+      pool.receive(key: 0, samples: [
+        EngineTouchSample(position: EnginePoint(x: 0, y: 0.1),
+          time: chartTime, timestamp: 102.005),
+        EngineTouchSample(position: EnginePoint(x: 0, y: 0.2),
+          time: chartTime, timestamp: 102.010)
+      ], started: false, ended: false)
+      let flick = try XCTUnwrap(pool.touches.first)
+      XCTAssertEqual(pool.touches.count, 1)
+      XCTAssertEqual(flick.id, 1)
+      XCTAssertFalse(flick.started)
+      XCTAssertEqual(flick.time, chartTime)
+      XCTAssertEqual(flick.startTime, 1)
+      XCTAssertEqual(flick.delta, EnginePoint(x: 0, y: 0.2))
+      XCTAssertEqual(flick.velocity?.y ?? 0, 20, accuracy: 1e-8)
+      pool.receive(key: 0, samples: [EngineTouchSample(
+        position: flick.position, time: chartTime, timestamp: 102.011)],
+        started: false, ended: true)
+      XCTAssertEqual(pool.touches.first?.velocity?.y ?? 0, 20, accuracy: 1e-8)
+      XCTAssertTrue(try XCTUnwrap(pool.touches.first).ended)
+      pool.nextFrame(at: 3.2)
+      XCTAssertTrue(pool.touches.isEmpty)
+    }
+  }
+
+  func testCoalescedContactsPreserveLifecycleAndOnlyMeasuredVelocity() throws {
+    var pool = EngineTouchPool<Int>()
+    func sample(_ x: Double, _ timestamp: Double) -> EngineTouchSample {
+      EngineTouchSample(position: EnginePoint(x: x, y: 0),
+        time: timestamp - 100, timestamp: timestamp)
+    }
+    pool.receive(key: 7, samples: [sample(0, 100), sample(0.1, 100.01)],
+      started: true, ended: false)
+    pool.receive(key: 7, samples: [sample(0.2, 100.02), sample(0.2, 100.03)],
+      started: false, ended: true)
+    let ended = try XCTUnwrap(pool.touches.first)
+    XCTAssertTrue(ended.started && ended.ended)
+    XCTAssertEqual(ended.startTime, 0)
+    XCTAssertEqual(ended.time, 0.03, accuracy: 1e-10)
+    XCTAssertEqual(ended.delta.x, 0.2, accuracy: 1e-10)
+    XCTAssertEqual(ended.velocity?.x ?? 0, 10, accuracy: 1e-8)
+    pool.receive(key: 7, samples: [sample(0, 101), sample(0.1, 101.01)],
+      started: true, ended: false)
+    XCTAssertEqual(pool.touches.map(\.id), [1, 2],
+      "Auxiliary copies must not create extra contacts or reuse the ended ID")
+    pool.nextFrame(at: 101.02)
+    XCTAssertEqual(pool.touches.map(\.id), [2])
+    XCTAssertEqual(pool.touches.first?.velocity?.x, 0)
+    // Without intermediate samples, only the long-interval average is known.
+    // A frame must not turn that uncertainty into an invented fast flick.
+    pool.receive(key: 7, samples: [sample(0.2, 103.01)],
+      started: false, ended: false)
+    XCTAssertEqual(pool.touches.first?.velocity?.x ?? 0, 0.05, accuracy: 1e-8)
+    pool.receive(key: 7, samples: [sample(0.3, 103.01)],
+      started: false, ended: true)
+    XCTAssertEqual(pool.touches.first?.velocity?.x, 0,
+      "An equal timestamp does not define a nonzero velocity")
+    XCTAssertTrue(try XCTUnwrap(pool.touches.first).ended)
   }
 
   private let quad: [Double] = [-1, -1, -1, 1, 1, 1, 1, -1]

@@ -1,5 +1,13 @@
 import Foundation
 
+struct EngineTouchSample {
+  let position: EnginePoint
+  /// Chart time used for judgment, including playback clock mapping.
+  let time: Double
+  /// OS uptime; velocity must not depend on a stalled/mapped chart clock.
+  let timestamp: Double
+}
+
 struct EngineTouch: Sendable {
   let id: Int
   let started: Bool
@@ -12,26 +20,32 @@ struct EngineTouch: Sendable {
   var velocity: EnginePoint? = nil
   var velocitySampleTime: Double? = nil
 
-  func moved(to position: EnginePoint, at time: Double, ended: Bool) -> Self {
+  func moved(to position: EnginePoint, at time: Double, ended: Bool,
+    sampleTime: Double? = nil) -> Self {
     let dx = position.x - self.position.x
     let dy = position.y - self.position.y
-    // Stationary frames advance the sample baseline without changing the
-    // OS-reported event time. A hold followed by a flick must not average
-    // movement over the entire stationary hold.
-    let elapsed = max(1.0 / 240, time - (velocitySampleTime ?? self.time))
-    let velocity = dx != 0 || dy != 0
-      ? EnginePoint(x: dx / elapsed, y: dy / elapsed) : self.velocity
+    let sampleTime = sampleTime ?? time
+    let elapsed = sampleTime - (velocitySampleTime ?? self.time)
+    // Use actual consecutive samples, including UIKit's coalesced history.
+    // A frame timestamp is not a stationary touch measurement. Do not replace
+    // a missing sampling interval with an assumed frame or hardware rate.
+    var velocity = self.velocity
+    if dx != 0 || dy != 0 {
+      velocity = elapsed > 0 && elapsed.isFinite
+        ? EnginePoint(x: dx / elapsed, y: dy / elapsed)
+        : EnginePoint(x: 0, y: 0)
+    }
     return Self(id: id, started: started, ended: ended, time: time,
       startTime: startTime, position: position, startPosition: startPosition,
       delta: EnginePoint(x: delta.x + dx, y: delta.y + dy), velocity: velocity,
-      velocitySampleTime: time)
+      velocitySampleTime: sampleTime)
   }
 
-  func nextFrame(at sampleTime: Double) -> Self {
+  func nextFrame(at _: Double) -> Self {
     Self(id: id, started: false, ended: false, time: time,
       startTime: startTime, position: position, startPosition: startPosition,
       delta: EnginePoint(x: 0, y: 0), velocity: EnginePoint(x: 0, y: 0),
-      velocitySampleTime: max(time, sampleTime))
+      velocitySampleTime: velocitySampleTime)
   }
 }
 
@@ -214,15 +228,27 @@ struct EngineTouchPool<Key: Hashable> {
   }
 
   mutating func receive(key: Key, position: EnginePoint, time: Double,
-    started: Bool, ended: Bool) {
+    started: Bool, ended: Bool, sampleTime: Double? = nil) {
     if started {
       if let previous = contacts[key] { completed.append(previous) }
       contacts[key] = EngineTouch(id: nextID, started: true, ended: ended,
         time: time, startTime: time, position: position, startPosition: position,
-        delta: EnginePoint(x: 0, y: 0))
+        delta: EnginePoint(x: 0, y: 0), velocitySampleTime: sampleTime ?? time)
       nextID += 1
     } else if let previous = contacts[key], !previous.ended {
-      contacts[key] = previous.moved(to: position, at: time, ended: ended)
+      contacts[key] = previous.moved(to: position, at: time, ended: ended,
+        sampleTime: sampleTime)
+    }
+  }
+
+  /// Coalesced samples belong to one contact, not to the auxiliary UITouch
+  /// identities UIKit supplies. Begin/end apply once to the entire batch.
+  mutating func receive(key: Key, samples: [EngineTouchSample],
+    started: Bool, ended: Bool) {
+    for (index, sample) in samples.enumerated() {
+      receive(key: key, position: sample.position, time: sample.time,
+        started: started && index == 0,
+        ended: ended && index == samples.count - 1, sampleTime: sample.timestamp)
     }
   }
 

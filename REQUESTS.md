@@ -57,7 +57,7 @@ or physical-device validation. Findings below are recorded before fixing them.
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
 | BF-01 / P1 — fixed | `ResultStore.record` silently capped history at 500, removed older timing payloads, and thereby also dropped old-only songs from `playedSongs`. The previous audit described this limit, but the user did not request automatic deletion. | Confirmed by the 501st-play regression; automatic eviction is now removed. | Verification below closes this unit. Previously deleted data cannot be reconstructed. |
-| BF-02 / P1 — reproduced, estimator unresolved | `EngineTouch.nextFrame` advances the velocity baseline to frame time. Identical OS movement samples produce different velocities depending on intervening display frames. | Xcode diagnostic confirmed 10 versus 24 units/s for the same 0.1-unit movement over 10 ms. Field prevalence and contribution to reported timing bias remain unknown. | Design an event-sample estimator, considering coalesced UIKit samples and stationary-hold-to-flick behavior. No arbitrary calibration or physical test is authorized. |
+| BF-02 / P1 — frame dependence fixed | Velocity now uses consecutive OS samples, including UIKit's coalesced history, independently of display time and the mapped chart clock. No assumed 240 Hz floor or synthetic stationary frame sample remains. | The frame-phase regression failed before and passes now, alongside coalesced hold-to-flick, lifecycle and clock-separation checks. Native estimator parity and contribution to reported early/late bias are not established. | Keep single-sample-after-long-hold uncertainty explicit; physical flick verification remains deferred. Do not add guessed calibration to force a timing distribution. |
 | BF-03 / P1 — interruption path fixed; other stalls open | An audio-session interruption previously left the engine interpreting input without a scene change. The model now stops the attempt, invalidates startup/input generations and returns to Ready with an explanation; only an explicit Start restarts it. | Synthetic active-engine regression reproduced the defect and now passes, as do pending-activation, notification parsing and advancing-restart checks. Not a real-device interruption measurement. | Investigate ordinary buffering/stopped-player input separately; do not treat every temporary wait or normal EOF as an interruption. Physical behavior remains in the deferred batch. |
 | BF-04 / P2 | One malformed offline manifest makes `manifests()` throw and prevents `catalogSongs()` from returning the otherwise valid library. Cleanup deliberately fails closed to protect unknown shared references. | Confirmed library-availability path; no current user file has been shown corrupt. | Reproduce mixed valid/corrupt manifests; design recoverable listing without deleting data or weakening cleanup safety. |
 | BF-05 / P2 diagnosis | Every difficulty's download-status lookup enumerates/decodes the manifest collection and validates resource contents again. | Large-library I/O/performance hypothesis, not a measured phone hitch. | Instrument a synthetic multi-song library, then prioritize from measured cost; retain hash verification rather than bypassing it. |
@@ -135,6 +135,53 @@ flick after a stationary hold. BF-03's ordinary-stall question remains separate;
 BF-04's corrupt-library recovery is the next confirmed non-gameplay defect.
 BF-05–07 remain diagnostic backlog items, not newly expanded requirements for
 closing the interruption fix.
+
+BF-02 fix: UIKit's
+[coalesced touch history](https://developer.apple.com/documentation/uikit/getting-high-fidelity-input-with-coalesced-touches)
+is captured during event delivery, preserving the main contact's identity.
+The history includes the final delivered sample, so it is not appended twice;
+nil/empty history falls back to the main touch. Begin/end flags apply once per
+batch. No predicted touches are used. Raw OS uptime determines velocity, while
+each sample's mapped chart time remains the judgment timestamp. Rendering only
+clears per-frame deltas/velocity; it does not advance the sampling baseline.
+
+The new frame-phase regression failed with 20/24 units/s instead of 10 for
+identical samples and with 24 instead of 100 for a measured 1 ms interval
+(`RunSomeTests/BB7B4B47-189B-4A26-886C-99BDB3881ED4.txt`). It now passes.
+Two further regressions cover recent coalesced motion after a long hold,
+frozen/remapped chart timestamps, short tap/release preservation, contact-ID
+reuse, equal timestamps and no-history fallback. The old hold-to-flick test now
+supplies an actual stationary sample instead of treating a frame as proof of
+stationarity. All 355 non-cached simulator tests pass with no failures or skips
+(`RunSomeTests/956803CF-4C73-40FB-B0FC-CA70758A98AD.txt`). Independent
+post-fix review found no actionable defect.
+
+Final integration verification: all seven cached probes passed in the original
+September 30 01:35:23 run, completing at 01:46:35. The response observer expired
+after 300 seconds, but the verified live simulator process was not restarted.
+The completed `Test-OpenRhythm-2026.09.30_01-35-23--0400.xcresult` bundle
+reports 7 passes, no failures/skips, on the iPhone 17 Pro iOS 26.5 simulator.
+Together with the non-cached run this is 362 passing tests. The normal build
+passes (`BuildProject/BuildProject-Log-20260930-014703.txt`). These cached
+lifecycle/contact/restart probes are not physical flick or native-estimator
+parity checks; no physical-device tests were run.
+
+Information limit: when only one movement sample follows a long stationary
+hold and UIKit supplies no intermediate samples, only the long-interval
+average is known. That average may not cross a flick threshold until another
+sample arrives. The old frame-derived estimate did not resolve this unknown;
+it guessed motion onset from renderer timing. Neither these tests nor the
+public Sonolus velocity-component contract establish native-estimator parity
+or physical-device flick behavior. That verification remains deferred, and no
+causal claim about the user's early/late distribution is made.
+
+Re-triage after fixing the confirmed frame dependence: BF-04's corrupt-manifest
+library failure is the next confirmed, broadly affecting defect with a bounded
+reproduction and no device/contract dependency. BF-03's ordinary-stall input
+question and BF-05–07 remain queued for diagnosis; no additional failure in
+those paths was established during this touch-input unit. Preserve the
+remaining API/stack and physical-verification gates rather than extending
+this unit into undocumented native filtering behavior.
 
 ## Current verification order — reaffirmed September 27, 2026
 
