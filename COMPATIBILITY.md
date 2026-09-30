@@ -1161,8 +1161,37 @@ across these two runs without skips or failures. The observer expired after
 `35595312-95FC-4EAA-9D8D-252E87179A38` (seven cached tests).
 This does not expand the archive's existing stored/deflate compression support,
 64 MiB encoded/total decoded bound, 16 MiB per-entry bound or 1,024-entry limit.
-ZIP64 central-directory records and other compression methods remain unsupported;
-no claim of all ZIP variants or native audio codec parity follows from these tests.
+The ZIP64 gap noted in this pass is addressed by the follow-up below; other
+compression methods remain unsupported. No claim of all ZIP variants or native
+audio codec parity follows from these tests.
+
+September 30 ZIP64 follow-up: tiny archives can legally use ZIP64 metadata, so
+the existing byte/entry budgets did not justify treating its sentinel values
+as actual file sizes or counts. The parser now resolves the ZIP64 end record
+and locator and independently present extended central-entry fields using
+[APPNOTE sections 4.3.14–16 and 4.5.3](
+https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT). Integer conversion,
+directory ranges and local data ranges are bounded before arithmetic/slicing;
+multi-disk and inconsistent metadata fail explicitly. The original resource
+budgets remain. Optional directory signatures and extensible ZIP64 records are
+accepted without interpreting their opaque content.
+
+The new positive matrix failed before implementation. Tests cover all 16 central
+entry sentinel combinations across three directory modes, 64 mixed legacy-end
+sentinel patterns, comments, empty archives and independent Python zipfile
+deflate fixtures (including a nonseekable writer's data descriptor). Negative
+tests cover UInt64.max/Int.max fields, missing/truncated/duplicate extensions,
+cross-record bounds, contradictory counts, other disks and retained 1,024-entry
+and 16 MiB-entry limits. Every truncated prefix of the bounded ZIP64 fixture
+is rejected. Independent review of the final parser and tests found no actionable
+issue. All 345 non-cached simulator tests pass; the normal build passes at 00:40.
+Three cached probes, one per existing engine-family resource set, pass at 00:43:
+Eleventh/Next-SEKAI, 22/7 and SIF Custom Charts/LLSIF. The four redundant cached
+chart/workload probes were not rerun for this archive-only change; their full
+348-test parent verification is recorded above. Current result summaries:
+`AB6A0FC9-8A3A-452F-BDB3-CC2B2F0D65F4` (345 non-cached) and
+`DA99B6E2-EEA4-4836-B6BF-7EDA675013B0` (three cached). These checks establish
+archive/runtime regressions, not physical playback or every ZIP variant.
 
 ## Stack implementation evidence needed
 

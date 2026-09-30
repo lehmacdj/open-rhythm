@@ -203,47 +203,149 @@ struct EffectAudioArchive {
   let files: [String: Data]
 
   init(data: Data) throws {
+    guard data.count >= 22, data.count <= 64 * 1024 * 1024 else {
+      throw EngineInterpreterError.invalidArguments("audio archive size")
+    }
     let bytes = [UInt8](data)
     func integer(_ offset: Int, _ length: Int) throws -> Int {
       guard offset >= 0, offset <= bytes.count - length else {
         throw EngineInterpreterError.invalidArguments("audio archive bounds")
       }
-      return (0..<length).reduce(0) { $0 | Int(bytes[offset + $1]) << ($1 * 8) }
-    }
-    guard bytes.count >= 22, bytes.count <= 64 * 1024 * 1024 else {
-      throw EngineInterpreterError.invalidArguments("audio archive size")
+      let raw = (0..<length).reduce(UInt64(0)) {
+        $0 | UInt64(bytes[offset + $1]) << ($1 * 8)
+      }
+      guard let value = Int(exactly: raw) else {
+        throw EngineInterpreterError.invalidArguments("audio archive integer range")
+      }
+      return value
     }
     guard let end = stride(
       from: bytes.count - 22, through: max(0, bytes.count - 65_557), by: -1
     ).first(where: { offset in
       (try? integer(offset, 4)) == 0x06054b50
         && (try? integer(offset + 20, 2)) == bytes.count - offset - 22
-    }), try integer(end + 4, 2) == 0, try integer(end + 6, 2) == 0 else {
+    }) else {
       throw EngineInterpreterError.invalidArguments("audio archive directory")
     }
-    let count = try integer(end + 10, 2)
+    let disk = try integer(end + 4, 2)
+    let startDisk = try integer(end + 6, 2)
+    let diskCount = try integer(end + 8, 2)
+    var count = try integer(end + 10, 2)
+    var directorySize = try integer(end + 12, 4)
+    var directoryStart = try integer(end + 16, 4)
+    var directoryBoundary = end
+    let needsZIP64 = disk == 0xffff || startDisk == 0xffff
+      || diskCount == 0xffff || count == 0xffff
+      || directorySize == 0xffff_ffff || directoryStart == 0xffff_ffff
+    let locator = end - 20
+    let hasZIP64 = locator >= 0 && (try? integer(locator, 4)) == 0x07064b50
+    if hasZIP64 {
+      guard try integer(locator + 4, 4) == 0,
+        try integer(locator + 16, 4) == 1 else {
+        throw EngineInterpreterError.invalidArguments("multi-disk audio archive")
+      }
+      let record = try integer(locator + 8, 8)
+      guard record <= locator - 56, try integer(record, 4) == 0x06064b50,
+        try integer(record + 4, 8) == locator - record - 12,
+        try integer(record + 16, 4) == 0,
+        try integer(record + 20, 4) == 0 else {
+        throw EngineInterpreterError.invalidArguments("audio ZIP64 directory")
+      }
+      let extendedCount = try integer(record + 32, 8)
+      let extendedSize = try integer(record + 40, 8)
+      let extendedStart = try integer(record + 48, 8)
+      let legacyFields: [(value: Int, sentinel: Int, extended: Int)] = [
+        (disk, 0xffff, 0), (startDisk, 0xffff, 0),
+        (diskCount, 0xffff, extendedCount), (count, 0xffff, extendedCount),
+        (directorySize, 0xffff_ffff, extendedSize),
+        (directoryStart, 0xffff_ffff, extendedStart)
+      ]
+      guard try integer(record + 24, 8) == extendedCount,
+        legacyFields.allSatisfy({
+          $0.value == $0.sentinel || $0.value == $0.extended
+        }) else {
+        throw EngineInterpreterError.invalidArguments("audio ZIP64 directory mismatch")
+      }
+      count = extendedCount
+      directorySize = extendedSize
+      directoryStart = extendedStart
+      directoryBoundary = record
+    } else {
+      guard !needsZIP64, disk == 0, startDisk == 0, diskCount == count else {
+        throw EngineInterpreterError.invalidArguments("audio archive directory")
+      }
+    }
     guard count <= 1024 else { throw EngineInterpreterError.operationLimitExceeded }
-    var offset = try integer(end + 16, 4)
+    guard directoryStart <= directoryBoundary,
+      directorySize <= directoryBoundary - directoryStart else {
+      throw EngineInterpreterError.invalidArguments("audio directory bounds")
+    }
+    let directoryEnd = directoryStart + directorySize
+    var offset = directoryStart
     var files = [String: Data]()
     var totalSize = 0
     for _ in 0..<count {
-      guard try integer(offset, 4) == 0x02014b50,
+      guard offset <= directoryEnd - 46,
+        try integer(offset, 4) == 0x02014b50,
         try integer(offset + 8, 2) & 1 == 0 else {
         throw EngineInterpreterError.invalidArguments("audio archive entry")
       }
       let flags = try integer(offset + 8, 2)
       let method = try integer(offset + 10, 2)
       let checksum = try integer(offset + 16, 4)
-      let compressedSize = try integer(offset + 20, 4)
-      let size = try integer(offset + 24, 4)
+      var compressedSize = try integer(offset + 20, 4)
+      var size = try integer(offset + 24, 4)
       let nameLength = try integer(offset + 28, 2)
       let extraLength = try integer(offset + 30, 2)
       let commentLength = try integer(offset + 32, 2)
-      let local = try integer(offset + 42, 4)
+      var entryDisk = try integer(offset + 34, 2)
+      var local = try integer(offset + 42, 4)
       let nameStart = offset + 46
       let extraStart = nameStart + nameLength
       let extraEnd = extraStart + extraLength
-      guard extraEnd + commentLength <= bytes.count,
+      guard extraEnd + commentLength <= directoryEnd else {
+        throw EngineInterpreterError.invalidArguments("audio directory entry bounds")
+      }
+      if size == 0xffff_ffff || compressedSize == 0xffff_ffff
+        || local == 0xffff_ffff || entryDisk == 0xffff {
+        var extendedRange: Range<Int>?
+        var cursor = extraStart
+        while cursor < extraEnd {
+          guard cursor <= extraEnd - 4 else {
+            throw EngineInterpreterError.invalidArguments("audio ZIP extra field")
+          }
+          let tag = try integer(cursor, 2)
+          let length = try integer(cursor + 2, 2)
+          cursor += 4
+          guard length <= extraEnd - cursor else {
+            throw EngineInterpreterError.invalidArguments("audio ZIP extra bounds")
+          }
+          if tag == 1 {
+            guard extendedRange == nil else {
+              throw EngineInterpreterError.invalidArguments("duplicate audio ZIP64 field")
+            }
+            extendedRange = cursor..<(cursor + length)
+          }
+          cursor += length
+        }
+        guard let extendedRange else {
+          throw EngineInterpreterError.invalidArguments("missing audio ZIP64 field")
+        }
+        cursor = extendedRange.lowerBound
+        func extended(_ length: Int) throws -> Int {
+          guard cursor <= extendedRange.upperBound - length else {
+            throw EngineInterpreterError.invalidArguments("audio ZIP64 field bounds")
+          }
+          defer { cursor += length }
+          return try integer(cursor, length)
+        }
+        // Only sentinel-marked fields are present, in this specified order.
+        if size == 0xffff_ffff { size = try extended(8) }
+        if compressedSize == 0xffff_ffff { compressedSize = try extended(8) }
+        if local == 0xffff_ffff { local = try extended(8) }
+        if entryDisk == 0xffff { entryDisk = try extended(4) }
+      }
+      guard entryDisk == 0, local <= directoryStart - 30,
         try integer(local, 4) == 0x04034b50,
         size <= 16 * 1024 * 1024, totalSize + size <= 64 * 1024 * 1024 else {
         throw EngineInterpreterError.invalidArguments("audio archive file")
@@ -254,7 +356,7 @@ struct EffectAudioArchive {
         throw EngineInterpreterError.invalidArguments("duplicate audio filename")
       }
       let start = try local + 30 + integer(local + 26, 2) + integer(local + 28, 2)
-      guard start <= bytes.count, compressedSize <= bytes.count - start else {
+      guard start <= directoryStart, compressedSize <= directoryStart - start else {
         throw EngineInterpreterError.invalidArguments("audio archive data")
       }
       let compressed = Data(bytes[start..<(start + compressedSize)])
@@ -277,6 +379,14 @@ struct EffectAudioArchive {
       files[name] = decoded
       totalSize += size
       offset += 46 + nameLength + extraLength + commentLength
+    }
+    // The optional directory digital signature is metadata, not another file.
+    if offset != directoryEnd {
+      guard offset <= directoryEnd - 6,
+        try integer(offset, 4) == 0x05054b50,
+        try integer(offset + 4, 2) == directoryEnd - offset - 6 else {
+        throw EngineInterpreterError.invalidArguments("audio directory length")
+      }
     }
     self.files = files
   }
