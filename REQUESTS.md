@@ -70,12 +70,42 @@ a new concrete compatibility gap, not a reason to reopen URL path resolution.
 
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
-| BF-14 / P1 — reproduce next | `RuntimeResourceReferences.resource` requires a URL and loses the locator hash; `RuntimeBundleLoader` passes only URLs to `SonolusClient.resource`. Cached bytes are returned by URL for ten minutes without comparing the new expected hash. | Source-confirmed missing hash-aware runtime path. Inference: freshly fetched metadata changing a hash at the same resource URL can still play old cached bytes, while hash-only resources cannot reuse available content. Offline download integrity checks are separate and already exist. No affected production chart or executable stale-content reproduction yet. | Use isolated local cache/mock responses to reproduce changed-hash/same-URL reuse, unchanged-hash reuse across URLs and hash-only cached/missing cases. Then implement verified content-addressed resolution shared by online playback and downloads without server probing or relaxing integrity. |
+| BF-14 / P1 — stale-byte fix verified; hash-only integration open | Runtime references now retain per-role hashes and pass them through engine/chart/configuration/presentation/ROM/music fetches. Downloads use the same hash-aware client. Content-addressed responses are verified before return/storage; URL-only metadata retains its TTL. | The isolated production-loader regression reproduced stale engine/chart/configuration/ROM/music bytes before the fix and now passes. All 373 non-cached tests, normal build and independent review pass. No production-server request was made. | Implement hash-only runtime references and offline manifest/collector resolution next. Low-level client/cache hash-only success/miss coverage does not establish full app support. |
 
 Re-triage selects BF-14 ahead of further diagnostics/resource polish once the
 verified BF-12 unit is complete. Silent stale chart/engine
 data and broken hash-only resources have greater gameplay/compatibility reach
 than the remaining error text or unproven allocation-growth follow-ups.
+
+BF-14 first bounded implementation: cached URL resources no longer overrule a
+new expected SHA-1. Each requested content identity has a separate in-flight
+entry; identical hashes across URLs share one verified fetch. A matching old
+URL-cache entry is rehashed and migrated without another download. Immutable
+hash hits bypass age/forced metadata refresh only after verification; wrong
+fresh bytes fail without entering the content cache. The existing 256 MiB
+response-cache quota counts both URL and hash entries. Hash-only low-level
+misses never invent a URL. This does not add a cache-negative shortcut or
+change the ten-minute metadata policy.
+
+The production-loader regression failed on all five resource classes:
+`RunSomeTests/2B20ECC5-D17B-4C95-A6D6-087AEEB33296.txt`.
+Both focused regressions pass:
+`RunSomeTests/D86614F8-44B5-4802-B2D0-DFA8AF55EE87.txt`.
+Independent review found no actionable issue; its suggested legacy-hit
+no-fetch case was added, along with different-hash/unhashed in-flight isolation.
+All 373 non-cached simulator tests passed:
+`RunSomeTests/4680E010-8C3E-48F0-B028-7737B7CC42B3.txt`.
+Normal build passed: `BuildProject/BuildProject-Log-20260930-033532.txt`.
+Tests use an isolated response cache and URLProtocol fixtures; no server crawl,
+real chart re-download, cached full-chart replay or physical test was needed
+for this transport/integrity unit.
+
+Remaining BF-14 work is explicit: runtime references and offline manifests
+still assume URL-bearing resources. The offline collector also groups by URL,
+which cannot represent two role-specific content hashes at the same address.
+Carry hash identity through these boundaries, preserve existing manifests,
+and verify online-to-download and download-to-online reuse plus missing/corrupt
+hash-only resources. Do not mark this whole item complete from low-level tests.
 
 BF-12 verification: a new regression failed before implementation on stream,
 draw, loop, audio queue, effect clip and software-size errors:

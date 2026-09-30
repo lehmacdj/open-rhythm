@@ -660,7 +660,7 @@ actor OfflineStore {
       for locator in locators {
         group.addTask { [client] in
           let data = try await client.resource(at: locator.url,
-            forceReload: forceReload)
+            expectedSHA1: locator.hash, forceReload: forceReload)
           if let expected = locator.hash,
             data.sha1Hex != expected {
             throw OfflineStoreError.checksumMismatch(locator.url)

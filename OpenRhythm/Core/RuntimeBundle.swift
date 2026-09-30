@@ -64,13 +64,23 @@ private struct RuntimeEngineItem: Decodable {
   let particle: RuntimePresentationItem?
 }
 
+struct RuntimeResourceReference: Sendable {
+  let url: URL
+  let hash: String?
+}
+
 struct RuntimeResourceReferences: Sendable {
   let engineVersion: Int
-  let engineDataURL: URL
-  let levelDataURL: URL
-  let bgmURL: URL
-  let engineROMURL: URL?
-  let presentationURLs: [String: URL]
+  let engineData: RuntimeResourceReference
+  let levelData: RuntimeResourceReference
+  let bgm: RuntimeResourceReference
+  let engineROM: RuntimeResourceReference?
+  let presentation: [String: RuntimeResourceReference]
+  var engineDataURL: URL { engineData.url }
+  var levelDataURL: URL { levelData.url }
+  var bgmURL: URL { bgm.url }
+  var engineROMURL: URL? { engineROM?.url }
+  var presentationURLs: [String: URL] { presentation.mapValues(\.url) }
 
   init(itemData: Data, serverBaseURL: URL) throws {
     let item = try JSONDecoder().decode(RuntimeLevelItem.self, from: itemData)
@@ -91,7 +101,7 @@ struct RuntimeResourceReferences: Sendable {
       ?? levelBaseURL
 
     func resource(_ locator: ResourceLocator?, _ name: String, base: URL)
-      throws -> URL {
+      throws -> RuntimeResourceReference {
       guard let url = locator?.resolved(against: base) else {
         throw RuntimeBundleError.missingResource(name)
       }
@@ -99,17 +109,18 @@ struct RuntimeResourceReferences: Sendable {
         ["http", "https"].contains(scheme), url.host?.isEmpty == false else {
         throw RuntimeBundleError.invalidResourceURL(name)
       }
-      return url
+      return RuntimeResourceReference(url: url,
+        hash: try locator?.hash.map(ContentAddress.normalizedSHA1))
     }
     engineVersion = item.engine.version
-    engineDataURL = try resource(item.engine.playData, "engine play data",
+    engineData = try resource(item.engine.playData, "engine play data",
       base: engineBaseURL)
-    levelDataURL = try resource(item.data, "level data", base: levelBaseURL)
-    bgmURL = try resource(item.bgm, "music", base: levelBaseURL)
-    engineROMURL = try item.engine.rom.map {
+    levelData = try resource(item.data, "level data", base: levelBaseURL)
+    bgm = try resource(item.bgm, "music", base: levelBaseURL)
+    engineROM = try item.engine.rom.map {
       try resource($0, "engine ROM", base: engineBaseURL)
     }
-    var urls = [String: URL]()
+    var urls = [String: RuntimeResourceReference]()
     urls["configuration"] = try resource(item.engine.configuration,
       "engine configuration", base: engineBaseURL)
     for (name, selection, fallback) in [
@@ -141,7 +152,7 @@ struct RuntimeResourceReferences: Sendable {
         }
       }
     }
-    presentationURLs = urls
+    presentation = urls
   }
 }
 
@@ -234,14 +245,17 @@ actor RuntimeBundleLoader {
     )
     try validate(version: references.engineVersion)
 
-    async let engineData = client.resource(at: references.engineDataURL)
-    async let levelData = client.resource(at: references.levelDataURL)
-    async let romData = loadROM(at: references.engineROMURL)
+    async let engineData = client.resource(at: references.engineDataURL,
+      expectedSHA1: references.engineData.hash)
+    async let levelData = client.resource(at: references.levelDataURL,
+      expectedSHA1: references.levelData.hash)
+    async let romData = loadROM(references.engineROM)
     let presentation = try await withThrowingTaskGroup(
       of: (String, Data).self
     ) { group in
-      for (name, url) in references.presentationURLs {
-        group.addTask { (name, try await self.client.resource(at: url)) }
+      for (name, reference) in references.presentation {
+        group.addTask { (name, try await self.client.resource(at: reference.url,
+          expectedSHA1: reference.hash)) }
       }
       var resources = [String: Data]()
       for try await (name, data) in group { resources[name] = data }
@@ -258,7 +272,8 @@ actor RuntimeBundleLoader {
     // Fetch music only after validating the chart and supported callbacks.
     // The shared response cache reuses it across difficulties; playback and
     // silence inspection then use the same pinned local copy.
-    let audio = try await PreparedRuntimeAudio(data: client.resource(at: references.bgmURL),
+    let audio = try await PreparedRuntimeAudio(data: client.resource(at: references.bgmURL,
+      expectedSHA1: references.bgm.hash),
       sourceURL: references.bgmURL)
     try Task.checkCancellation()
     return try await RuntimeBundle(
@@ -277,8 +292,8 @@ actor RuntimeBundleLoader {
     }
   }
 
-  private func loadROM(at url: URL?) async throws -> Data? {
-    guard let url else { return nil }
-    return try await client.resource(at: url)
+  private func loadROM(_ reference: RuntimeResourceReference?) async throws -> Data? {
+    guard let reference else { return nil }
+    return try await client.resource(at: reference.url, expectedSHA1: reference.hash)
   }
 }

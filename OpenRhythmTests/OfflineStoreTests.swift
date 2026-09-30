@@ -2,6 +2,164 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  func testVerifiedResourceCacheReusesAliasesAndRejectsCorruption() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("verified-resources-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bytes = Data("verified resource".utf8)
+    let different = Data("different resource".utf8)
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      return request.url!.lastPathComponent == "different" ? different : bytes
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let cache = SonolusResponseCache(rootURL: root)
+    let a = SonolusClient(session: session, cache: cache)
+    let b = SonolusClient(session: session, cache: cache)
+    let url = URL(string: "https://cache.example/resource")!
+    let alias = URL(string: "https://alias.example/resource")!
+    async let first = a.resource(at: url, expectedSHA1: bytes.sha1Hex)
+    async let second = b.resource(at: alias, expectedSHA1: bytes.sha1Hex.uppercased())
+    let values = try await [first, second]
+    XCTAssertEqual(values, [bytes, bytes])
+    XCTAssertEqual(recorder.urls.count, 1, "Verified aliases share one fetch")
+    let file = root.appendingPathComponent(bytes.sha1Hex)
+    try FileManager.default.setAttributes([.modificationDate: Date.distantPast],
+      ofItemAtPath: file.path)
+    let reopened = SonolusClient(session: session,
+      cache: SonolusResponseCache(rootURL: root))
+    let cached = try await reopened.resource(at: nil,
+      expectedSHA1: bytes.sha1Hex, forceReload: true)
+    XCTAssertEqual(cached, bytes, "Verified immutable bytes have no TTL")
+    XCTAssertEqual(recorder.urls.count, 1)
+    // Same-length damage must be detected, including after reopening the cache.
+    try Data(repeating: 0, count: bytes.count).write(to: file, options: .atomic)
+    do {
+      _ = try await reopened.resource(at: nil, expectedSHA1: bytes.sha1Hex)
+      XCTFail("A corrupt hash-only hit cannot be returned")
+    } catch {
+      guard case SonolusClientError.missingResourceHash = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+    }
+    XCTAssertEqual(recorder.urls.count, 1, "Hash-only misses never invent a URL")
+    let repaired = try await reopened.resource(at: url, expectedSHA1: bytes.sha1Hex)
+    XCTAssertEqual(repaired, bytes)
+    XCTAssertEqual(recorder.urls.count, 2)
+    do {
+      _ = try await reopened.resource(at: url, expectedSHA1: different.sha1Hex)
+      XCTFail("Fresh response mismatches must not enter the content cache")
+    } catch {
+      guard case SonolusClientError.resourceChecksumMismatch = error else {
+        return XCTFail("Unexpected error: \(error)")
+      }
+    }
+    XCTAssertFalse(FileManager.default.fileExists(
+      atPath: root.appendingPathComponent(different.sha1Hex).path))
+    let correct = try await reopened.resource(at:
+      URL(string: "https://cache.example/different")!, expectedSHA1: different.sha1Hex)
+    XCTAssertEqual(correct, different, "A failed request must release its in-flight entry")
+    let count = recorder.urls.count
+    do {
+      _ = try await reopened.resource(at: url, expectedSHA1: "../invalid")
+      XCTFail("Malformed hashes must fail before network or filesystem lookup")
+    } catch { }
+    XCTAssertEqual(recorder.urls.count, count)
+    let isolated = SonolusResponseCache(rootURL: root.appendingPathComponent("parallel"))
+    let fetches = RequestRecorder()
+    // Different content claims at one URL, and an unverified request for it,
+    // must not inherit each other's in-flight result.
+    async let raw = isolated.data(at: url, maximumAge: 600, fetch: {
+      fetches.append(url)
+      try await Task.sleep(for: .milliseconds(20))
+      return Data("unverified".utf8)
+    })
+    async let hashedA = isolated.data(at: url, maximumAge: 600,
+      expectedSHA1: bytes.sha1Hex, fetch: {
+        fetches.append(url)
+        try await Task.sleep(for: .milliseconds(20))
+        return bytes
+      })
+    async let hashedB = isolated.data(at: url, maximumAge: 600,
+      expectedSHA1: different.sha1Hex, fetch: {
+        fetches.append(url)
+        try await Task.sleep(for: .milliseconds(20))
+        return different
+      })
+    let separate = try await [raw, hashedA, hashedB]
+    XCTAssertEqual(separate, [Data("unverified".utf8), bytes, different])
+    XCTAssertEqual(fetches.urls.count, 3)
+    let migrationRoot = root.appendingPathComponent("migration")
+    let migration = SonolusResponseCache(rootURL: migrationRoot)
+    _ = try await migration.data(at: url, maximumAge: 600, fetch: { bytes })
+    let migrated = try await migration.data(at: url, maximumAge: 0,
+      forceReload: true, expectedSHA1: bytes.sha1Hex, fetch: {
+        XCTFail("A verified legacy URL-cache hit must not cause another download")
+        return different
+      })
+    XCTAssertEqual(migrated, bytes)
+    XCTAssertEqual(try Data(contentsOf: migrationRoot.appendingPathComponent(bytes.sha1Hex)),
+      bytes)
+  }
+
+  func testOnlineRuntimeHonorsChangedHashesAtCachedResourceURLs() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("runtime-hashes-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let server = ServerDescriptor(id: "hashes", name: "Fixture",
+      baseURL: URL(string: "https://hashes.example")!)
+    let cache = SonolusResponseCache(rootURL: root.appendingPathComponent("cache"))
+    let old: [String: Data] = [
+      "chart": Data(#"{"bgmOffset":0,"entities":[]}"#.utf8),
+      "engine": Data(#"{"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},"nodes":[{"value":1}],"buckets":[],"archetypes":[]}"#.utf8),
+      "configuration": Data(#"{"options":[]}"#.utf8),
+      "music": Data("old audio".utf8), "rom": Data([1])]
+    let fresh: [String: Data] = [
+      "chart": Data(#"{"bgmOffset":2,"entities":[]}"#.utf8),
+      "engine": Data(#"{"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},"nodes":[{"value":2}],"buckets":[],"archetypes":[]}"#.utf8),
+      "configuration": Data(#"{"options":[],"revision":2}"#.utf8),
+      "music": Data("new audio".utf8), "rom": Data([2])]
+    for (name, data) in old {
+      _ = try await cache.data(at: server.baseURL.appendingPathComponent(name),
+        maximumAge: 600, fetch: { data })
+    }
+    func locator(_ name: String) -> [String: String] {
+      ["url": "/\(name)", "hash": fresh[name]!.sha1Hex]
+    }
+    let details = try JSONSerialization.data(withJSONObject: ["item": [
+      "bgm": locator("music"), "data": locator("chart"),
+      "engine": ["version": 13, "playData": locator("engine"),
+        "configuration": locator("configuration"), "rom": locator("rom")]]])
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      return fresh[request.url!.lastPathComponent] ?? details
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let client = SonolusClient(session: session, cache: cache)
+    let loader = RuntimeBundleLoader(client: client,
+      offlineStore: OfflineStore(rootURL: root.appendingPathComponent("offline")))
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "level", source: nil, version: 1, rating: 1,
+      title: LocalizedText("Song"), artists: LocalizedText("Fixture"),
+      author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+    let bundle = try await loader.load(level: level, from: server)
+    XCTAssertEqual(bundle.level.bgmOffset, 2)
+    XCTAssertEqual(bundle.engine.nodes.first?.value, 2)
+    XCTAssertEqual(bundle.presentation?.resources["configuration"], fresh["configuration"])
+    XCTAssertEqual(bundle.engineROM, fresh["rom"])
+    XCTAssertEqual(try Data(contentsOf: bundle.bgmURL), fresh["music"])
+    XCTAssertEqual(recorder.urls.count, 6,
+      "Each mismatched URL cache entry must be replaced, not silently reused")
+  }
+
   func testDifficultyStatusReadsOneFreshSnapshotAndVerifiesSharedObjectsOnce()
     async throws {
     let root = FileManager.default.temporaryDirectory
