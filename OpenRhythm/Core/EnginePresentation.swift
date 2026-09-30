@@ -779,11 +779,21 @@ final class EnginePresentationAssets {
       guard let texture = UIImage(data: try presentation.data("skinTexture"))?.cgImage
       else { throw RuntimeBundleError.missingResource("valid skin texture") }
       interpolation = skinData.interpolation
+      // Aliases commonly share atlas pixels but have different transforms.
+      // Reuse exact crops so the renderer's image-identity cache also reuses
+      // their GPU texture. Keep this cache local to this atlas/preparation.
+      var crops = [[Double]: (image: UIImage, region: EngineTextureRegion)]()
       for definition in engine.skin.sprites {
         guard let sprite = skinData.sprites.first(where: { $0.name == definition.name })
         else { continue }
-        let crop = try Self.crop(texture, x: sprite.x, y: sprite.y,
-          w: sprite.w, h: sprite.h)
+        let bounds = [sprite.x, sprite.y, sprite.w, sprite.h]
+        let crop: (image: UIImage, region: EngineTextureRegion)
+        if let cached = crops[bounds] { crop = cached }
+        else {
+          crop = try Self.crop(texture, x: sprite.x, y: sprite.y,
+            w: sprite.w, h: sprite.h)
+          crops[bounds] = crop
+        }
         sprites[definition.id] = Sprite(image: crop.image,
           transform: sprite.transform, textureRegion: crop.region)
       }

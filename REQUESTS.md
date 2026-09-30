@@ -48,6 +48,49 @@ The user requests breadth-first work, not subsystem-by-subsystem perfection.
 
 ## Breadth-first triage — September 30, 2026
 
+Third bounded discovery pass covered random-function ranges, BPM/time-scale
+mapping, scheduled effect pause/resume and sprite preparation/upload.
+[Random](https://wiki.sonolus.com/engine-specs/functions/random) and
+[RandomInteger](https://wiki.sonolus.com/engine-specs/functions/random-integer)
+endpoints agree with the public contracts; a suspected
+paused-voice recycling issue was ruled out by the native `playing` semantics
+and existing sample-position regressions. No new audio alignment correction
+was supported. These spot checks are not exhaustive API coverage.
+
+| ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
+| --- | --- | --- | --- |
+| BF-10 / P2 — fixed | Skin preparation shares exact atlas crops, so Metal's image-identity cache reuses their uploads. Actual cached assets now prepare SEKAI 175 sprites / 136 unique images, SIF 17 / 11, 22/7 15 / 13. | Alias regression failed before and passes after; all 367 non-cached tests, normal build and independent review pass. SEKAI nominal RGBA payload falls from 18,752,256 to 15,662,844 bytes; not a resident-memory/frame-latency measurement. | Bounded unit verified below. Per-sprite transforms/UVs and per-presentation lifetimes remain independent. Aggregate allocation accounting is separate BF-11. |
+| BF-11 / P2 — diagnostic backlog | Metal upload and particle tint preparation lack an aggregate texture-allocation budget, unlike the software renderer. Many distinct large selected rectangles/colors could expand a compact atlas into substantial memory. | Source-level risk, not a reproduced allocation failure or observed crash. Existing selected sprites are not evidence of an excessive real chart. | Investigate bounded pre-allocation accounting and actual selected-resource totals before choosing a limit or redesign. Avoid deliberately exhausting host/device memory; new host limits must be documented, not presented as protocol constraints. |
+
+BF-10 is selected as the demonstrated cross-engine redundancy with a narrow,
+semantics-preserving fix. BF-11 remains a separate diagnostic rather than an
+excuse to introduce arbitrary compatibility restrictions. Existing physical
+timing/input questions remain gated; stack ABI work remains deferred. Re-triage
+after this unit instead of extending into atlas packing or shader redesign.
+
+BF-10 verification: the initial regression failed both integer and fractional
+crop identity/count assertions in
+`RunSomeTests/BEFBDC10-584C-4C16-AF86-16A134104D02.txt`.
+It now verifies alias image/UV reuse, separate transforms, distinct rectangle
+pixels and no cross-presentation cache lifetime. All 367 non-cached tests pass,
+including existing software/Metal fractional-atlas and compositing checks:
+`RunSomeTests/501C94DE-E4FA-425D-955F-931332165EB9.txt`.
+An Xcode snippet prepared actual cached assets through production decoding and
+confirmed the unique-image counts above without server requests. The corresponding
+SIF payload is 265,728 -> 198,400 bytes and 22/7 is 6,982,560 -> 6,776,512 bytes.
+Normal build passed:
+`BuildProject/BuildProject-Log-20260930-024957.txt`.
+Independent read-only review found no actionable issues. Cached full-chart
+replays and physical gameplay were not rerun for this immutable crop reuse.
+
+Re-triage: investigate BF-11's resource-growth exposure next, using bounded
+metadata/accounting fixtures rather than allocation-to-failure. Potential
+process termination warrants diagnosis ahead of further crop/mesh tuning.
+Establish which allocations occur before existing safety checks and whether
+selected-resource aliases or unused entries affect them. Keep supported-resource
+semantics and explicit host-budget policy separate; this is not authorization
+to pick an arbitrary restrictive limit and declare general compatibility done.
+
 Second bounded discovery pass: catalog filtering/pagination, engine option
 defaults, result metadata and persistence were inspected. No new defect was
 confirmed in pagination invalidation or atomic result writes by this spot check;

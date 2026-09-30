@@ -3822,6 +3822,60 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testSkinAliasesShareCropsWithoutSharingTransformsOrResourceLifetime()
+    throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[{"id":1,"name":"one"},
+        {"id":2,"name":"alias"},{"id":3,"name":"other"}]},
+       "effect":{"clips":[]},"particle":{"effects":[]},
+       "archetypes":[],"nodes":[],"buckets":[]}
+      """#.utf8))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let png = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4),
+      format: format).pngData { context in
+      UIColor.red.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 2, height: 4))
+      UIColor.blue.setFill()
+      context.fill(CGRect(x: 2, y: 0, width: 2, height: 4))
+    }
+    for x in [0.0, 0.25] {
+      let skin: [String: Any] = ["width": 4, "height": 4,
+        "interpolation": true, "sprites": [
+          ["name": "one", "x": x, "y": 0, "w": 1, "h": 2,
+           "transform": ["x1": ["c": 1]]],
+          ["name": "alias", "x": x, "y": 0, "w": 1, "h": 2,
+           "transform": ["x1": ["c": 2]]],
+          ["name": "other", "x": 2, "y": 0, "w": 1, "h": 2,
+           "transform": ["x1": ["c": 3]]]
+        ]]
+      let presentation = RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8),
+        "skinData": try JSONSerialization.data(withJSONObject: skin),
+        "skinTexture": png
+      ])
+      let assets = try EnginePresentationAssets(engine: engine,
+        presentation: presentation)
+      let one = try XCTUnwrap(assets.skin[1])
+      let alias = try XCTUnwrap(assets.skin[2])
+      let other = try XCTUnwrap(assets.skin[3])
+      XCTAssertTrue(one.image === alias.image,
+        "Metal's identity cache must upload one texture per exact crop")
+      XCTAssertEqual(Set(assets.preparedImages.map(ObjectIdentifier.init)).count, 2)
+      XCTAssertEqual(one.textureRegion, alias.textureRegion)
+      XCTAssertEqual(one.transform, ["x1": ["c": 1]])
+      XCTAssertEqual(alias.transform, ["x1": ["c": 2]])
+      XCTAssertEqual(other.transform, ["x1": ["c": 3]])
+      XCTAssertFalse(one.image === other.image)
+      XCTAssertNotEqual(one.image.pngData(), other.image.pngData())
+      let replacement = try EnginePresentationAssets(engine: engine,
+        presentation: presentation)
+      XCTAssertFalse(one.image === replacement.skin[1]?.image,
+        "Crop reuse must not retain or mix different presentation lifetimes")
+    }
+  }
+
+  @MainActor
   func testFractionalResourceSpritesPreserveExactAtlasRegions() throws {
     try checkFractionalResourceSprites(x: 1.25, y: 0.5, w: 2.5, h: 1.25)
   }
