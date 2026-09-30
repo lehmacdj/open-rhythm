@@ -89,6 +89,58 @@ confirmed. Its summary also enumerated five newly edited audio tests as
 below. The observer timeout did not restart the original test process.
 No physical-touch or frame-rate improvement is claimed.
 
+Temporary-memory intro follow-up (September 29): fixed stage calculations
+can now use explicitly initialized callback-local scratch values. The safety
+proof follows read-before-write dependencies through shared graph nodes and
+lazy branches, without relying on undefined initial values or carrying
+initialization between callbacks. Persistent writes and time/random-dependent
+calculations remain ineligible. Analysis cost is bounded even when dependency
+sets grow. Two original regressions failed before the fix and passed after it;
+the model test covers both useful skipping and transform-change rewind.
+Independent review of the final implementation and adversarial tests found no
+actionable issue. Broader classification and device verification remain open;
+this does not implement or depend on the deferred stack operations.
+The initial final-validation attempt was not green: the 23:23 run completed 331
+non-cached tests with 309 passing and 22 failing tests (34 assertions), all in
+audio-dependent intro/clock checks. The three scratch-analysis tests pass.
+Logs show audio queues unable to start (`kAudioQueueErr_CannotStart`, -66681),
+and local music fails to advance. Simulator reboot and restarting its isolated
+audio helper did not recover playback. Two existing intro/clock tests also
+failed with the parent classifier restored as a control; the pending classifier
+was then restored. The normal build passed at 23:32, but pushing remained on
+hold. The session-startup follow-up below subsequently recovered the blocked
+checks; the earlier focused green run was not substituted for a current pass.
+No host audio settings were changed and no physical-device test was performed.
+
+Audio-session startup follow-up (September 29): the app previously launched
+independent detached activation/deactivation tasks for a process-wide session,
+with no ownership across song models, and discarded activation errors. A
+previous model's delayed cleanup could deactivate a newer song. Session calls
+now use one off-main serial queue and per-model leases. Activation is completed
+before seeking can prepare player I/O, and failures stop startup with a
+human-readable message plus the original diagnostic domain/code. Generation
+checks still prevent a stopped/restarted request from starting playback.
+Restart retains its model's lease; ordinary stop releases it, and model
+destruction releases an abandoned lease automatically.
+
+Five regressions cover overlapping owners, pending activation/release order,
+failed activation ownership, user-visible startup failure and model lifetime.
+Independent review caught the initial missing destruction cleanup; its new
+regression failed without cleanup and passed afterward. Final independent
+re-review found no actionable issue. All 336 non-cached simulator tests now
+pass at 23:44, including the previously blocked intro and
+live audio/display/input-clock checks. The normal build also passes at 23:44.
+The seven cached-chart probes also pass in the separate run completed at 23:56,
+including full-chart/restart checks for Eleventh, 光, 22/7, SIF Custom Charts
+and all three “shake it!” workloads. All 343 tests have therefore passed across
+these two runs, without failures or skips. The original cached-test process
+continued after the observer expired and finished normally; it was not restarted.
+This fixes a concrete session-ordering/ownership gap, not acoustic alignment;
+no judgment windows, input times, calibration or BGM offsets were adjusted.
+Include rapid song-to-song transitions, abandoned restarts and audio-session
+activation failures in the deferred physical batch; simulator ownership tests
+do not certify acoustic continuity on the phone.
+
 Scheduled-effect timing follow-up (September 29): voice allocation and prior
 commands could consume time after the audio controller sampled the playback
 clock. Reusing that sample delayed later starts/stops in a batch, including

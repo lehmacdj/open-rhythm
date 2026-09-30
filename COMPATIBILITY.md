@@ -11,6 +11,69 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Contract regressions now covered
 
+- Process-wide audio-session ownership is serialized off the main actor.
+  Each gameplay model owns a lease, so an old model's delayed cleanup cannot
+  deactivate a newer song. This matters because
+  [session deactivation](https://developer.apple.com/documentation/avfaudio/avaudiosession/setactive(_:options:))
+  can stop running audio objects; the active SDK also warns that activation
+  is blocking. Activation now completes before the startup seek can prepare
+  player I/O. Activation errors are reported, not discarded; stale-generation
+  guards still prevent stopped requests from starting playback. Restarts keep
+  their model's lease, while stop and destruction release it.
+  Five regressions cover multiple owners, serial ordering during a pending
+  activation, failed activation without phantom ownership, readable startup
+  failure and deallocation of an abandoned restart. Independent review found
+  the initial missing destruction cleanup. That regression failed without
+  cleanup (`RunSomeTests/196AD755-09C8-40CF-9EC8-DD128180731F.txt`) and passes
+  after it. Final independent re-review found no actionable issue.
+  All 336 non-cached simulator tests pass in the final run
+  (`RunSomeTests/34742835-D020-4699-A9DF-34604BB82DE5.txt`), including the
+  previously failing intro/player-clock checks. The normal build passes
+  (`BuildProject/BuildProject-Log-20260929-234433.txt`). All seven cached-chart
+  probes also pass in the separate 23:56 completion
+  (`RunSomeTests/2C185C53-84E1-43C4-A1A4-0BC088C433C2.txt`), including all three
+  “shake it!” workloads, Eleventh, 光, 22/7 and SIF Custom Charts. The original
+  process continued after observer expiry; its result bundle and
+  `TEST FINISHED` marker confirm completion, with no replacement run.
+  Thus all 343 tests pass across these two runs, without failures or skips.
+  This does not establish acoustic/device alignment or justify an arbitrary
+  timing correction.
+- Intro-stage classification now tracks definite initialization for direct,
+  literal-address Temporary Memory calculations. The public
+  [Temporary Memory contract](
+  https://wiki.sonolus.com/engine-specs/play-blocks/temporary-memory)
+  gives unpredictable initial values, so the proof does not assume that our
+  storage's zero-clearing policy makes an uninitialized read stable. Shared
+  graph summaries record required prior writes and guaranteed writes; every
+  callback starts with no guaranteed scratch values. Lazy branches cannot
+  borrow initialization from an unselected path. Read-modify-write operations
+  require the old value before operand evaluation, even if that operand writes
+  the same slot. Persistent writes, random/time-dependent values and unknown
+  addressing still prevent classification. Dependency-set processing shares
+  the graph-work budget; exhausting it retains the intro.
+  The original two regressions failed before the change and passed afterward:
+  initialized scratch stages were previously rejected and retained the whole
+  intro. The model case now reaches the first visible note, but still rewinds
+  when another entity changes the stage transform. Further adversarial tests
+  cover all direct RMW forms, fractional-address aliases, invalid/computed
+  addresses, cross-callback state, lazy cases and growing dependency sets.
+  Independent review found no actionable issue. This is not Stack* support,
+  nor proof that all custom/dynamic graphics can safely be skipped.
+  The initial 23:23 September 29 final-validation attempt was not green: it
+  completed 331 tests, with 309 passing and 22 failing audio-dependent tests
+  (34 assertions). All three scratch-proof tests passed. The completed result
+  bundle is `Test-OpenRhythm-2026.09.29_23-23-27--0400.xcresult` in Xcode's
+  DerivedData test logs; the observer timed out, but the original process
+  finished and was not replaced while live. Audio queues report
+  `kAudioQueueErr_CannotStart` (-66681), and player-clock tests cannot advance
+  local audio. A simulator reboot and isolated audio-helper restart did not
+  recover playback. The same two existing model/clock checks fail with the
+  parent classifier restored (`RunSomeTests/664A9042-1050-4B1A-8FC0-453B3ADABF7F.txt`).
+  The pending implementation was restored and the normal build passed
+  (`BuildProject/BuildProject-Log-20260929-233252.txt`). This establishes an
+  independent-of-classification validation blocker, not a passing audio result.
+  The session-startup fix above subsequently recovered these checks, with all
+  336 non-cached tests passing. Host audio settings remain unchanged.
 - Scheduled effects translate deadlines using a fresh playback-clock read
   immediately before voice publication, after allocation or earlier commands.
   Loop setup cannot start an already-expired loop, and buffering recovery
