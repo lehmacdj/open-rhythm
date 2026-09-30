@@ -2041,15 +2041,15 @@ final class RuntimeDecodingTests: XCTestCase {
 
     XCTAssertEqual(references.engineVersion, 13)
     XCTAssertEqual(
-      references.engineDataURL.absoluteString,
+      references.engineDataURL?.absoluteString,
       "https://engine.example/v13/data/play"
     )
     XCTAssertEqual(
-      references.levelDataURL.absoluteString,
+      references.levelDataURL?.absoluteString,
       "https://levels.example/game/data/chart"
     )
     XCTAssertEqual(
-      references.bgmURL.absoluteString,
+      references.bgmURL?.absoluteString,
       "https://levels.example/game/music.mp3"
     )
   }

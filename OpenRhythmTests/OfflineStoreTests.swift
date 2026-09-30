@@ -2,6 +2,155 @@ import XCTest
 @testable import OpenRhythm
 
 final class OfflineStoreTests: XCTestCase {
+  func testOfflineHashedCoverLookupDoesNotReadUnrelatedObjects() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("cover-lookup-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let records = root.appendingPathComponent("Manifests")
+    try FileManager.default.createDirectory(at: records, withIntermediateDirectories: true)
+    let server = ServerDescriptor(id: "cover", name: "Fixture",
+      baseURL: URL(string: "https://cover.example")!)
+    let coverHash = Data("cover".utf8).sha1Hex
+    let musicHash = Data("music".utf8).sha1Hex
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "level", source: nil, version: 1, rating: 1,
+      title: LocalizedText("Song"), artists: LocalizedText("Fixture"),
+      author: "Fixture", tags: [],
+      cover: ResourceLocator(hash: coverHash, url: "/cover"), bgm: empty, data: empty)
+    let manifest = OfflineLevelManifest(id: "fixture", server: server, level: level,
+      itemData: Data("{}".utf8), resources: [
+        OfflineResource(remoteURL: server.baseURL.appendingPathComponent("music"),
+          objectName: musicHash, expectedSHA1: musicHash),
+        OfflineResource(remoteURL: server.baseURL.appendingPathComponent("cover"),
+          objectName: coverHash, expectedSHA1: coverHash)], downloadedAt: Date())
+    try JSONEncoder().encode(manifest).write(to: records.appendingPathComponent("fixture.json"))
+    let reads = RequestRecorder()
+    let store = OfflineStore(rootURL: root, readStoredData: { url in
+      reads.append(url)
+      return try Data(contentsOf: url)
+    })
+    let snapshot = try await store.catalogSnapshot()
+    XCTAssertEqual(snapshot.songs.first?.coverURL?.lastPathComponent, coverHash)
+    XCTAssertEqual(reads.urls.count, 1, "Only the manifest is read, not any payload")
+    XCTAssertEqual(reads.urls.first?.pathExtension, "json")
+  }
+
+  func testHashOnlyRuntimeDownloadsAndSharedURLHashesPreserveContentIdentity()
+    async throws {
+    for mode in ["hash-only", "shared-url", "mixed"] {
+      let hashOnly = mode == "hash-only"
+      let mixed = mode == "mixed"
+      let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("hash-only-\(UUID())")
+      defer { try? FileManager.default.removeItem(at: root) }
+      let server = ServerDescriptor(id: "hash-only", name: "Fixture",
+        baseURL: URL(string: "https://hash-only.example")!)
+      let payloads: [String: Data] = [
+        "chart": Data(#"{"bgmOffset":3,"entities":[]}"#.utf8),
+        "engine": Data(#"{"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},"nodes":[],"buckets":[],"archetypes":[]}"#.utf8),
+        "configuration": Data(#"{"options":[]}"#.utf8),
+        "music": Data("hash-only music".utf8), "rom": Data([1, 2, 3]),
+        "skinData": Data("skin data".utf8), "skinTexture": Data("texture".utf8),
+        "cover": Data("cover".utf8)]
+      let cache = SonolusResponseCache(rootURL: root.appendingPathComponent("cache"))
+      for bytes in payloads.values {
+        _ = try await cache.data(at: nil, maximumAge: 600,
+          expectedSHA1: bytes.sha1Hex, fetch: { bytes })
+      }
+      func locator(_ name: String) -> [String: String] {
+        var value = ["hash": payloads[name]!.sha1Hex]
+        if !hashOnly { value["url"] = "/one-shared-url" }
+        if mixed && name == "music" { value.removeValue(forKey: "hash") }
+        return value
+      }
+      let details = try JSONSerialization.data(withJSONObject: ["item": [
+        "bgm": locator("music"), "data": locator("chart"), "cover": locator("cover"),
+        "engine": ["version": 13, "playData": locator("engine"),
+          "configuration": locator("configuration"), "rom": locator("rom"),
+          "skin": ["data": locator("skinData"), "texture": locator("skinTexture")]]]])
+      let recorder = RequestRecorder()
+      StubURLProtocol.handler = { request in
+        recorder.append(request.url!)
+        if mixed && request.url!.path == "/one-shared-url" {
+          return payloads["music"]!
+        }
+        XCTAssertTrue(request.url!.path.hasPrefix("/sonolus/levels/"),
+          "Verified cached bytes must not make a resource request")
+        return details
+      }
+      let configuration = URLSessionConfiguration.ephemeral
+      configuration.protocolClasses = [StubURLProtocol.self]
+      let session = URLSession(configuration: configuration)
+      defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+      let client = SonolusClient(session: session, cache: cache)
+      let offlineRoot = root.appendingPathComponent("offline")
+      let store = OfflineStore(rootURL: offlineRoot, client: client)
+      let empty = ResourceLocator(hash: nil, url: nil)
+      func level(_ name: String) -> SonolusLevelItem {
+        SonolusLevelItem(name: name, source: nil, version: 1, rating: 1,
+          title: LocalizedText("Song"), artists: LocalizedText("Fixture"),
+          author: "Fixture", tags: [],
+          cover: ResourceLocator(hash: payloads["cover"]!.sha1Hex, url: nil),
+          bgm: empty, data: empty)
+      }
+      func check(_ bundle: RuntimeBundle) throws {
+        XCTAssertEqual(bundle.level.bgmOffset, 3)
+        XCTAssertEqual(bundle.engineROM, payloads["rom"])
+        XCTAssertEqual(bundle.presentation?.resources["skinData"], payloads["skinData"])
+        XCTAssertEqual(bundle.presentation?.resources["skinTexture"], payloads["skinTexture"])
+        XCTAssertEqual(try Data(contentsOf: bundle.bgmURL), payloads["music"])
+      }
+      let loader = RuntimeBundleLoader(client: client, offlineStore: store)
+      try check(await loader.load(level: level("online"), from: server))
+      let manifest = try await store.download(level: level("download"), from: server)
+      XCTAssertEqual(manifest.resources.count, payloads.count)
+      let expectedObjects = payloads.map { name, data in
+        mixed && name == "music" ? data.sha256Hex : data.sha1Hex
+      }
+      XCTAssertEqual(Set(manifest.resources.map(\.objectName)), Set(expectedObjects))
+      if hashOnly { XCTAssertTrue(manifest.resources.allSatisfy { $0.remoteURL == nil }) }
+      // An empty response cache proves reuse from the persistent Downloads
+      // store, not an accidental second copy left by the online attempt.
+      let uncachedClient = SonolusClient(session: session,
+        cache: SonolusResponseCache(rootURL: root.appendingPathComponent("empty-cache")))
+      let reopened = OfflineStore(rootURL: offlineRoot, client: uncachedClient)
+      let records = try await reopened.manifests()
+      let saved = try XCTUnwrap(records.first)
+      try check(await reopened.runtimeBundle(from: saved))
+      let catalog = try await reopened.catalogSnapshot()
+      let cover = try XCTUnwrap(catalog.songs.first?.coverURL)
+      XCTAssertEqual(try Data(contentsOf: cover), payloads["cover"])
+      let differentLevelLoader = RuntimeBundleLoader(client: uncachedClient,
+        offlineStore: reopened)
+      try check(await differentLevelLoader.load(level: level("online-again"), from: server))
+      XCTAssertEqual(recorder.urls.count, mixed ? 5 : 3,
+        "Only metadata and the URL-only music may need fetching")
+      if hashOnly {
+        let damaged = offlineRoot.appendingPathComponent("Objects")
+          .appendingPathComponent(payloads["chart"]!.sha1Hex)
+        try Data("damaged".utf8).write(to: damaged, options: .atomic)
+        do {
+          _ = try await differentLevelLoader.load(level: level("damaged"), from: server)
+          XCTFail("Corrupted hash-only content must fail, never play or fetch a made-up URL")
+        } catch {
+          guard case SonolusClientError.missingResourceHash = error else {
+            return XCTFail("Unexpected error: \(error)")
+          }
+        }
+        do {
+          _ = try await reopened.download(level: level("damaged-download"), from: server)
+          XCTFail("A missing hash-only resource must not publish a new download")
+        } catch {
+          guard case SonolusClientError.missingResourceHash = error else {
+            return XCTFail("Unexpected error: \(error)")
+          }
+        }
+        let retained = try await reopened.manifests()
+        XCTAssertEqual(retained.map(\.id), records.map(\.id))
+      }
+    }
+  }
+
   func testVerifiedResourceCacheReusesAliasesAndRejectsCorruption() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("verified-resources-\(UUID())")
@@ -1547,10 +1696,10 @@ final class OfflineStoreTests: XCTestCase {
   func testCollectsAndResolvesNestedResourcesWithoutDuplicates() throws {
     let json = #"""
       {
-        "cover": {"url": "/repository/a", "hash": "a"},
+        "cover": {"url": "/repository/a", "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
         "engine": {
-          "playData": {"url": "/repository/b", "hash": "b"},
-          "same": {"url": "/repository/a", "hash": "a"}
+          "playData": {"url": "/repository/b", "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+          "same": {"url": "/repository/a", "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
         },
         "bgm": {"url": "https://assets.example/song.mp3"}
       }
@@ -1563,12 +1712,12 @@ final class OfflineStoreTests: XCTestCase {
       baseURL: baseURL
     )
     let values = Dictionary(
-      uniqueKeysWithValues: resources.map { ($0.url.absoluteString, $0.hash) }
+      uniqueKeysWithValues: try resources.map { (try XCTUnwrap($0.url).absoluteString, $0.hash) }
     )
 
     XCTAssertEqual(values.count, 3)
-    XCTAssertEqual(values["https://example.com/server/repository/a"]!, "a")
-    XCTAssertEqual(values["https://example.com/server/repository/b"]!, "b")
+    XCTAssertEqual(values["https://example.com/server/repository/a"]!, String(repeating: "a", count: 40))
+    XCTAssertEqual(values["https://example.com/server/repository/b"]!, String(repeating: "b", count: 40))
     XCTAssertTrue(values.keys.contains("https://assets.example/song.mp3"))
   }
 

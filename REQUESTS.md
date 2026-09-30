@@ -70,7 +70,9 @@ a new concrete compatibility gap, not a reason to reopen URL path resolution.
 
 | ID / priority | Finding and evidence | Scope / confidence | Next bounded action / dependency |
 | --- | --- | --- | --- |
-| BF-14 / P1 — stale-byte fix verified; hash-only integration open | Runtime references now retain per-role hashes and pass them through engine/chart/configuration/presentation/ROM/music fetches. Downloads use the same hash-aware client. Content-addressed responses are verified before return/storage; URL-only metadata retains its TTL. | The isolated production-loader regression reproduced stale engine/chart/configuration/ROM/music bytes before the fix and now passes. All 373 non-cached tests, normal build and independent review pass. No production-server request was made. | Implement hash-only runtime references and offline manifest/collector resolution next. Low-level client/cache hash-only success/miss coverage does not establish full app support. |
+| BF-14 / P1 — runtime/offline unit verified | Runtime references and saved resources retain optional URLs and per-role hashes. The collector preserves distinct identities at one URL; verified Downloads objects can serve online playback. | Integration regressions reproduced rejected hash-only engine data and wrong offline music bytes before their fixes. All 375 non-cached tests, normal build and independent post-fix review pass. | Re-triage the whole backlog. Online catalog artwork remains separately tracked as BF-15; do not claim all app SRL support. |
+| BF-15 / P2 — discovered | Online `CatalogSong` construction and `SongArtwork` pass only a cover URL, discarding its hash. A hash-only cover therefore has no artwork source even if matching bytes are cached. | Confirmed source boundary; affects catalog/detail artwork, not runtime skin loading or the new offline-cover lookup. | Bounded hash-aware artwork lookup with cache-hit/miss tests. No extra server crawl is needed. |
+| BF-16 / P3 — compatibility question | Song grouping uses BGM URL or title/artist fallback, not BGM hash. URL-bearing and hash-only variants can therefore receive different grouping keys. | Confirmed key construction; prevalence and a real mixed-variant failure are unverified. Changing keys also affects row stability and saved identity. | Construct a grouping fixture and assess migration before choosing any key change. Do not silently rewrite library identities. |
 
 Re-triage selects BF-14 ahead of further diagnostics/resource polish once the
 verified BF-12 unit is complete. Silent stale chart/engine
@@ -100,12 +102,31 @@ Tests use an isolated response cache and URLProtocol fixtures; no server crawl,
 real chart re-download, cached full-chart replay or physical test was needed
 for this transport/integrity unit.
 
-Remaining BF-14 work is explicit: runtime references and offline manifests
-still assume URL-bearing resources. The offline collector also groups by URL,
-which cannot represent two role-specific content hashes at the same address.
-Carry hash identity through these boundaries, preserve existing manifests,
-and verify online-to-download and download-to-online reuse plus missing/corrupt
-hash-only resources. Do not mark this whole item complete from low-level tests.
+BF-14 second bounded implementation carries optional URLs through runtime
+references and manifests, preserving existing URL-bearing records. The
+collector retains distinct content identities at one address. Online playback
+can reuse verified SHA-1-named Downloads objects; it does not scan the entire
+legacy hashless library. Missing/corrupt hash-only resources fail without an
+invented URL, and failed downloads do not publish a new manifest.
+
+Independent review caught two regressions in the new offline resolver before
+shipping: cover lookup read unrelated declared-hash payloads, and URL-only
+lookup could choose a different hashed record at the same URL. Exact declared
+hashes now resolve metadata-only, with payload verification restricted to
+genuinely hashless legacy candidates. URL-only references prefer the exact
+unhashed record. The mixed-identity regression reproduced engine JSON being
+returned as music: `RunSomeTests/BF6ABD75-4DCA-45BE-85B5-87DEC354C325.txt`.
+The cover read-count regression passes; final independent review is clean.
+All 375 non-cached simulator tests passed:
+`RunSomeTests/987E9503-D79A-4FE6-BC14-1E4F1F79A83D.txt`.
+Normal build passed: `BuildProject/BuildProject-Log-20260930-034955.txt`.
+These are isolated transport fixtures, not valid-media decoding or
+acoustic/rendering evidence. No production-server requests, full-chart replay
+or physical-device tests were performed for this unit.
+
+Re-triage boundary: finish this data-integrity unit, then reconsider the entire
+backlog. Record the newly discovered artwork and grouping limitations as
+BF-15/BF-16 instead of expanding this patch into a catalog identity rewrite.
 
 BF-12 verification: a new regression failed before implementation on stream,
 draw, loop, audio queue, effect clip and software-size errors:

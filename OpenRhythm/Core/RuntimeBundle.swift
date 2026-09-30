@@ -64,8 +64,8 @@ private struct RuntimeEngineItem: Decodable {
   let particle: RuntimePresentationItem?
 }
 
-struct RuntimeResourceReference: Sendable {
-  let url: URL
+struct RuntimeResourceReference: Hashable, Sendable {
+  let url: URL?
   let hash: String?
 }
 
@@ -76,11 +76,11 @@ struct RuntimeResourceReferences: Sendable {
   let bgm: RuntimeResourceReference
   let engineROM: RuntimeResourceReference?
   let presentation: [String: RuntimeResourceReference]
-  var engineDataURL: URL { engineData.url }
-  var levelDataURL: URL { levelData.url }
-  var bgmURL: URL { bgm.url }
+  var engineDataURL: URL? { engineData.url }
+  var levelDataURL: URL? { levelData.url }
+  var bgmURL: URL? { bgm.url }
   var engineROMURL: URL? { engineROM?.url }
-  var presentationURLs: [String: URL] { presentation.mapValues(\.url) }
+  var presentationURLs: [String: URL] { presentation.compactMapValues(\.url) }
 
   init(itemData: Data, serverBaseURL: URL) throws {
     let item = try JSONDecoder().decode(RuntimeLevelItem.self, from: itemData)
@@ -102,15 +102,18 @@ struct RuntimeResourceReferences: Sendable {
 
     func resource(_ locator: ResourceLocator?, _ name: String, base: URL)
       throws -> RuntimeResourceReference {
-      guard let url = locator?.resolved(against: base) else {
+      let url = locator?.resolved(against: base)
+      let hash = try locator?.hash.map(ContentAddress.normalizedSHA1)
+      guard url != nil || hash != nil else {
         throw RuntimeBundleError.missingResource(name)
       }
-      guard let scheme = url.scheme?.lowercased(),
-        ["http", "https"].contains(scheme), url.host?.isEmpty == false else {
-        throw RuntimeBundleError.invalidResourceURL(name)
+      if let url {
+        guard let scheme = url.scheme?.lowercased(),
+          ["http", "https"].contains(scheme), url.host?.isEmpty == false else {
+          throw RuntimeBundleError.invalidResourceURL(name)
+        }
       }
-      return RuntimeResourceReference(url: url,
-        hash: try locator?.hash.map(ContentAddress.normalizedSHA1))
+      return RuntimeResourceReference(url: url, hash: hash)
     }
     engineVersion = item.engine.version
     engineData = try resource(item.engine.playData, "engine play data",
@@ -178,14 +181,14 @@ struct RuntimeBundle: Sendable {
 final class PreparedRuntimeAudio: Sendable {
   let url: URL
 
-  init(data: Data, sourceURL: URL, temporaryDirectory: URL =
+  init(data: Data, sourceURL: URL?, temporaryDirectory: URL =
     FileManager.default.temporaryDirectory) throws {
     guard !data.isEmpty, data.count <= 128 * 1024 * 1024 else {
       throw RuntimeBundleError.missingResource("music smaller than 128 MiB")
     }
     let directory = temporaryDirectory.appendingPathComponent(
       "OpenRhythmPlayback-\(UUID().uuidString)", isDirectory: true)
-    let suffix = sourceURL.pathExtension.lowercased()
+    let suffix = sourceURL?.pathExtension.lowercased() ?? ""
     let safeSuffix = !suffix.isEmpty && suffix.count <= 10
       && suffix.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
       ? suffix : "audio"
@@ -245,17 +248,14 @@ actor RuntimeBundleLoader {
     )
     try validate(version: references.engineVersion)
 
-    async let engineData = client.resource(at: references.engineDataURL,
-      expectedSHA1: references.engineData.hash)
-    async let levelData = client.resource(at: references.levelDataURL,
-      expectedSHA1: references.levelData.hash)
+    async let engineData = resource(references.engineData)
+    async let levelData = resource(references.levelData)
     async let romData = loadROM(references.engineROM)
     let presentation = try await withThrowingTaskGroup(
       of: (String, Data).self
     ) { group in
       for (name, reference) in references.presentation {
-        group.addTask { (name, try await self.client.resource(at: reference.url,
-          expectedSHA1: reference.hash)) }
+        group.addTask { (name, try await self.resource(reference)) }
       }
       var resources = [String: Data]()
       for try await (name, data) in group { resources[name] = data }
@@ -272,8 +272,7 @@ actor RuntimeBundleLoader {
     // Fetch music only after validating the chart and supported callbacks.
     // The shared response cache reuses it across difficulties; playback and
     // silence inspection then use the same pinned local copy.
-    let audio = try await PreparedRuntimeAudio(data: client.resource(at: references.bgmURL,
-      expectedSHA1: references.bgm.hash),
+    let audio = try await PreparedRuntimeAudio(data: resource(references.bgm),
       sourceURL: references.bgmURL)
     try Task.checkCancellation()
     return try await RuntimeBundle(
@@ -294,6 +293,14 @@ actor RuntimeBundleLoader {
 
   private func loadROM(_ reference: RuntimeResourceReference?) async throws -> Data? {
     guard let reference else { return nil }
+    return try await resource(reference)
+  }
+
+  private func resource(_ reference: RuntimeResourceReference) async throws -> Data {
+    if let hash = reference.hash,
+      let cached = try await offlineStore.cachedResource(expectedSHA1: hash) {
+      return cached
+    }
     return try await client.resource(at: reference.url, expectedSHA1: reference.hash)
   }
 }

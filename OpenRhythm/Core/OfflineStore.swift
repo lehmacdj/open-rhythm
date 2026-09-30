@@ -2,9 +2,16 @@ import CryptoKit
 import Foundation
 
 struct OfflineResource: Codable, Hashable, Sendable {
-  let remoteURL: URL
+  let remoteURL: URL?
   let objectName: String
   let expectedSHA1: String?
+
+  var reference: RuntimeResourceReference {
+    RuntimeResourceReference(url: remoteURL, hash: expectedSHA1)
+  }
+  var diagnosticName: String {
+    remoteURL?.absoluteString ?? "SHA-1 \(expectedSHA1 ?? objectName)"
+  }
 }
 
 struct OfflineLevelManifest: Codable, Hashable, Identifiable, Sendable {
@@ -48,8 +55,8 @@ private struct OfflineResourceDownload: Sendable {
 enum OfflineStoreError: LocalizedError {
   case malformedLevelDetails
   case invalidResourceHash(String)
-  case missingCachedResource(URL)
-  case checksumMismatch(URL)
+  case missingCachedResource(String)
+  case checksumMismatch(String)
 
   var errorDescription: String? {
     switch self {
@@ -57,50 +64,47 @@ enum OfflineStoreError: LocalizedError {
       "The server returned malformed level details."
     case .invalidResourceHash(let hash):
       "The server supplied an invalid resource hash: \(hash)"
-    case .missingCachedResource(let url):
-      "A downloaded resource is missing: \(url.absoluteString)"
-    case .checksumMismatch(let url):
-      "The downloaded resource failed verification: \(url.absoluteString)"
+    case .missingCachedResource(let name):
+      "A downloaded resource is missing: \(name)"
+    case .checksumMismatch(let name):
+      "The downloaded resource failed verification: \(name)"
     }
   }
 }
 
 enum ResourceLocatorCollector {
   static func collect(from data: Data, baseURL: URL) throws
-    -> [(url: URL, hash: String?)]
+    -> [RuntimeResourceReference]
   {
     let object = try JSONSerialization.jsonObject(with: data)
-    var resources = [URL: String]()
-    visit(object, baseURL: baseURL, resources: &resources)
-    return resources.map {
-      (url: $0.key, hash: $0.value.isEmpty ? nil : $0.value)
-    }
+    var resources = Set<RuntimeResourceReference>()
+    try visit(object, baseURL: baseURL, resources: &resources)
+    return Array(resources)
   }
 
   private static func visit(
     _ value: Any,
     baseURL: URL,
-    resources: inout [URL: String]
-  ) {
+    resources: inout Set<RuntimeResourceReference>
+  ) throws {
     if let dictionary = value as? [String: Any] {
       let childBaseURL = (dictionary["source"] as? String)
         .flatMap(URL.init(string:)) ?? baseURL
-      if let path = dictionary["url"] as? String,
-        let url = ResourceLocator(
-          hash: dictionary["hash"] as? String,
-          url: path
-        ).resolved(against: childBaseURL)
-      {
-        resources[url] = dictionary["hash"] as? String ?? ""
+      let hash = dictionary["hash"] as? String
+      let url = ResourceLocator(hash: hash, url: dictionary["url"] as? String)
+        .resolved(against: childBaseURL)
+      if url != nil || hash != nil {
+        resources.insert(RuntimeResourceReference(url: url,
+          hash: try hash.map(ContentAddress.normalizedSHA1)))
         return
       }
 
       for child in dictionary.values {
-        visit(child, baseURL: childBaseURL, resources: &resources)
+        try visit(child, baseURL: childBaseURL, resources: &resources)
       }
     } else if let array = value as? [Any] {
       for child in array {
-        visit(child, baseURL: baseURL, resources: &resources)
+        try visit(child, baseURL: baseURL, resources: &resources)
       }
     }
   }
@@ -152,7 +156,7 @@ actor OfflineStore {
     level: SonolusLevelItem,
     from server: ServerDescriptor,
     forceReload: Bool = false,
-    reusedResources: [URL: OfflineResource] = [:],
+    reusedResources: [RuntimeResourceReference: OfflineResource] = [:],
     expectedVersions: [String: Int] = [:]
   ) async throws -> OfflineLevelManifest {
     let id = manifestID(level: level, server: server)
@@ -198,9 +202,10 @@ actor OfflineStore {
 
     try prepareDirectories()
     var resources = [OfflineResource]()
-    var pending = [(url: URL, hash: String?)]()
+    var pending = [RuntimeResourceReference]()
     for locator in locators.sorted(by: {
-      $0.url.absoluteString < $1.url.absoluteString
+      ($0.url?.absoluteString ?? "", $0.hash ?? "")
+        < ($1.url?.absoluteString ?? "", $1.hash ?? "")
     }) {
       let hash = try locator.hash.map(ContentAddress.normalizedSHA1)
       if let hash {
@@ -216,7 +221,7 @@ actor OfflineStore {
           continue
         }
       }
-      if let resource = reusedResources[locator.url],
+      if let resource = reusedResources[locator],
         resource.expectedSHA1 == hash,
         ContentAddress.isSafeObjectName(resource.objectName),
         let data = try? readStoredData(
@@ -225,7 +230,7 @@ actor OfflineStore {
         resources.append(resource)
         continue
       }
-      pending.append((url: locator.url, hash: hash))
+      pending.append(RuntimeResourceReference(url: locator.url, hash: hash))
     }
 
     let downloads = try await downloadResources(pending,
@@ -239,7 +244,10 @@ actor OfflineStore {
       try download.data.write(to: objectURL, options: [.atomic])
       resources.append(download.resource)
     }
-    resources.sort { $0.remoteURL.absoluteString < $1.remoteURL.absoluteString }
+    resources.sort {
+      ($0.remoteURL?.absoluteString ?? "", $0.objectName)
+        < ($1.remoteURL?.absoluteString ?? "", $1.objectName)
+    }
 
     let manifest = OfflineLevelManifest(
       id: id,
@@ -282,7 +290,7 @@ actor OfflineStore {
       let originID = originKey(level: level, server: complete.server(for: level))
       expectedVersions[originID] = startVersions[originID, default: 0]
     }
-    var refreshedResources = [URL: OfflineResource]()
+    var refreshedResources = [RuntimeResourceReference: OfflineResource]()
     await progress(0, complete.variants.count)
     // Sequential charts reuse the first chart's cached common resources.
     for (index, level) in complete.variants.enumerated() {
@@ -291,7 +299,7 @@ actor OfflineStore {
         from: complete.server(for: level), forceReload: forceReload,
         reusedResources: refreshedResources, expectedVersions: expectedVersions)
       for resource in manifest.resources {
-        refreshedResources[resource.remoteURL] = resource
+        refreshedResources[resource.reference] = resource
       }
       await progress(index + 1, complete.variants.count)
     }
@@ -377,19 +385,19 @@ actor OfflineStore {
       )
     }
     guard let engineURL = localURL(
-      for: references.engineDataURL,
+      for: references.engineData,
       in: manifest
     ) else {
       throw RuntimeBundleError.missingResource("engine play data")
     }
     guard let levelURL = localURL(
-      for: references.levelDataURL,
+      for: references.levelData,
       in: manifest
     ) else {
       throw RuntimeBundleError.missingResource("level data")
     }
     guard let storedBGMURL = localURL(
-      for: references.bgmURL,
+      for: references.bgm,
       in: manifest
     ) else {
       throw RuntimeBundleError.missingResource("music")
@@ -401,14 +409,14 @@ actor OfflineStore {
 
     var presentation = [String: Data]()
     let rom: Data?
-    if let remoteURL = references.engineROMURL {
-      guard let url = localURL(for: remoteURL, in: manifest) else {
+    if let reference = references.engineROM {
+      guard let url = localURL(for: reference, in: manifest) else {
         throw RuntimeBundleError.missingResource("engine ROM")
       }
       rom = try readStoredData(url)
     } else { rom = nil }
-    for (name, remoteURL) in references.presentationURLs {
-      guard let url = localURL(for: remoteURL, in: manifest) else {
+    for (name, reference) in references.presentation {
+      guard let url = localURL(for: reference, in: manifest) else {
         throw RuntimeBundleError.missingResource(name)
       }
       presentation[name] = try readStoredData(url)
@@ -494,9 +502,8 @@ actor OfflineStore {
       let remoteCover = first.level.cover.resolved(
         against: first.server.baseURL
       )
-      let coverURL = remoteCover.flatMap {
-        localURL(for: $0, in: first)
-      }
+      let coverURL = localURL(for: RuntimeResourceReference(url: remoteCover,
+        hash: first.level.cover.hash?.lowercased()), in: first)
       return CatalogSong(
         id: "offline:\(key)",
         server: offlineServer,
@@ -515,12 +522,44 @@ actor OfflineStore {
     for remoteURL: URL,
     in manifest: OfflineLevelManifest
   ) -> URL? {
-    guard let resource = manifest.resources.first(where: {
-      $0.remoteURL == remoteURL
-    }), ContentAddress.isSafeObjectName(resource.objectName) else {
+    localURL(for: RuntimeResourceReference(url: remoteURL, hash: nil), in: manifest)
+  }
+
+  private func localURL(for reference: RuntimeResourceReference,
+    in manifest: OfflineLevelManifest) -> URL? {
+    let safe = manifest.resources.filter {
+      ContentAddress.isSafeObjectName($0.objectName)
+    }
+    if let hash = reference.hash {
+      // Ordinary catalog cover lookup must stay metadata-only. A declared
+      // different hash is not a legacy candidate: never read its BGM/engine.
+      if let exact = safe.first(where: { $0.expectedSHA1?.lowercased() == hash }) {
+        return objectsURL.appendingPathComponent(exact.objectName)
+      }
+      // A genuinely hashless legacy record may hold the requested content.
+      for resource in safe where resource.expectedSHA1 == nil {
+        if let url = reference.url, resource.remoteURL != url { continue }
+        let url = objectsURL.appendingPathComponent(resource.objectName)
+        if let data = try? readStoredData(url),
+          ContentAddress.validates(data, as: resource), data.sha1Hex == hash {
+          return url
+        }
+      }
       return nil
     }
+    let matchingURL = safe.filter { $0.remoteURL == reference.url }
+    guard reference.url != nil,
+      let resource = matchingURL.first(where: { $0.expectedSHA1 == nil })
+        ?? matchingURL.first
+    else { return nil }
     return objectsURL.appendingPathComponent(resource.objectName)
+  }
+
+  func cachedResource(expectedSHA1: String) throws -> Data? {
+    let hash = try ContentAddress.normalizedSHA1(expectedSHA1)
+    guard let data = try? readStoredData(objectsURL.appendingPathComponent(hash)),
+      data.sha1Hex == hash else { return nil }
+    return data
   }
 
   func remove(_ manifest: OfflineLevelManifest) throws {
@@ -618,9 +657,9 @@ actor OfflineStore {
 
   private func playableURL(
     for storedURL: URL,
-    remoteURL: URL
+    remoteURL: URL?
   ) throws -> URL {
-    let pathExtension = remoteURL.pathExtension
+    let pathExtension = remoteURL?.pathExtension ?? ""
     guard storedURL.pathExtension.isEmpty, !pathExtension.isEmpty else {
       return storedURL
     }
@@ -650,7 +689,7 @@ actor OfflineStore {
   }
 
   private func downloadResources(
-    _ locators: [(url: URL, hash: String?)],
+    _ locators: [RuntimeResourceReference],
     forceReload: Bool
   ) async throws -> [OfflineResourceDownload] {
     try await withThrowingTaskGroup(
@@ -663,7 +702,7 @@ actor OfflineStore {
             expectedSHA1: locator.hash, forceReload: forceReload)
           if let expected = locator.hash,
             data.sha1Hex != expected {
-            throw OfflineStoreError.checksumMismatch(locator.url)
+            throw SonolusClientError.resourceChecksumMismatch(expected)
           }
 
           return OfflineResourceDownload(
@@ -726,14 +765,14 @@ actor OfflineStore {
   ) throws {
     for resource in manifest.resources {
       guard ContentAddress.isSafeObjectName(resource.objectName) else {
-        throw OfflineStoreError.checksumMismatch(resource.remoteURL)
+        throw OfflineStoreError.checksumMismatch(resource.diagnosticName)
       }
       let url = objectsURL.appendingPathComponent(resource.objectName)
       guard let data = try? readStoredData(url) else {
-        throw OfflineStoreError.missingCachedResource(resource.remoteURL)
+        throw OfflineStoreError.missingCachedResource(resource.diagnosticName)
       }
       guard ContentAddress.validates(data, as: resource) else {
-        throw OfflineStoreError.checksumMismatch(resource.remoteURL)
+        throw OfflineStoreError.checksumMismatch(resource.diagnosticName)
       }
     }
   }
