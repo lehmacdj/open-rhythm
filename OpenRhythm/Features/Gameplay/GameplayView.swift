@@ -1021,9 +1021,10 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
     touchPool.beginPlayback(generation: model.playbackGeneration,
       inputGeneration: model.inputGeneration)
     let sampleTime = model.playbackTime
-    model.engineFrame(size: bounds.size,
-      touches: touchPool.touches, safeAreaInsets: safeAreaInsets)
-    touchPool.nextFrame(at: sampleTime)
+    if model.engineFrame(size: bounds.size,
+      touches: touchPool.touches, safeAreaInsets: safeAreaInsets) {
+      touchPool.nextFrame(at: sampleTime)
+    }
     guard !model.isStartingPlayback || model.isDebugPaused else { return }
     if let memory = model.engineRuntime?.memory {
       backgroundLayer.update(quad: (0..<8).map { memory.value(block: 1005, index: $0) },
@@ -1071,7 +1072,8 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
         ), time: model.inputTime(at: sample.timestamp), timestamp: sample.timestamp)
       }
       touchPool.receive(key: key, samples: samples,
-        started: started, ended: ended)
+        started: started, ended: ended,
+        acceptingNewContacts: model.isPlaybackAdvancing)
     }
     // Pool events until the next display tick. Started and ended can both be
     // true, preserving short taps without running the entire engine per event.

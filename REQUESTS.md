@@ -58,7 +58,7 @@ or physical-device validation. Findings below are recorded before fixing them.
 | --- | --- | --- | --- |
 | BF-01 / P1 — fixed | `ResultStore.record` silently capped history at 500, removed older timing payloads, and thereby also dropped old-only songs from `playedSongs`. The previous audit described this limit, but the user did not request automatic deletion. | Confirmed by the 501st-play regression; automatic eviction is now removed. | Verification below closes this unit. Previously deleted data cannot be reconstructed. |
 | BF-02 / P1 — frame dependence fixed | Velocity now uses consecutive OS samples, including UIKit's coalesced history, independently of display time and the mapped chart clock. No assumed 240 Hz floor or synthetic stationary frame sample remains. | The frame-phase regression failed before and passes now, alongside coalesced hold-to-flick, lifecycle and clock-separation checks. Native estimator parity and contribution to reported early/late bias are not established. | Keep single-sample-after-long-hold uncertainty explicit; physical flick verification remains deferred. Do not add guessed calibration to force a timing distribution. |
-| BF-03 / P1 — interruption path fixed; other stalls open | An audio-session interruption previously left the engine interpreting input without a scene change. The model now stops the attempt, invalidates startup/input generations and returns to Ready with an explanation; only an explicit Start restarts it. | Synthetic active-engine regression reproduced the defect and now passes, as do pending-activation, notification parsing and advancing-restart checks. Not a real-device interruption measurement. | Investigate ordinary buffering/stopped-player input separately; do not treat every temporary wait or normal EOF as an interruption. Physical behavior remains in the deferred batch. |
+| BF-03 / P1 — interruption and stopped-clock paths fixed | An audio-session interruption previously left the engine interpreting input without a scene change; it now requires an explicit restart. A separate local-player regression confirmed that a stopped music clock still allowed notes to be judged. Normal engine frames now freeze during paused/waiting playback, without aborting the attempt. | Actual local AVPlayer pause/resume regression failed before the fix and passes afterward, including the EOF-tail exception. Pool regressions cover pending taps, held releases and rejected new presses. All 359 non-cached tests, normal build and independent review pass; not a physical or network-stall measurement. | Re-triage below selects BF-05 measurement next. Exact transition-time input discrimination and physical behavior remain deferred. |
 | BF-04 / P2 — fixed | Catalog and lookup reads now recover valid manifests individually and report unreadable records in the Offline UI. Strict manifest inventory, whole-song deletion and asset cleanup still fail closed on unknown references. | Mixed valid/corrupt regression verifies visible songs, download status, offline runtime-bundle preparation with zero network requests, warning lifecycle and byte-for-byte preservation. No current user file was shown corrupt. | Bounded recovery unit verified below. Damaged metadata is retained; no automatic deletion or speculative reconstruction is performed. |
 | BF-05 / P2 diagnosis | Every difficulty's download-status lookup enumerates/decodes the manifest collection and validates resource contents again. | Large-library I/O/performance hypothesis, not a measured phone hitch. | Instrument a synthetic multi-song library, then prioritize from measured cost; retain hash verification rather than bypassing it. |
 | BF-06 / P2 diagnosis | Metal completion releases its slot and records GPU timing but does not inspect command-buffer failure status; synchronous encoding failures do trigger software fallback. | Asynchronous render-error coverage gap, not a reproduced GPU failure. | Check failure propagation with an injectable completion seam before touching the renderer's successful frame path. |
@@ -214,6 +214,48 @@ with controlled player state and no guessed timing correction. Its gameplay
 impact warrants diagnosis before optimizing BF-05's unmeasured library I/O.
 BF-06/07 and the existing API/intro/device items remain open; a successful
 partial-library read does not certify those separate areas.
+
+BF-03 stopped-clock follow-up: a generated local audio file and injectable
+AVPlayer construction reproduce the issue without remote requests or a phone.
+After `pause()`, media time remains fixed, but the old model resolves a
+synthetic input (`RunSomeTests/17BBC861-9990-4384-8086-1F714D8ADEB7.txt`).
+The active SDK's `AVPlayer.h` distinguishes requested rate from advancing
+playback: waiting can retain a nonzero desired rate. The fix therefore uses
+`timeControlStatus == .playing`, with an explicit monotonic EOF-tail exception.
+
+Normal engine callbacks and engine presentation remain at their previous
+frame during a stopped clock. Effect voices are paused without draining queued
+commands. Startup preparation still runs, and buffering does not change the
+attempt's phase or generations. `engineFrame` reports whether it consumed the
+input batch; only a consumed frame clears per-frame touch flags. Existing
+contacts continue receiving real movement/releases while new begins are
+rejected, preventing both stuck holds and unbounded accumulation of paused
+presses. Pending pre-stop taps survive until consumption; later moves cannot
+revive a rejected press. This is a delivery-time gate, not exact discrimination
+of an OS event on either side of a media transition. It does not adjust timing
+calibration or establish the cause of reported early bias.
+
+The first post-fix tail assertion exposed a test setup error: `start()` does
+not restart an already-playing attempt. Correcting the fixture to stop first
+made the paused/resumed/tail check pass
+(`RunSomeTests/A8286B51-044F-4C2E-B3F4-205100223F03.txt`). The separate contact
+pool check passes too. All 359 non-cached simulator tests now pass, without
+failures or skips (`RunSomeTests/A87F1178-D9BB-431C-8F46-E76AAA77CD87.txt`),
+and the normal build passes
+(`BuildProject/BuildProject-Log-20260930-020635.txt`). Independent post-fix review
+found no actionable issue, including effect-pause ownership and retained input
+lifecycle. The seven cached-chart workloads were not rerun for this model/input
+delivery change. This unit covers server/native-engine gameplay; the explicitly
+synthetic basic-lane helper is not evidence of native-engine behavior. No
+physical-device check or live network-buffering experiment was performed.
+
+Next re-triage choice: measure BF-05's offline-library I/O before changing it.
+It can affect every catalog refresh for a large downloaded library and aligns
+with the reported list-performance concern, whereas BF-06/07 are currently
+unreproduced exceptional failures. Do not skip resource integrity validation
+or introduce a stale cache just to improve the measurement. API/stack,
+intro-classification and deferred physical checks remain open; the crawl
+continues independently and is not a reason to wait on this diagnosis.
 
 ## Current verification order — reaffirmed September 27, 2026
 

@@ -138,6 +138,21 @@ integration probes, including successful inputs and restart/buffering paths.
   at 22:55 September 29. The seven cached graph probes passed before this edit
   and do not exercise the audio controller. No device or remote-song testing
   was performed.
+- Normal engine frames now freeze while the music player is paused or waiting,
+  rather than evaluating input repeatedly at one frozen chart instant. The
+  model pauses effect voices, preserves the previous engine presentation and
+  reports whether it consumed its touch batch. Startup preparation and the
+  monotonic EOF tail remain separate. Existing contacts retain movement/end
+  events until consumption; new begins are rejected while stopped. Stationary
+  holds still receive callbacks on every advancing engine frame, not just when
+  UIKit delivers a new event. The gate is based on playback state at delivery,
+  not proven sample-exact discrimination at a pause/resume boundary.
+  A real local AVPlayer pause reproduced a resolved note before the fix; the
+  corrected regression verifies stopped frames, resume and EOF, with separate
+  pending-tap/release/rejected-identity coverage. All 359 non-cached simulator
+  tests and the normal build pass; independent post-fix review found no
+  actionable issue. This does not establish physical-device
+  alignment or behavior under an actual remote-media stall.
 - Stationary contacts continue `touch` evaluation without new presses or
   timestamps. The September 29 per-delivery gate in `ed27b682` misinterpreted
   "input event" in the [input-system documentation](

@@ -284,9 +284,127 @@ final class PlaybackClockTests: XCTestCase {
   }
 
   @MainActor
+  func testStoppedPlayerDoesNotJudgeUntilMusicResumes() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("stopped-input-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var capturedPlayer: AVPlayer?
+    let model = try makeSessionModel(PlaybackAudioSession { _ in },
+      directory: directory, nativeEngine: true, inputProbe: true,
+      makePlayer: { url in
+        let player = AVPlayer(url: url)
+        capturedPlayer = player
+        return player
+      })
+    defer { model.stop() }
+    model.start()
+    let size = CGSize(width: 800, height: 400)
+    for _ in 0..<200 {
+      model.engineFrame(size: size, touches: [])
+      if !model.isStartingPlayback && model.playbackTime > 0 { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertGreaterThan(model.playbackTime, 0)
+    let player = try XCTUnwrap(capturedPlayer)
+    let runtime = try XCTUnwrap(model.engineRuntime)
+    XCTAssertEqual(runtime.inputCount, 1)
+    XCTAssertEqual(runtime.resolvedInputCount, 0)
+    player.pause()
+    XCTAssertEqual(player.timeControlStatus, .paused)
+    let frozenTime = model.playbackTime
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertEqual(model.playbackTime, frozenTime, accuracy: 0.001)
+    let p = EnginePoint(x: 0, y: 0)
+    let touch = EngineTouch(id: 1, started: true, ended: false,
+      time: frozenTime, startTime: frozenTime,
+      position: p, startPosition: p, delta: p)
+    for _ in 0..<3 {
+      XCTAssertFalse(model.engineFrame(size: size, touches: [touch]))
+    }
+    XCTAssertEqual(runtime.resolvedInputCount, 0,
+      "Stopped music must not give an unlimited window to judge a note")
+    XCTAssertEqual(model.phase, .playing,
+      "An ordinary wait must not abort the attempt as an interruption")
+    player.play()
+    for _ in 0..<200 {
+      if player.timeControlStatus == .playing,
+        model.playbackTime > frozenTime { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertGreaterThan(model.playbackTime, frozenTime)
+    XCTAssertTrue(model.engineFrame(size: size, touches: [touch]))
+    XCTAssertEqual(runtime.resolvedInputCount, 1)
+
+    // Normal EOF must keep the monotonic chart tail alive even though the
+    // same media player is stopped. Restart to leave an unresolved input.
+    model.stop()
+    model.start()
+    for _ in 0..<200 {
+      model.engineFrame(size: size, touches: [])
+      if !model.isStartingPlayback && model.playbackTime > 0 { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTAssertFalse(model.isStartingPlayback)
+    let tailRuntime = try XCTUnwrap(model.engineRuntime)
+    XCTAssertEqual(tailRuntime.resolvedInputCount, 0)
+    player.pause()
+    model.playbackEnded()
+    XCTAssertTrue(model.isPlaybackAdvancing)
+    XCTAssertTrue(model.engineFrame(size: size, touches: [touch]))
+    XCTAssertEqual(tailRuntime.resolvedInputCount, 1)
+  }
+
+  func testStoppedInputPreservesHoldsAndPendingTapWithoutAdmittingNewPresses() {
+    var pool = EngineTouchPool<Int>()
+    pool.beginPlayback(generation: 1)
+    func sample(_ x: Double, _ time: Double) -> [EngineTouchSample] {
+      [EngineTouchSample(position: EnginePoint(x: x, y: 0),
+        time: time, timestamp: time + 10)]
+    }
+    pool.receive(key: 1, samples: sample(0, 1), started: true, ended: false)
+    pool.nextFrame(at: 1)
+    // A short tap starts before the stopped frame; do not consume it until
+    // the engine has actually processed its batch.
+    pool.receive(key: 2, samples: sample(1, 1.1), started: true, ended: false)
+    let ids = pool.touches.map(\.id)
+    pool.receive(key: 1, samples: sample(0.2, 1.1), started: false, ended: true,
+      acceptingNewContacts: false)
+    pool.receive(key: 2, samples: sample(1, 1.1), started: false, ended: true,
+      acceptingNewContacts: false)
+    for key in 3...100 {
+      pool.receive(key: key, samples: sample(0, 1.1), started: true, ended: false,
+        acceptingNewContacts: false)
+    }
+    XCTAssertEqual(pool.touches.map(\.id), ids)
+    XCTAssertEqual(pool.touches.map(\.started), [false, true])
+    XCTAssertEqual(pool.touches.map(\.ended), [true, true])
+    XCTAssertEqual(pool.touches[0].position.x, 0.2)
+    // A reused identity for an ended contact cannot overwrite its release.
+    pool.receive(key: 1, samples: sample(2, 1.1), started: true, ended: false,
+      acceptingNewContacts: false)
+    pool.receive(key: 1, samples: sample(2, 1.2), started: false, ended: true)
+    XCTAssertEqual(pool.touches[0].position.x, 0.2)
+    pool.nextFrame(at: 1.2)
+    XCTAssertTrue(pool.touches.isEmpty)
+    // Rejected presses do not become new contacts from later move/end events.
+    pool.receive(key: 3, samples: sample(0.5, 1.2), started: false, ended: false)
+    pool.receive(key: 3, samples: sample(0.5, 1.3), started: false, ended: true)
+    XCTAssertTrue(pool.touches.isEmpty)
+    pool.receive(key: 3, samples: sample(0.5, 1.4), started: true, ended: false)
+    XCTAssertEqual(pool.touches.count, 1)
+    XCTAssertTrue(pool.touches[0].started)
+  }
+
+  @MainActor
   private func makeSessionModel(_ session: PlaybackAudioSession,
     directory: URL, nativeEngine: Bool = false,
-    audioNotifications: NotificationCenter = .default) throws -> GameplayModel {
+    audioNotifications: NotificationCenter = .default,
+    inputProbe: Bool = false,
+    makePlayer: @escaping (URL) -> AVPlayer = { AVPlayer(url: $0) }
+  ) throws -> GameplayModel {
     let audio = directory.appendingPathComponent("tone.caf")
     let format = try XCTUnwrap(AVAudioFormat(
       standardFormatWithSampleRate: 48000, channels: 1))
@@ -301,19 +419,32 @@ final class PlaybackClockTests: XCTestCase {
       let file = try AVAudioFile(forWriting: audio, settings: format.settings)
       try file.write(from: buffer)
     }
-    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+    let engineJSON = inputProbe ? #"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"buckets":[],
+       "archetypes":[{"name":"Probe","hasInput":true,"imports":[],
+         "exports":[],"touch":{"index":6}}],
+       "nodes":[{"value":4005},{"value":0},{"value":1},
+         {"func":"Set","args":[0,1,2]},{"value":4004},
+         {"func":"Set","args":[4,1,2]},
+         {"func":"Execute","args":[3,5]}]}
+      """# : #"""
       {"skin":{"sprites":[]},"effect":{"clips":[]},
        "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
-      """#.utf8))
+      """#
+    let engine = try JSONDecoder().decode(EnginePlayData.self,
+      from: Data(engineJSON.utf8))
     let resource = ResourceLocator(hash: nil, url: nil)
     let level = SonolusLevelItem(name: "session-failure", source: nil,
       version: 1, rating: 1, title: LocalizedText("Session failure"),
       artists: LocalizedText("Generated"), author: "Fixture", tags: [],
       cover: resource, bgm: resource, data: resource)
     let model = GameplayModel(audioSession: session,
-      audioNotifications: audioNotifications)
+      audioNotifications: audioNotifications, makePlayer: makePlayer)
     model.prepare(bundle: RuntimeBundle(engine: engine,
-      level: LevelData(bgmOffset: 0, entities: []), bgmURL: audio,
+      level: LevelData(bgmOffset: 0, entities: inputProbe
+        ? [LevelEntity(archetype: "Probe", name: nil, data: [])] : []),
+      bgmURL: audio,
       isOffline: true, presentation: nativeEngine
         ? RuntimePresentation(resources: [
           "configuration": Data(#"{"options":[]}"#.utf8)]) : nil,

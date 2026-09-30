@@ -244,7 +244,10 @@ struct EngineTouchPool<Key: Hashable> {
   /// Coalesced samples belong to one contact, not to the auxiliary UITouch
   /// identities UIKit supplies. Begin/end apply once to the entire batch.
   mutating func receive(key: Key, samples: [EngineTouchSample],
-    started: Bool, ended: Bool) {
+    started: Bool, ended: Bool, acceptingNewContacts: Bool = true) {
+    // While music waits, retain real movement/releases of existing holds,
+    // but do not accrue new presses at the same frozen chart instant.
+    guard !started || acceptingNewContacts else { return }
     for (index, sample) in samples.enumerated() {
       receive(key: key, position: sample.position, time: sample.time,
         started: started && index == 0,

@@ -311,6 +311,13 @@ final class GameplayModel {
     Set(activeHolds.values.map(\.id))
   }
 
+  /// A requested nonzero rate can still be waiting for media. EOF is
+  /// different: unresolved chart events use the monotonic tail clock.
+  var isPlaybackAdvancing: Bool {
+    phase == .playing && !isStartingPlayback && !isDebugPaused
+      && (tailStart != nil || player?.timeControlStatus == .playing)
+  }
+
   private let loader: RuntimeBundleLoader
   private let resultStore: ResultStore
   private var bgmOffset = 0.0
@@ -323,6 +330,7 @@ final class GameplayModel {
       audioOffset: playAudioOffset)
   }
   private var player: AVPlayer?
+  private let makePlayer: (URL) -> AVPlayer
   private let audioSession: PlaybackAudioSession
   private let audioNotifications: NotificationCenter
   private let audioSessionOwner = UUID()
@@ -380,12 +388,14 @@ final class GameplayModel {
     loader: RuntimeBundleLoader = RuntimeBundleLoader(),
     resultStore: ResultStore = .shared,
     audioSession: PlaybackAudioSession? = nil,
-    audioNotifications: NotificationCenter = .default
+    audioNotifications: NotificationCenter = .default,
+    makePlayer: @escaping (URL) -> AVPlayer = { AVPlayer(url: $0) }
   ) {
     self.loader = loader
     self.resultStore = resultStore
     self.audioSession = audioSession ?? .shared
     self.audioNotifications = audioNotifications
+    self.makePlayer = makePlayer
   }
 
   deinit {
@@ -466,7 +476,7 @@ final class GameplayModel {
     resultLevelID = level.resultKey(server: server)
     resultTitle = title
     preparedAudio = bundle.preparedAudio
-    player = AVPlayer(url: bundle.bgmURL)
+    player = makePlayer(bundle.bgmURL)
     phase = .ready
   }
 
@@ -934,17 +944,18 @@ final class GameplayModel {
     finishIfReady()
   }
 
+  @discardableResult
   func engineFrame(size: CGSize, touches: [EngineTouch],
-    safeAreaInsets: UIEdgeInsets = .zero) {
+    safeAreaInsets: UIEdgeInsets = .zero) -> Bool {
     frameTiming = nil
     guard phase == .playing, !isDebugPaused,
       size.width > 0, size.height > 0,
-      let bundle = runtimeBundle, let assets = presentationAssets else { return }
+      let bundle = runtimeBundle, let assets = presentationAssets else { return false }
     do {
       let aspect = Double(size.width / size.height)
       if let engineAspectRatio, abs(engineAspectRatio - aspect) > 0.001 {
         stop()
-        return
+        return false
       }
       if engineRuntime == nil {
         engineAspectRatio = aspect
@@ -997,16 +1008,22 @@ final class GameplayModel {
           engineLife = runtime.life
           if captureEngineDebugState(runtime) {
             prepareStartupAudio()
-            return
+            return false
           }
         }
       }
       if isStartingPlayback {
         if let runtime = engineRuntime { try advanceSilentIntro(runtime) }
         startPreparedAudio()
-        return
+        return false
       }
-      guard let runtime = engineRuntime else { return }
+      guard let runtime = engineRuntime else { return false }
+      guard isPlaybackAdvancing else {
+        // Preserve the last engine frame and all unconsumed input. Calling
+        // update with empty touches would instead look like released holds.
+        engineAudio?.pause(at: playbackTime)
+        return false
+      }
       let sampleStart = timingRecorder.map { _ in CACurrentMediaTime() }
       currentTime = playbackTime
       if let recorder = timingRecorder, let sampleStart {
@@ -1036,7 +1053,7 @@ final class GameplayModel {
       engineScore = runtime.arcadeScore?.snapshot
       engineLife = runtime.life
       ingestJudgments(from: runtime)
-      if captureEngineDebugState(runtime) { return }
+      if captureEngineDebugState(runtime) { return true }
       // Interpretation can consume a substantial part of a frame. Schedule
       // against the clock now, not its value before that work, or scheduled
       // hit sounds inherit the entire interpreter delay.
@@ -1045,9 +1062,11 @@ final class GameplayModel {
         loopCommands: runtime.host.takeLoopCommands(),
         currentTime: { self.playbackTime })
       finishIfReady()
+      return true
     } catch {
       stop()
       phase = .failed(error.localizedDescription)
+      return false
     }
   }
 
