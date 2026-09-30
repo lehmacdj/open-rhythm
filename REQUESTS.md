@@ -93,23 +93,23 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** added opt-in bookkeeping/effect-dispatch CPU metrics
-  and measured actual GameplayModel playback through chart time 8 s across
-  SEKAI, SIF and 22/7. This exposed and fixed BF-23: rejected signed stream IDs
-  stopped 22/7 on contact. The repeated probe succeeds for all three engines;
-  these two phases did not emerge as bottlenecks. Sixteen focused tests,
-  384 non-cached tests, normal build and independent review pass. Work is local.
-- **Selected next action:** one bounded contract review of the remaining host
-  and resource ID-domain assumptions. Distinguish numeric identities from
-  array indices before claiming generic compatibility; inspect actual public
-  constraints rather than copying the stream fix into unrelated functions.
-- **Why:** BF-23 demonstrated that the tests could reinforce an invented
-  restriction while no-touch fixtures missed a normal interaction path. This
-  merits a cross-API check, not more tuning of already-small audio timings.
-- **Acceptance:** either identify a contract-supported rejected value and add
-  its reproducer/fix, or record the finite reviewed set and negative finding.
-  No arbitrary broadening of indices, no speculative optimization, and no
-  reopening device testing or deferred stack implementation.
+- **Completed action:** BF-24 preserves numeric resource IDs end-to-end while
+  retaining integer indices/handles. Fractional declarations failed before
+  the fix; 387 non-cached tests plus cached SEKAI startup and 22/7 contacts
+  pass, as do the normal build and independent review. Work is local.
+- **Selected next action:** BF-25, engine-provided result buckets. Reproduce
+  the loss of EntityInput bucket/value at despawn, trace it through new and
+  persisted results, and use the declared metadata without conflating custom
+  bucket units with accuracy in seconds.
+- **Why:** source review exposed another supplied field the client discards.
+  This affects requested complete statistics and engine-driven behavior, so
+  it outranks further speculation about atlas allocation or native parity.
+- **Acceptance:** engine-selected grouping/value/unit and graph participation
+  survive despawn and history persistence; declared sprite/fallback metadata
+  is honored in bucket presentation. Keep requested timing-in-seconds plots,
+  score/accuracy calculations and legacy-result readability intact. Verify
+  generic synthetic names and cached hold ticks before replacing name-based
+  exclusions. No physical checks or stack implementation are authorized here.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -158,6 +158,33 @@ The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
 | BF-21 / bounded regression verified | New opt-in Eleventh normal-flick regression resolves entity 6: stationary control misses, measured upward movement succeeds at +1/60 s, and restart repeats the result. | Pooled/coalesced sample path, cached engine and unchanged windows/options; independent review clean. This closes the named cached-workload gap, not other flick variants, UIKit/physical delivery or acoustic timing. No gameplay code or calibration was changed. |
 | BF-22 / P2 — verified | Cross-engine preparation profiling isolated repeated per-pixel tint arithmetic as a main-actor loading cost. Exact 256-entry channel tables now amortize that work; below 256 pixels the original arithmetic avoids table setup. | Paired Debug presentation means: SEKAI 461.9→312.2 ms, SIF 10.6→8.6 ms, 22/7 61.3→40.6 ms. Exhaustive channel-byte equivalence, tiny/cutoff images, alpha, metadata and allocation-failure checks pass in 20 focused tests. Normal build and independent review pass. Loading improvement only; in-song/device performance remains open. |
 | BF-23 / P1 — verified | Native-clock/cached-engine contacts failed immediately in 22/7 with invalid StreamSet arguments. Cached engine node 627 explicitly writes stream ID -9999; the host invented a nonnegative-integer restriction. Prior no-touch lifecycle tests never reached that contact path. | All five stream functions now preserve finite numeric IDs without narrowing. New synthetic and cached contact/restart regressions failed before the fix; 16 focused tests, all 384 non-cached tests, normal build and independent review pass afterward. The actual GameplayModel probe now reaches chart time 8 s in all three engines, including 33 successful 22/7 judgments. |
+| BF-24 / P2 — verified | Declared skin/clip/particle IDs and bucket sprite references were narrowed to Int despite numeric public schemas. Fractional declarations failed to decode, and missing finite IDs could throw instead of reporting absence. | Numeric identities now survive resource maps, drawing, audio and particle caches; indices/counts and generated handles remain integers. All 387 non-cached tests, two bounded cached integrations, normal build and independent review pass. No sampled-engine fractional-ID occurrence or native-client parity is claimed. |
+| BF-25 / P2 — result metadata finding | EngineJudgment drops EntityInput bucket/value; results retain archetype-name types instead. Bucket units/sprites are decoded but unused in results, and fallbackId is not decoded. Intermediate hold exclusion is a known-name list. | Preserve engine-assigned result metadata through despawn/history and honor bucket presentation while retaining requested timing plots. Establish graph participation from the public contract and cached evidence, not from zero error or guessed archetype semantics. Test custom units, missing buckets, fallback sprites and old results. |
+
+BF-24 evidence: the fractional decode regression failed before production
+changes in `RunSomeTests/4F1DCB41-5706-4CA1-8729-FFBE6B784DE2.txt`.
+Four focused checks passed in
+`RunSomeTests/8C4B6D28-5D3A-45A2-ADED-E197F23E6B79.txt`.
+The first broader run passed 386/387 and exposed an old malformed-input test
+that incorrectly required HasSkinSprite(greatestFiniteMagnitude) to throw.
+That test now rejects infinity and explicitly expects zero for the unavailable
+finite ID. Final run: all 389 selected tests pass with no skips/failures,
+`RunSomeTests/F8488A14-9BE5-405A-ADC1-D05B369D9803.txt`; normal build:
+`BuildProject/BuildProject-Log-20260930-200012.txt`. The two cached checks cover
+SEKAI startup/restart and 22/7 stage contacts/restart, not complete chart replay.
+Independent concrete-diff review is clean. Native fractional audio-ID behavior
+was not separately measured; synthetic audio coverage uses mock voice pools.
+
+BF-25 source evidence: [Entity Input](
+https://wiki.sonolus.com/engine-specs/play-blocks/entity-input) supplies bucket
+index at cell 2 (-1 means none) and bucket value at cell 3. The runtime currently
+reads cells 0, 1 and 4 only when collecting judgments. [Engine Data Bucket](
+https://wiki.sonolus.com/engine-specs/resources/engine-data-bucket) explicitly
+describes result graphs and supplies unit and composite sprites, including
+optional fallbackId. `GameplayModel.ingestJudgments` instead uses archetype
+names and `NoteTiming.isIntermediateHold` recognizes seven fixed tick names.
+This is a source/data-flow finding; a behavioral reproducer and correction are
+next, not already verified by BF-24's decoding test.
 
 BF-23 is a contract/coverage correction, not an engine-name exception. The
 public [StreamSet contract](https://wiki.sonolus.com/engine-specs/functions/stream-set)

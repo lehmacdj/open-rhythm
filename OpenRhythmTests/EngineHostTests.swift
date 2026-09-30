@@ -7,6 +7,76 @@ import zlib
 
 final class EngineHostTests: XCTestCase {
   @MainActor
+  func testNumericResourceIDsSurviveHostCommandsAndAudioPools() throws {
+    let ids: Set<EngineResourceID> = [0.5, 0.75, -9999.5, 1e100]
+    let host = CommandEngineRuntimeHost(memory: EngineMemory(),
+      level: LevelData(bgmOffset: 0, entities: []), skinSpriteIDs: ids,
+      effectClipIDs: ids, particleEffectIDs: ids, archetypeCount: 1)
+    var voices = [EngineResourceID: [MockEffectVoice]]()
+    let audio = try EngineAudioPlayback(clips:
+      Dictionary(uniqueKeysWithValues: ids.map { ($0, Data()) }),
+      makeVoice: { id, _ in
+        let voice = MockEffectVoice()
+        voices[id, default: []].append(voice)
+        return voice
+      })
+    defer { audio.stop() }
+    var loopHandles = [Double](), particleHandles = [Double]()
+    for id in ids.sorted() {
+      for function in ["HasSkinSprite", "HasEffectClip", "HasParticleEffect"] {
+        XCTAssertEqual(try host.call(function: function, arguments: [id]), 1)
+        XCTAssertEqual(try host.call(function: function, arguments: [0.6]), 0)
+        XCTAssertThrowsError(try host.call(function: function, arguments: [.nan]))
+      }
+      for suffix in ["", "CurvedB", "CurvedT", "CurvedL", "CurvedR",
+        "CurvedBT", "CurvedLR"] {
+        let controls: [Double] = suffix.isEmpty ? []
+          : suffix.count == 8 ? [1, 0, 0, 0, 0] : [1, 0, 0]
+        _ = try host.call(function: "Draw" + suffix,
+          arguments: [id] + quad + [0, 1] + controls)
+        XCTAssertEqual(host.draws.last?.spriteID, id)
+      }
+      _ = try host.call(function: "Play", arguments: [id, 1])
+      loopHandles.append(try host.call(function: "PlayLooped", arguments: [id]))
+      particleHandles.append(try host.call(function: "SpawnParticleEffect",
+        arguments: [id] + quad + [1, 0]))
+    }
+    XCTAssertEqual(Set(host.particles.values.map(\.effectID)), ids)
+    let commands = host.takeAudioCommands()
+    XCTAssertEqual(Set(commands.map(\.clipID)), ids)
+    var scheduler = EngineAudioScheduler()
+    try scheduler.enqueue(commands)
+    XCTAssertEqual(Set(scheduler.due(at: 0).map(\.clipID)), ids,
+      "Minimum-distance histories must not alias fractional clip identities")
+    try audio.update(commands, at: 0, loopCommands: host.takeLoopCommands())
+    for id in ids {
+      XCTAssertEqual(voices[id]?.flatMap(\.looping).sorted { !$0 && $1 },
+        [false, true], "Both one-shot and loop pools preserve the clip ID")
+      _ = try host.call(function: "PlayScheduled", arguments: [id, 2, 0])
+      _ = try host.call(function: "PlayLoopedScheduled", arguments: [id, 2])
+    }
+    XCTAssertEqual(Set(host.takeAudioCommands().map(\.clipID)), ids)
+    for command in host.takeLoopCommands() {
+      guard case .start(_, let clipID, let time) = command else {
+        return XCTFail("Expected a scheduled loop start")
+      }
+      XCTAssertTrue(ids.contains(clipID))
+      XCTAssertEqual(time, 2)
+    }
+    for handle in loopHandles {
+      _ = try host.call(function: "StopLooped", arguments: [handle])
+    }
+    for handle in particleHandles {
+      _ = try host.call(function: "DestroyParticleEffect", arguments: [handle])
+    }
+    XCTAssertTrue(host.particles.isEmpty)
+    XCTAssertThrowsError(try host.call(function: "Spawn", arguments: [0.5]))
+    XCTAssertThrowsError(try host.call(function: "ExportValue", arguments: [0.5, 1]))
+    XCTAssertThrowsError(try host.call(function: "DrawCurvedB",
+      arguments: [0.5] + quad + [0, 1, 1.5, 0, 0]))
+  }
+
+  @MainActor
   func testResourceLimitErrorsIdentifyTheFailingSubsystem() throws {
     func check(_ context: String, _ action: () throws -> Void) {
       XCTAssertThrowsError(try action()) { error in
@@ -40,7 +110,7 @@ final class EngineHostTests: XCTestCase {
     }
     check("effect audio clips") {
       _ = try EngineAudioPlayback(clips: Dictionary(uniqueKeysWithValues:
-        (0..<257).map { ($0, Data()) }), makeVoice: { _, _ in
+        (0..<257).map { (Double($0), Data()) }), makeVoice: { _, _ in
           XCTFail("Clip-count rejection must precede voice allocation")
           return MockEffectVoice()
         })
@@ -2526,7 +2596,8 @@ final class EngineHostTests: XCTestCase {
               for index in 0..<2 {
                 let definition = particle(Double(effect * 100 + group * 10 + index))
                 let actual = cache.properties(for: definition,
-                  key: .init(seed: seed, effect: effect, group: group, particle: index),
+                  key: .init(seed: seed, effect: 0.5 + Double(effect) / 4,
+                    group: group, particle: index),
                   variables: variables)
                 let originals = [definition.x, definition.y, definition.w,
                   definition.h, definition.r, definition.a]
@@ -5486,7 +5557,7 @@ final class EngineHostTests: XCTestCase {
     for (function, arguments) in [
       ("Draw", [7.0]), ("BeatToTime", [Double.nan]),
       ("Spawn", [Double.infinity]), ("Spawn", [-1]), ("Spawn", [2]),
-      ("HasSkinSprite", [Double.greatestFiniteMagnitude]),
+      ("HasSkinSprite", [Double.infinity]),
       ("DestroyParticleEffect", [0.5]), ("Judge", []),
       ("UnknownFunction", [])
     ] {
@@ -5494,6 +5565,9 @@ final class EngineHostTests: XCTestCase {
         function: function, arguments: arguments
       ), function)
     }
+    XCTAssertEqual(try host.call(function: "HasSkinSprite",
+      arguments: [Double.greatestFiniteMagnitude]), 0,
+      "An absent finite resource identity is not a malformed index")
     XCTAssertTrue(host.draws.isEmpty)
     XCTAssertTrue(host.particles.isEmpty)
     XCTAssertTrue(host.takeSpawnCommands().isEmpty)

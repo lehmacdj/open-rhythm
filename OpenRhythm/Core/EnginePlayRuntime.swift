@@ -303,8 +303,8 @@ final class EnginePlayRuntime {
   init(
     engine: EnginePlayData, level: LevelData,
     options: [Double], aspectRatio: Double,
-    skinSpriteIDs: Set<Int>, effectClipIDs: Set<Int>,
-    particleEffectIDs: Set<Int>, rom: Data? = nil,
+    skinSpriteIDs: Set<EngineResourceID>, effectClipIDs: Set<EngineResourceID>,
+    particleEffectIDs: Set<EngineResourceID>, rom: Data? = nil,
     uiConfiguration: [Double] = Array(repeating: 1, count: 10),
     safeArea: [Double]? = nil,
     playbackSpeed: Double = 1,

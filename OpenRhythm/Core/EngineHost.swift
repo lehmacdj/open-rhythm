@@ -39,7 +39,7 @@ struct EngineDrawCommand: Equatable, Sendable {
   // Host safety budget shared by ordinary draws and all curved strips, not
   // a protocol-defined per-curve limit.
   static let segmentLimitPerFrame = 16_384
-  let spriteID: Int
+  let spriteID: EngineResourceID
   // Bottom-left, top-left, top-right, bottom-right, in engine coordinates.
   let points: [EnginePoint]
   let zValues: [Double]
@@ -52,13 +52,13 @@ struct EngineDrawCommand: Equatable, Sendable {
 }
 
 struct EngineAudioCommand: Equatable, Sendable {
-  let clipID: Int
+  let clipID: EngineResourceID
   let time: TimeInterval
   let minimumDistance: TimeInterval
 }
 
 enum EngineLoopCommand: Equatable, Sendable {
-  case start(id: Int, clipID: Int, time: TimeInterval)
+  case start(id: Int, clipID: EngineResourceID, time: TimeInterval)
   case stop(id: Int, time: TimeInterval)
 }
 
@@ -74,7 +74,7 @@ struct EngineDebugLogEntry: Identifiable, Equatable {
 
 struct EngineParticleInstance: Equatable, Sendable {
   let id: Int
-  let effectID: Int
+  let effectID: EngineResourceID
   var points: [EnginePoint]
   let startTime: TimeInterval
   let duration: TimeInterval
@@ -117,10 +117,10 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   let memory: EngineMemory
   let timeline: BPMTimeline
   let timeScale: TimeScaleTimeline
-  let skinSpriteIDs: Set<Int>
-  let effectClipIDs: Set<Int>
-  let particleEffectIDs: Set<Int>
-  private let introStageSpriteIDs: Set<Int>
+  let skinSpriteIDs: Set<EngineResourceID>
+  let effectClipIDs: Set<EngineResourceID>
+  let particleEffectIDs: Set<EngineResourceID>
+  private let introStageSpriteIDs: Set<EngineResourceID>
   let archetypeCount: Int
 
   private(set) var time: TimeInterval = 0
@@ -192,11 +192,11 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   init(
     memory: EngineMemory,
     level: LevelData,
-    skinSpriteIDs: Set<Int>,
-    effectClipIDs: Set<Int>,
-    particleEffectIDs: Set<Int>,
+    skinSpriteIDs: Set<EngineResourceID>,
+    effectClipIDs: Set<EngineResourceID>,
+    particleEffectIDs: Set<EngineResourceID>,
     archetypeCount: Int,
-    introStageSpriteIDs: Set<Int> = [],
+    introStageSpriteIDs: Set<EngineResourceID> = [],
     streamEntryLimit: Int = 262_144,
     playbackSpeed: Double = 1
   ) {
@@ -347,7 +347,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       return 0
     case "HasSkinSprite", "HasParticleEffect", "HasEffectClip":
       try validate(a, count: 1, function: function)
-      let id = try identifier(a[0], function: function)
+      let id = a[0]
       let available = switch function {
       case "HasSkinSprite": skinSpriteIDs
       case "HasParticleEffect": particleEffectIDs
@@ -374,7 +374,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
             EnginePoint(x: a[$0], y: a[$0 + 1])
           })
       } else { curve = nil }
-      let id = try identifier(a[0], function: function)
+      let id = a[0]
       guard skinSpriteIDs.contains(id) else { return 0 }
       let segments = curve?.segments ?? 1
       guard segments <= EngineDrawCommand.segmentLimitPerFrame - drawSegmentCount else {
@@ -394,7 +394,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       try validate(
         a, count: function == "Play" ? 2 : 3, function: function
       )
-      let id = try identifier(a[0], function: function)
+      let id = a[0]
       guard effectClipIDs.contains(id) else { return 0 }
       try checkLimit(audio.count + loopAudio.count, resource: "audio commands per frame")
       audio.append(EngineAudioCommand(
@@ -404,7 +404,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       return 0
     case "PlayLooped", "PlayLoopedScheduled":
       try validate(a, count: function == "PlayLooped" ? 1 : 2, function: function)
-      let clipID = try identifier(a[0], function: function)
+      let clipID = a[0]
       guard effectClipIDs.contains(clipID) else { return 0 }
       try checkLimit(audio.count + loopAudio.count, resource: "audio commands per frame")
       guard loopStops.count < 256 else {
@@ -431,7 +431,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       return 0
     case "SpawnParticleEffect":
       try validate(a, count: 11, function: function)
-      let effectID = try identifier(a[0], function: function)
+      let effectID = a[0]
       guard particleEffectIDs.contains(effectID), a[9] > 0 else { return 0 }
       try checkLimit(particles.count, resource: "active particle effects")
       // Keep handles exactly representable in engine doubles.
@@ -573,7 +573,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
 /// scheduled clips must not suppress an immediate hit sound in an earlier frame.
 struct EngineAudioScheduler {
   private var pending = [EngineAudioCommand]()
-  private var lastPlayed = [Int: TimeInterval]()
+  private var lastPlayed = [EngineResourceID: TimeInterval]()
 
   mutating func enqueue(_ commands: [EngineAudioCommand]) throws {
     guard commands.count <= 16_384 - pending.count else {

@@ -475,10 +475,10 @@ final class NativeEffectVoice: EngineEffectVoice {
 @MainActor
 private final class NativeEffectBank {
   let engine = AVAudioEngine()
-  private var buffers = [Int: AVAudioPCMBuffer]()
+  private var buffers = [EngineResourceID: AVAudioPCMBuffer]()
   private var voices = [NativeEffectVoice]()
 
-  init(clips: [Int: Data]) throws {
+  init(clips: [EngineResourceID: Data]) throws {
     guard clips.count <= 256 else {
       throw EngineInterpreterError.resourceLimitExceeded("effect audio clips")
     }
@@ -512,7 +512,7 @@ private final class NativeEffectBank {
     }
   }
 
-  func voice(for id: Int) throws -> any EngineEffectVoice {
+  func voice(for id: EngineResourceID) throws -> any EngineEffectVoice {
     guard let buffer = buffers[id] else {
       throw EngineInterpreterError.invalidArguments("effect clip")
     }
@@ -531,7 +531,7 @@ private final class NativeEffectBank {
 @MainActor
 final class EngineAudioPlayback {
   private struct Loop {
-    let clipID: Int
+    let clipID: EngineResourceID
     let start: Double
     var end = Double.infinity
     var voice: (any EngineEffectVoice)?
@@ -546,15 +546,15 @@ final class EngineAudioPlayback {
     let id: Int
     let command: EngineAudioCommand
   }
-  let clipIDs: Set<Int>
-  private let clips: [Int: Data]
-  private let makeVoice: @MainActor (Int, Data) throws -> any EngineEffectVoice
+  let clipIDs: Set<EngineResourceID>
+  private let clips: [EngineResourceID: Data]
+  private let makeVoice: @MainActor (EngineResourceID, Data) throws -> any EngineEffectVoice
   private var nativeBank: NativeEffectBank?
-  private var available = [Int: [any EngineEffectVoice]]()
+  private var available = [EngineResourceID: [any EngineEffectVoice]]()
   private(set) var allocatedVoiceCount = 0
   private var pending = [Pending]()
-  private var players = [Int: (clipID: Int, voice: any EngineEffectVoice)]()
-  private var lastPlayed = [Int: Double]()
+  private var players = [Int: (clipID: EngineResourceID, voice: any EngineEffectVoice)]()
+  private var lastPlayed = [EngineResourceID: Double]()
   private var nextID = 0
   private var isPaused = false
   private var pausedLoopCommands = [EngineLoopCommand]()
@@ -568,7 +568,7 @@ final class EngineAudioPlayback {
       EffectData.self, from: presentation.data("effectData")
     )
     let archive = try EffectAudioArchive(data: presentation.data("effectAudio"))
-    var clips = [Int: Data]()
+    var clips = [EngineResourceID: Data]()
     for definition in engine.effect.clips {
       if let clip = data.clips.first(where: { $0.name == definition.name }),
         let bytes = archive.files[clip.filename] {
@@ -578,8 +578,8 @@ final class EngineAudioPlayback {
     try self.init(clips: clips)
   }
 
-  init(clips: [Int: Data],
-    makeVoice: @escaping @MainActor (Int, Data) throws -> any EngineEffectVoice
+  init(clips: [EngineResourceID: Data],
+    makeVoice: @escaping @MainActor (EngineResourceID, Data) throws -> any EngineEffectVoice
   ) throws {
     guard clips.count <= 256 else {
       throw EngineInterpreterError.resourceLimitExceeded("effect audio clips")
@@ -596,7 +596,7 @@ final class EngineAudioPlayback {
     }
   }
 
-  convenience init(clips: [Int: Data]) throws {
+  convenience init(clips: [EngineResourceID: Data]) throws {
     let bank = try NativeEffectBank(clips: clips)
     try self.init(clips: clips, makeVoice: { id, _ in try bank.voice(for: id) })
     nativeBank = bank

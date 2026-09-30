@@ -1,8 +1,11 @@
 import Foundation
 
+// Named resource identities are engine numbers, not array indices.
+typealias EngineResourceID = Double
+
 struct EngineNamedID: Decodable, Sendable {
   let name: String
-  let id: Int
+  let id: EngineResourceID
 }
 
 struct EngineSkinDefinition: Decodable, Sendable {
@@ -103,7 +106,7 @@ struct EngineDataNode: Decodable, Sendable {
 }
 
 struct EngineBucketSprite: Decodable, Sendable {
-  let id: Int
+  let id: EngineResourceID
   let x: Double
   let y: Double
   let w: Double
@@ -125,7 +128,7 @@ struct EnginePlayData: Decodable, Sendable {
   let buckets: [EngineBucket]
 
   /// Ambiguous aliases must not turn a custom effect into stage decoration.
-  var introStageSpriteIDs: Set<Int> {
+  var introStageSpriteIDs: Set<EngineResourceID> {
     let stageNames: Set<String> = ["#STAGE_MIDDLE", "#STAGE_COVER", "#LANE",
       "#LANE_SEAMLESS", "#LANE_ALTERNATIVE", "#LANE_ALTERNATIVE_SEAMLESS",
       "#JUDGMENT_LINE", "#NOTE_SLOT", "#STAGE_LEFT_BORDER",

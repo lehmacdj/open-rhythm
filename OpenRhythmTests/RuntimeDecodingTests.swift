@@ -571,6 +571,91 @@ private struct DepthFixtureHost: EngineRuntimeHost {
 }
 
 final class RuntimeDecodingTests: XCTestCase {
+  func testEngineResourceIDsPreserveNumericIdentity() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[{"name":"#STAGE_MIDDLE","id":0.5}]},
+       "effect":{"clips":[{"name":"clip","id":-9999.5}]},
+       "particle":{"effects":[{"name":"effect","id":1e100}]},
+       "buckets":[{"sprites":[{"id":0.5,"x":0,"y":0,
+         "w":1,"h":1,"rotation":0}]}],"archetypes":[],"nodes":[]}
+      """#.utf8))
+    XCTAssertEqual(Double(engine.skin.sprites[0].id), 0.5)
+    XCTAssertEqual(Double(engine.effect.clips[0].id), -9999.5)
+    XCTAssertEqual(Double(engine.particle.effects[0].id), 1e100)
+    XCTAssertEqual(Double(engine.buckets[0].sprites[0].id), 0.5)
+    XCTAssertEqual(engine.introStageSpriteIDs.map { Double($0) }, [0.5])
+    for function in ["HasSkinSprite", "HasEffectClip", "HasParticleEffect"] {
+      let host = CommandEngineRuntimeHost(memory: EngineMemory(),
+        level: LevelData(bgmOffset: 0, entities: []), skinSpriteIDs: [],
+        effectClipIDs: [], particleEffectIDs: [], archetypeCount: 0)
+      XCTAssertEqual(try host.call(function: function, arguments: [0.5]), 0)
+    }
+  }
+
+  @MainActor
+  func testFractionalResourceIDsPrepareAndRenderWithoutAliasing() throws {
+    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[{"name":"a","id":0.5},{"name":"b","id":0.75}]},
+       "effect":{"clips":[]},"particle":{"effects":[
+         {"name":"a","id":-0.5},{"name":"b","id":-0.75}]},
+       "buckets":[],"archetypes":[],"nodes":[]}
+      """#.utf8))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let texture = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 1),
+      format: format).pngData {
+        UIColor.red.setFill()
+        $0.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        UIColor.blue.setFill()
+        $0.fill(CGRect(x: 1, y: 0, width: 1, height: 1))
+      }
+    let identity = Dictionary(uniqueKeysWithValues:
+      ["x1", "y1", "x2", "y2", "x3", "y3", "x4", "y4"].map { ($0, [$0: 1]) })
+    let skin: [String: Any] = ["width": 2, "height": 1, "interpolation": false,
+      "sprites": ["a", "b"].enumerated().map { index, name in
+        ["name": name, "x": index, "y": 0, "w": 1, "h": 1,
+          "transform": identity] as [String: Any]
+      }]
+    func property(_ value: Double) -> [String: Any] {
+      ["from": ["c": value], "to": ["c": value]]
+    }
+    let particle: [String: Any] = ["width": 2, "height": 1, "interpolation": false,
+      "sprites": [["x": 0, "y": 0, "w": 1, "h": 1]],
+      "effects": ["a", "b"].enumerated().map { index, name in
+        ["name": name, "transform": identity, "groups": [["count": 1,
+          "particles": [["sprite": 0, "color": "#fff", "start": 0,
+            "duration": 1, "x": property(Double(index) / 2), "y": property(0),
+            "w": property(0.1), "h": property(0.1), "r": property(0),
+            "a": property(1)]]]]] as [String: Any]
+      }]
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8),
+        "skinData": try JSONSerialization.data(withJSONObject: skin),
+        "skinTexture": texture,
+        "particleData": try JSONSerialization.data(withJSONObject: particle),
+        "particleTexture": texture]))
+    XCTAssertEqual(Set(assets.skin.keys), [0.5, 0.75])
+    XCTAssertEqual(Set(assets.particles.keys), [-0.5, -0.75])
+    XCTAssertFalse(assets.skin[0.5]?.image === assets.skin[0.75]?.image)
+    let host = CommandEngineRuntimeHost(memory: EngineMemory(),
+      level: LevelData(bgmOffset: 0, entities: []), skinSpriteIDs: Set(assets.skin.keys),
+      effectClipIDs: [], particleEffectIDs: Set(assets.particles.keys), archetypeCount: 0)
+    let quad: [Double] = [-1, -1, -1, 1, 1, 1, 1, -1]
+    for id in [0.5, 0.75] {
+      _ = try host.call(function: "Draw", arguments: [id] + quad + [0, 1])
+    }
+    for id in [-0.5, -0.75] {
+      _ = try host.call(function: "SpawnParticleEffect", arguments: [id] + quad + [1, 0])
+    }
+    let rendered = EngineRenderer.sprites(host: host, assets: assets)
+    XCTAssertEqual(rendered.count, 4)
+    XCTAssertTrue(rendered[0].image === assets.skin[0.5]?.image)
+    XCTAssertTrue(rendered[1].image === assets.skin[0.75]?.image)
+    XCTAssertNotEqual(rendered[2].points, rendered[3].points,
+      "Distinct effect definitions must not alias in lookup or endpoint caches")
+  }
+
   func testTemporaryMemoryEpochWrapAndCopyOnWrite() {
     var storage = EngineTemporaryMemory(generation: .max - 1)
     storage[0] = 42

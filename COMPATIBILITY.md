@@ -992,6 +992,27 @@ integration probes, including successful inputs and restart/buffering paths.
 
 ## Interpreter performance validation
 
+### Named resource identity conformance — September 30, 2026
+
+Skin sprite, effect clip, particle effect and bucket sprite-reference IDs now
+preserve numeric identity instead of narrowing to Int. The public
+[EnginePlayData](https://wiki.sonolus.com/engine-specs/resources/engine-play-data)
+and [EngineDataBucket](https://wiki.sonolus.com/engine-specs/resources/engine-data-bucket)
+schemas declare these IDs as numbers. Synthetic fractional declarations failed
+to decode before this change. Absent finite IDs now return zero from Has queries
+instead of raising an integer-conversion error.
+
+The shared Double alias reaches resource dictionaries, all draw commands,
+one-shot/loop scheduling and voice pools, particle instances and endpoint-cache
+keys. Actual indices, segment counts and host-generated handles remain integers;
+host calls retain finite-value validation. Regressions distinguish neighboring
+fractional IDs, signed and large IDs, separate sprite images and particle
+geometry, plus audio commands and mocked voice pools. JSON decoding covers
+bucket references and intro-stage classification. No sampled engine is claimed
+to declare fractional IDs, and this is not independently observed native-client
+parity or an acoustic check. Verification artifacts are recorded under BF-24 in
+REQUESTS.md.
+
 ### Stream identity conformance — September 30, 2026
 
 All five stream functions preserve finite numeric IDs, including negative,
@@ -1506,6 +1527,7 @@ because an older paragraph says “more conformance.”
 | Fourteen stack functions | Unimplemented; unsupported preflight is not implementation. | Independently establish pointer/frame layout, Temporary Memory aliasing and enter/leave semantics, then verify nested frames and pointer mutation. Implementation/upstream clarification remain deferred; authorized cached consumer search continues separately. |
 | Host callback availability | Explicit documented exclusions checked across 39 function and nine lifecycle pages at the pinned revision; known rules have regressions. | No additional documented exclusion found. An additional restriction needs a named source or independent behavior evidence; absence of a public restriction is not native parity. |
 | Resource selection/defaults | Online UseItem, optional ROM, UI enums, render-mode precedence and named availability implemented. Independent source review found the offline selection mismatch fixed below. | Selected-resource download/online equivalence, retained artwork and required-resource failures are the bounded checks. Omitted schema-required UI fields are tolerated by host policy, not a documented missing default to guess. No further named documented-default mismatch emerged from this review. |
+| Engine result buckets (BF-25) | EntityInput bucket/value are discarded at despawn; results use archetype names and a fixed hold-tick exclusion list. Bucket units/sprites are not presented, and fallbackId is not decoded. | Preserve engine result grouping/value/unit and declared sprite/fallback presentation through persisted history. Keep timing-in-seconds plots and legacy records; establish graph-participation semantics without equating every bucket value to accuracy. Synthetic and cached evidence are still required. |
 | Resource/rendering policies | Atlas budgets, incomplete-schema tolerance, blur implementation and per-engine preference scope are explicit policies. Particle coefficient/easing defaults use the public Studio reference. | Exact native filtering/random realization/codec breadth remain evidence limits, not invented documented defaults. Texture metadata dimension disagreement is malformed-input handling, not a separate scaling default. Reproduce a valid-resource rejection or cite a missing rule before expanding support. |
 | Allocation exposure (BF-11) | Earlier atlas decode/base crops lie outside later tint/upload budgets; no observed failure established. | Bounded allocation/cost diagnostic before changing limits. Do not induce OOM or claim process RSS is bounded by nominal texture payload. |
 | Scheduled audio and calibration | Native scheduled-stop kernel, offset mapping and calibration controls have simulator regressions. Independent audio-offset sign/unit convention remains underdocumented. | Seek independent sign/unit evidence without inferring correction from user bias. Acoustic accuracy, stopped-clock transition precision and calibration usability require the deferred device batch. |

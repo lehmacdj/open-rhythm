@@ -438,7 +438,7 @@ struct ParticleData: Decodable {
 struct EngineParticlePropertyCache {
   struct Key: Hashable {
     let seed: UInt64
-    let effect: Int
+    let effect: EngineResourceID
     let group: Int
     let particle: Int
   }
@@ -751,8 +751,8 @@ final class EnginePresentationAssets {
   let scoreModeOption: EngineConfiguration.Option?
   private let scoreModeIndex: Int?
   private let noteSpeedIndex: Int?
-  let skin: [Int: Sprite]
-  let particles: [Int: ParticleData.Effect]
+  let skin: [EngineResourceID: Sprite]
+  let particles: [EngineResourceID: ParticleData.Effect]
   // Retain resource indices without cropping or allocating unused sprites.
   let particleSprites: [ParticleSprite?]
   let interpolation: Bool
@@ -809,7 +809,7 @@ final class EnginePresentationAssets {
     }
     scoreModeIndex = configuration.options.firstIndex(where: \.usesScoreModeControl)
     scoreModeOption = scoreModeIndex.map { configuration.options[$0] }
-    var sprites = [Int: Sprite]()
+    var sprites = [EngineResourceID: Sprite]()
     if engine.skin.sprites.isEmpty {
       interpolation = false
     } else {
@@ -856,7 +856,7 @@ final class EnginePresentationAssets {
     )?.cgImage else {
       throw RuntimeBundleError.missingResource("valid particle texture")
     }
-    var effects = [Int: ParticleData.Effect]()
+    var effects = [EngineResourceID: ParticleData.Effect]()
     for definition in engine.particle.effects {
       guard let effect = particleData.effects.first(where: {
         $0.name == definition.name
