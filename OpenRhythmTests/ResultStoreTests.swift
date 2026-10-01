@@ -2,6 +2,72 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testBucketMetadataSurvivesHistoryWithoutChangingTimingOrScores() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let definition = try JSONDecoder().decode(EngineBucket.self, from: Data(#"""
+      {"unit":"degrees","sprites":[
+        {"id":0.5,"fallbackId":0.75,"x":-1,"y":2,"w":3,"h":4,"rotation":45},
+        {"id":1.5,"x":1,"y":-2,"w":0.3,"h":0.4,"rotation":-30}]}
+      """#.utf8))
+    var play = result(levelID: "bucket-contract", perfect: 1)
+    play.noteTimings = [NoteTiming(id: 0, songTime: 2, noteType: "CustomInput",
+      judgement: .perfect, accuracy: -0.025, bucketIndex: 0, bucketValue: 72.5),
+      NoteTiming(id: 1, songTime: 3, noteType: "CustomInput", judgement: .great,
+        accuracy: 0.05, bucketIndex: -1, bucketValue: 0)]
+    play.engineBuckets = [EngineResultBucket(definition: definition,
+      windows: [-1, 2, -3, 4, -5, 6])]
+    play.engineScore = 875_000
+    play.accuracyScore = 975_000
+    let store = ResultStore(rootURL: root)
+    try await store.record(play)
+    let reopened = ResultStore(rootURL: root)
+    let values = try await reopened.allResults()
+    let summary = try XCTUnwrap(values.first)
+    XCTAssertNil(summary.noteTimings)
+    XCTAssertNil(summary.engineBuckets, "Keep detail metadata out of list decoding")
+    let loaded = try await reopened.details(for: summary)
+    let details = try XCTUnwrap(loaded)
+    XCTAssertEqual(details.samples, play.noteTimings)
+    XCTAssertEqual(details.engineBuckets, play.engineBuckets)
+    XCTAssertEqual(details.engineBuckets?.first?.definition.sprites[0].fallbackId, 0.75)
+    XCTAssertNil(details.engineBuckets?.first?.definition.sprites[1].fallbackId)
+    XCTAssertEqual(summary.score, 875_000)
+    XCTAssertEqual(summary.accuracyScore, 975_000)
+    XCTAssertEqual(PlayStatistics(samples: details.samples).timingsMS, [-25, 50])
+    let embedded = try await reopened.details(for: play)
+    XCTAssertEqual(embedded, details)
+    let oldAPI = try await reopened.noteTimings(for: summary)
+    XCTAssertEqual(oldAPI, details.samples)
+  }
+
+  func testLegacyTimingPayloadsRemainReadableWithoutInventingBuckets() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let legacy = Data(#"""
+      [{"id":0,"songTime":1,"noteType":"Tap","judgement":"perfect","accuracy":0}]
+      """#.utf8)
+    let details = try JSONDecoder().decode(ResultDetails.self, from: legacy)
+    XCTAssertNil(details.engineBuckets)
+    XCTAssertNil(details.samples[0].bucketIndex)
+    XCTAssertNil(details.samples[0].bucketValue)
+    let store = ResultStore(rootURL: root)
+    var play = result(levelID: "old", perfect: 1)
+    play.noteTimings = details.samples
+    try await store.record(play)
+    let history = try await store.allResults()
+    let summary = try XCTUnwrap(history.first)
+    let payload = root.appendingPathComponent("ResultTimings")
+      .appendingPathComponent(try XCTUnwrap(summary.timingID).uuidString + ".json")
+    try legacy.write(to: payload, options: .atomic)
+    let loaded = try await ResultStore(rootURL: root).details(for: summary)
+    XCTAssertEqual(loaded, details)
+    XCTAssertThrowsError(try JSONDecoder().decode(ResultDetails.self,
+      from: Data(#"{"samples":"broken"}"#.utf8)))
+  }
+
   func testNewPlayPreservesHistoryAndDetailsBeyondFiveHundred() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)

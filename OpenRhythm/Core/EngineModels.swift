@@ -105,8 +105,9 @@ struct EngineDataNode: Decodable, Sendable {
   }
 }
 
-struct EngineBucketSprite: Decodable, Sendable {
+struct EngineBucketSprite: Codable, Equatable, Sendable {
   let id: EngineResourceID
+  var fallbackId: EngineResourceID? = nil
   let x: Double
   let y: Double
   let w: Double
@@ -114,9 +115,16 @@ struct EngineBucketSprite: Decodable, Sendable {
   let rotation: Double
 }
 
-struct EngineBucket: Decodable, Sendable {
+struct EngineBucket: Codable, Equatable, Sendable {
   let sprites: [EngineBucketSprite]
   let unit: String?
+}
+
+struct EngineResultBucket: Codable, Equatable, Sendable {
+  let definition: EngineBucket
+  // LevelBucket order: min/max Perfect, min/max Great, min/max Good.
+  // Invalid values stay unavailable, never guessed or used to rejudge input.
+  let windows: [Double?]
 }
 
 struct EnginePlayData: Decodable, Sendable {

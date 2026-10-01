@@ -1164,7 +1164,8 @@ final class GameplayModel {
       default: grade = .miss
       }
       record(grade, accuracy: judgment.accuracy,
-        at: metadata.time, noteType: metadata.type)
+        at: metadata.time, noteType: metadata.type,
+        bucketIndex: judgment.bucketIndex, bucketValue: judgment.bucketValue)
     }
   }
 
@@ -1186,14 +1187,16 @@ final class GameplayModel {
   }
 
   private func record(_ judgement: NoteJudgement, accuracy: Double? = nil,
-    at time: Double? = nil, noteType: String = "Unknown") {
+    at time: Double? = nil, noteType: String = "Unknown",
+    bucketIndex: Double? = nil, bucketValue: Double? = nil) {
     let validAccuracy = judgement != .miss && accuracy.map {
       $0.isFinite && abs($0) <= 3_600
     } == true ? accuracy : nil
     let songTime = time ?? currentTime
     let timing = NoteTiming(id: noteTimings.count,
       songTime: songTime.isFinite ? songTime : currentTime,
-      noteType: noteType, judgement: judgement, accuracy: validAccuracy)
+      noteType: noteType, judgement: judgement, accuracy: validAccuracy,
+      bucketIndex: bucketIndex, bucketValue: bucketValue)
     noteTimings.append(timing)
     let ui = presentationAssets?.ui
     if ui?.primaryMetric == "errorHeatmap" || ui?.secondaryMetric == "errorHeatmap",
@@ -1250,7 +1253,8 @@ final class GameplayModel {
       scoreMode: scoreModeName, finalLife: engineLife?.value,
       maximumLife: engineLife?.maximum, failed: engineLife?.failed,
       modifiedOptions: modifiedOptions, accuracyScore: accuracyScore,
-      playbackTiming: playbackTiming
+      playbackTiming: playbackTiming,
+      engineBuckets: engineRuntime?.resultBuckets
     )
     resultSaveTask = Task {
       do {

@@ -54,6 +54,10 @@ struct EngineJudgment: Sendable {
   let grade: Int
   let accuracy: Double
   var haptic: EngineHaptic = .none
+  // Raw finite values; consumers validate the bucket index before lookup.
+  // Nil means unavailable, while -1 explicitly means no assigned bucket.
+  var bucketIndex: Double? = nil
+  var bucketValue: Double? = nil
 }
 
 enum EngineHaptic: Int, CaseIterable, Sendable {
@@ -282,6 +286,7 @@ final class EnginePlayRuntime {
   private(set) var accuracyScore = EngineAccuracyScore()
   private(set) var life = EngineLife(configuration: [0, 0, 0, 0, 0, 0, 1000, 1000])
   private let engine: EnginePlayData
+  private(set) var resultBuckets = [EngineResultBucket]()
   private let staticIntroArchetypes: Set<Int>
   private let interpreter: EngineInterpreter
   private var entities = [Entity]()
@@ -425,6 +430,12 @@ final class EnginePlayRuntime {
     }
     for entity in ordered(entities, by: \.preprocess) {
       _ = try execute(entity, callback: \.preprocess)
+    }
+    resultBuckets = engine.buckets.enumerated().map { index, definition in
+      EngineResultBucket(definition: definition, windows: (0..<6).map {
+        let value = memory.value(block: 2003, index: index * 6 + $0)
+        return value.isFinite ? value : nil
+      })
     }
     let weights = Dictionary(uniqueKeysWithValues: entities.compactMap { entity in
       guard let index = entity.index, engine.archetypes[entity.archetype].hasInput
@@ -613,10 +624,14 @@ final class EnginePlayRuntime {
         life.record(grade: lifeGrade,
           increment: memory.value(block: 5000, index: entity.archetype * 4 + gradeIndex)
             + memory.value(block: 4007, index: gradeIndex))
+        let bucketIndex = memory.value(block: 4005, index: 2)
+        let bucketValue = memory.value(block: 4005, index: 3)
         judgments.append(EngineJudgment(
           entityIndex: index, grade: Int(exactly: grade) ?? 0,
           accuracy: accuracy,
-          haptic: EngineHaptic(runtimeValue: memory.value(block: 4005, index: 4))
+          haptic: EngineHaptic(runtimeValue: memory.value(block: 4005, index: 4)),
+          bucketIndex: bucketIndex.isFinite ? bucketIndex : nil,
+          bucketValue: bucketValue.isFinite ? bucketValue : nil
         ))
         resolvedInputCount += 1
       }

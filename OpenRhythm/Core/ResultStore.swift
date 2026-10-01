@@ -1,5 +1,31 @@
 import Foundation
 
+/// Detailed payloads stay outside the history index. Decode the old bare sample
+/// array as well as the extensible object used for engine result metadata.
+struct ResultDetails: Codable, Equatable, Sendable {
+  let samples: [NoteTiming]
+  let engineBuckets: [EngineResultBucket]?
+
+  init(samples: [NoteTiming], engineBuckets: [EngineResultBucket]? = nil) {
+    self.samples = samples
+    self.engineBuckets = engineBuckets
+  }
+
+  private enum CodingKeys: String, CodingKey { case samples, engineBuckets }
+
+  init(from decoder: any Decoder) throws {
+    if let _ = try? decoder.unkeyedContainer() {
+      samples = try [NoteTiming](from: decoder)
+      engineBuckets = nil
+    } else {
+      let values = try decoder.container(keyedBy: CodingKeys.self)
+      samples = try values.decode([NoteTiming].self, forKey: .samples)
+      engineBuckets = try values.decodeIfPresent(
+        [EngineResultBucket].self, forKey: .engineBuckets)
+    }
+  }
+}
+
 struct EngineOptionOverride: Codable, Equatable, Sendable {
   let name: String
   let value: String
@@ -33,6 +59,7 @@ struct PlayResult: Codable, Identifiable, Sendable {
   // from their plot samples, which deliberately exclude miss timing values.
   var accuracyScore: Int? = nil
   var playbackTiming: PlaybackTimingReport? = nil
+  var engineBuckets: [EngineResultBucket]? = nil
 
   /// Engine scores depend on note weights and judgement order, so retain the
   /// actual result. Legacy plays lack that information; preserve their prior
@@ -75,9 +102,13 @@ actor ResultStore {
   func record(_ result: PlayResult) throws {
     var values = try allResults()
     var summary = result
-    let payload = try result.noteTimings.map { try JSONEncoder().encode($0) }
+    let payload = try result.noteTimings.map {
+      try JSONEncoder().encode(ResultDetails(samples: $0,
+        engineBuckets: result.engineBuckets))
+    }
     if payload != nil {
       summary.noteTimings = nil
+      summary.engineBuckets = nil
       summary.hasTimingData = true
       summary.timingID = UUID()
     }
@@ -117,9 +148,15 @@ actor ResultStore {
   }
 
   func noteTimings(for result: PlayResult) throws -> [NoteTiming]? {
-    if let embedded = result.noteTimings { return embedded }
+    try details(for: result)?.samples
+  }
+
+  func details(for result: PlayResult) throws -> ResultDetails? {
+    if let embedded = result.noteTimings {
+      return ResultDetails(samples: embedded, engineBuckets: result.engineBuckets)
+    }
     guard result.hasTimingData == true else { return nil }
-    return try JSONDecoder().decode([NoteTiming].self,
+    return try JSONDecoder().decode(ResultDetails.self,
       from: Data(contentsOf: timingURL(for: result.timingID ?? result.id)))
   }
 

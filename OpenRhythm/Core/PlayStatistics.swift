@@ -7,6 +7,10 @@ struct NoteTiming: Codable, Identifiable, Equatable, Sendable {
   let judgement: NoteJudgement
   // Signed seconds: negative is early. Misses have no timing error.
   let accuracy: Double?
+  // Independent engine result-graph data, not seconds of timing error.
+  // Older results omit these fields; explicit no-bucket inputs store -1.
+  var bucketIndex: Double? = nil
+  var bucketValue: Double? = nil
 
   // Engine archetype names retained in old results let us identify the known
   // automatically timed intermediate hold checkpoints without discarding

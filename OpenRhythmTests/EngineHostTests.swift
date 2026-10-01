@@ -3998,9 +3998,118 @@ final class EngineHostTests: XCTestCase {
     try runtime.update(at: 0)
     XCTAssertEqual(runtime.judgments.map(\.haptic), [.long])
     XCTAssertEqual(runtime.judgments.first?.accuracy, 0.025)
+    XCTAssertEqual(runtime.judgments.first?.bucketIndex, -1)
+    XCTAssertEqual(runtime.judgments.first?.bucketValue, 0)
     XCTAssertEqual(runtime.accuracyScore.snapshot(noteCount: 1)?.earned, 975_000)
     try runtime.update(at: 1)
     XCTAssertTrue(runtime.judgments.isEmpty)
+  }
+
+  func testFinalBucketInputIsRetainedSeparatelyFromAccuracy() throws {
+    let builder = RuntimeNodeBuilder()
+    func set(_ field: Int, _ value: Double) -> Int {
+      builder.call("Set", [builder.value(4005), builder.value(Double(field)),
+        builder.value(value)])
+    }
+    let despawn = builder.call("Set", [builder.value(4004), builder.value(0),
+      builder.value(1)])
+    let update = builder.call("Execute", [set(2, 3), set(3, 123), despawn])
+    let terminate = builder.call("Execute", [set(0, 2), set(1, -0.025),
+      set(2, 0), set(3, -72.5)])
+    let windows: [Double] = [-1, 2, -3, 4, -5, 6]
+    let preprocess = builder.call("Execute", windows.enumerated().map { i, v in
+      builder.call("Set", [builder.value(2003), builder.value(Double(i)),
+        builder.value(v)])
+    })
+    let engine = try builder.engine(archetypes: [
+      ["name": "CustomInput", "hasInput": true, "imports": [], "exports": [],
+       "preprocess": ["index": preprocess],
+       "updateParallel": ["index": update], "terminate": ["index": terminate]]
+    ], buckets: [["sprites": [], "unit": "custom units"]])
+    let runtime = try EnginePlayRuntime(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "CustomInput", name: nil, data: [])
+      ]), options: [], aspectRatio: 1, skinSpriteIDs: [],
+      effectClipIDs: [], particleEffectIDs: [])
+    for _ in 0..<2 {
+      try runtime.update(at: 0)
+      let judgment = try XCTUnwrap(runtime.judgments.first)
+      XCTAssertEqual(judgment.bucketIndex, 0)
+      XCTAssertEqual(judgment.bucketValue, -72.5)
+      XCTAssertEqual(judgment.accuracy, -0.025)
+      XCTAssertEqual(runtime.resultBuckets.first?.definition.unit, "custom units")
+      XCTAssertEqual(runtime.resultBuckets.first?.windows, windows.map(Optional.some))
+      XCTAssertEqual(runtime.accuracyScore.snapshot(noteCount: 1)?.earned, 975_000)
+      try runtime.update(at: 1)
+      XCTAssertTrue(runtime.judgments.isEmpty)
+      runtime.restart()
+    }
+  }
+
+  @MainActor
+  func testGameplayPersistsEngineBucketInputAndDefinitions() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("silent.caf")
+    let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000,
+      channels: 1))
+    let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8000))
+    buffer.frameLength = 8000
+    buffer.floatChannelData![0].initialize(repeating: 0, count: 8000)
+    do {
+      let file = try AVAudioFile(forWriting: url, settings: format.settings)
+      try file.write(from: buffer)
+    }
+    let b = RuntimeNodeBuilder()
+    func set(_ block: Int, _ index: Int, _ value: Double) -> Int {
+      b.call("Set", [b.value(Double(block)), b.value(Double(index)), b.value(value)])
+    }
+    let initialize = b.call("Execute", [set(4005, 0, 2), set(4005, 1, -0.025),
+      set(4005, 2, 0), set(4005, 3, 72.5), set(4004, 0, 1)])
+    let engine = try b.engine(archetypes: [[
+      "name": "CustomInput", "hasInput": true, "imports": [], "exports": [],
+      "initialize": ["index": initialize]]],
+      buckets: [["sprites": [], "unit": "degrees"]])
+    let locator = ResourceLocator(hash: nil, url: nil)
+    let level = SonolusLevelItem(name: "bucket-result", source: nil,
+      version: 1, rating: 1, title: LocalizedText("Bucket Result"),
+      artists: LocalizedText("Fixture"), author: "Fixture", tags: [],
+      cover: locator, bgm: locator, data: locator)
+    let store = ResultStore(rootURL: root)
+    let model = GameplayModel(resultStore: store)
+    model.prepare(bundle: RuntimeBundle(engine: engine,
+      level: LevelData(bgmOffset: 0, entities: [
+        LevelEntity(archetype: "CustomInput", name: nil, data: [])]),
+      bgmURL: url, isOffline: true, presentation: RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8)])), level: level,
+      server: ServerDescriptor(id: "bucket-result", name: "Fixture",
+        baseURL: URL(string: "https://fixture.example")!), title: "Bucket Result")
+    let previousSettings = model.settings
+    defer { model.stop(); model.settings = previousSettings }
+    model.settings = GameplayPreferences()
+    model.start()
+    for _ in 0..<1000 {
+      model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+      if !model.noteTimings.isEmpty { break }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    let sample = try XCTUnwrap(model.noteTimings.first)
+    XCTAssertEqual(sample.bucketIndex, 0)
+    XCTAssertEqual(sample.bucketValue, 72.5)
+    XCTAssertEqual(sample.accuracy, -0.025)
+    // Signal the normal completion boundary; this is not an audio-duration test.
+    model.playbackEnded()
+    await model.resultSaveTask?.value
+    XCTAssertEqual(model.phase, .finished)
+    XCTAssertNil(model.resultSaveError)
+    let results = try await store.allResults()
+    let result = try XCTUnwrap(results.first)
+    let loaded = try await store.details(for: result)
+    XCTAssertEqual(loaded?.samples, [sample])
+    XCTAssertEqual(loaded?.engineBuckets?.first?.definition.unit, "degrees")
+    XCTAssertEqual(result.great, 1)
   }
 
   func testAccuracyUsesAbsoluteEngineErrorsAndBothScoreDirections() throws {
