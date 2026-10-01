@@ -1060,6 +1060,67 @@ struct EngineRenderSprite {
   var isInputVisual = false
 }
 
+extension EnginePresentationAssets {
+  /// A self-contained result thumbnail, using the selected skin at play time.
+  /// Rotation uses degrees; fitting/padding is our result-card layout policy.
+  func bucketImage(_ bucket: EngineBucket) throws -> Data? {
+    guard bucket.sprites.count <= 16_384 else {
+      throw EngineInterpreterError.resourceLimitExceeded("result bucket sprite layers")
+    }
+    let identity: [Double] = [1, 0, 0, 0, 0, 1, 0, 0,
+      0, 0, 1, 0, 0, 0, 0, 1]
+    var layers = [EngineRenderSprite]()
+    for entry in bucket.sprites {
+      guard let sprite = skin[entry.id]
+        ?? entry.fallbackId.flatMap({ skin[$0] }) else { continue }
+      guard [entry.x, entry.y, entry.w, entry.h, entry.rotation].allSatisfy(\.isFinite)
+      else { throw EngineInterpreterError.invalidArguments("result bucket sprite geometry") }
+      let angle = entry.rotation.truncatingRemainder(dividingBy: 360) * .pi / 180
+      let c = cos(angle), s = sin(angle)
+      let points = [(-1.0, -1.0), (-1, 1), (1, 1), (1, -1)].map { x, y in
+        let dx = x * entry.w / 2, dy = y * entry.h / 2
+        return EnginePoint(x: entry.x + c * dx - s * dy,
+          y: entry.y + s * dx + c * dy)
+      }
+      let transformed = EngineGeometry.transformed(points, by: sprite.transform)
+      guard transformed.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else {
+        throw EngineInterpreterError.invalidArguments("result bucket sprite transform")
+      }
+      layers.append(EngineRenderSprite(image: sprite.image, points: transformed,
+        matrix: identity, alpha: 1, interpolation: interpolation,
+        textureRegion: sprite.textureRegion, renderMode: skinRenderMode))
+    }
+    guard !layers.isEmpty else { return nil }
+    let points = layers.flatMap(\.points)
+    let minX = points.map(\.x).min()!, maxX = points.map(\.x).max()!
+    let minY = points.map(\.y).min()!, maxY = points.map(\.y).max()!
+    let extent = max(maxX - minX, maxY - minY)
+    guard extent.isFinite, extent > 0 else { return nil }
+    let center = EnginePoint(x: minX / 2 + maxX / 2, y: minY / 2 + maxY / 2)
+    let fitted = layers.map { layer in
+      EngineRenderSprite(image: layer.image, points: layer.points.map {
+        EnginePoint(x: (($0.x - center.x) / extent) * 1.8,
+          y: (($0.y - center.y) / extent) * 1.8)
+      }, matrix: identity, alpha: 1, interpolation: layer.interpolation,
+        textureRegion: layer.textureRegion, renderMode: layer.renderMode)
+    }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.preferredRange = .standard
+    let size = CGSize(width: 128, height: 128)
+    var failure: Error?
+    let image = UIGraphicsImageRenderer(size: size, format: format).image { context in
+      do { try EngineRenderer.draw(fitted, context: context.cgContext, size: size) }
+      catch { failure = error }
+    }
+    if let failure { throw failure }
+    guard let png = image.pngData() else {
+      throw EngineInterpreterError.resourcePreparationFailed("a result bucket image")
+    }
+    return png
+  }
+}
+
 /// Compare visible presentation, not entity activation or offscreen commands.
 /// Static stage graphics can remain on screen throughout a skippable lead-in.
 @MainActor

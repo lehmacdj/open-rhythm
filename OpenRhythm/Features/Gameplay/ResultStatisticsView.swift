@@ -41,6 +41,7 @@ struct PlaybackTimingSection: View {
 struct ResultStatisticsSections: View {
   let samples: [NoteTiming]?
   let duration: Double?
+  var engineBuckets: [EngineResultBucket]? = nil
   @State private var noteType: String?
 
   var body: some View {
@@ -90,6 +91,9 @@ struct ResultStatisticsSections: View {
             .font(.caption).foregroundStyle(.secondary)
         }
       }
+      if let engineBuckets, !engineBuckets.isEmpty {
+        EngineBucketSection(samples: stats.samples, buckets: engineBuckets)
+      }
     } else {
       Section("Timing Analysis") {
         Text("Per-note timing was not recorded for this older result.")
@@ -101,6 +105,97 @@ struct ResultStatisticsSections: View {
   private func milliseconds(_ value: Double?) -> String {
     value.map { $0.formatted(.number.precision(.fractionLength(1))) + " ms" }
       ?? "—"
+  }
+}
+
+struct EngineBucketSection: View {
+  let samples: [NoteTiming]
+  let buckets: [EngineResultBucket]
+  @State private var selected = 0
+
+  var body: some View {
+    if !buckets.isEmpty {
+      let index = buckets.indices.contains(selected) ? selected : 0
+      let bucket = buckets[index]
+      let stats = EngineBucketStatistics(samples: samples, index: index, bucket: bucket)
+      Section("Engine Buckets") {
+        Picker("Bucket", selection: $selected) {
+          ForEach(buckets.indices, id: \.self) { index in
+            Text("Bucket \(index + 1)").tag(index)
+          }
+        }
+        if let data = bucket.imagePNG, let image = UIImage(data: data) {
+          Image(uiImage: image).resizable().scaledToFit()
+            .frame(maxWidth: .infinity).frame(height: 64)
+            .accessibilityLabel("Engine graphic for bucket \(index + 1)")
+        } else if !bucket.definition.sprites.isEmpty {
+          Text(bucket.imageError ?? "The bucket graphic was not recorded or is unavailable.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        LabeledContent("Inputs / Misses",
+          value: "\(stats.samples.count) / \(stats.misses)")
+        LabeledContent("Unit", value: stats.unit ?? "Not specified by engine")
+        EngineBucketPlot(stats: stats)
+        ForEach(0..<3, id: \.self) { grade in
+          LabeledContent("\(judgementLabels[grade]) Window", value:
+            stats.windows[grade].map {
+              "\(EngineBucketStatistics.formatValue($0.lowerBound)) … \(EngineBucketStatistics.formatValue($0.upperBound))"
+            } ?? "Unavailable")
+        }
+        Text("Engine-assigned values, in the unit shown above. Misses and inputs without a finite bucket value are not plotted. The note-type filter also applies here.")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+    }
+  }
+}
+
+struct EngineBucketPlot: View {
+  let stats: EngineBucketStatistics
+  @ScaledMetric(relativeTo: .body) private var chartHeight: CGFloat = 220
+
+  var body: some View {
+    // Normalize only drawing coordinates so even very large custom units do
+    // not overflow Charts' domain arithmetic. Axis labels retain engine units.
+    let values = stats.points.compactMap(\.bucketValue)
+      + stats.windows.compactMap { $0 }.flatMap { [$0.lowerBound, $0.upperBound] }
+    let scale = values.map(abs).max().flatMap { $0 > 0 ? $0 : nil } ?? 1
+    Chart {
+      ForEach(stats.points) { sample in
+        PointMark(x: .value("Song time", sample.songTime),
+          y: .value("Engine value", sample.bucketValue! / scale))
+          .symbolSize(18)
+          .foregroundStyle(by: .value("Judgement", sample.judgement.rawValue.uppercased()))
+      }
+      ForEach(0..<3, id: \.self) { grade in
+        if let window = stats.windows[grade] {
+          RuleMark(y: .value("Minimum window", window.lowerBound / scale))
+            .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            .foregroundStyle(.secondary)
+          RuleMark(y: .value("Maximum window", window.upperBound / scale))
+            .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+    .chartForegroundStyleScale(domain: judgementLabels)
+    .chartYScale(domain: -1.0...1.0)
+    .chartYAxis {
+      AxisMarks(values: [-1.0, -0.5, 0, 0.5, 1.0]) { value in
+        AxisGridLine()
+        AxisValueLabel {
+          if let value = value.as(Double.self) {
+            Text(EngineBucketStatistics.formatValue(value * scale))
+          }
+        }
+      }
+    }
+    .chartXAxisLabel("Song time (s)")
+    .chartYAxisLabel(stats.unit ?? "Engine value")
+    .frame(height: chartHeight)
+    .accessibilityLabel("Engine bucket values across the song")
+    .overlay {
+      if stats.points.isEmpty { Text("No recorded values").foregroundStyle(.secondary) }
+    }
   }
 }
 
@@ -213,6 +308,24 @@ struct TimingHistogram: View {
       in: RoundedRectangle(cornerRadius: 10))
   }
 
+}
+
+#Preview("Engine Bucket Results") {
+  let samples: [NoteTiming] = (0..<30).map { index in
+    let grade: NoteJudgement = index.isMultiple(of: 7) ? .great : .perfect
+    let error = Double(index % 7 - 3) / 1000
+    let value = Double(index % 11 - 5)
+    return NoteTiming(id: index, songTime: Double(index) * 4,
+      noteType: "CustomInput", judgement: grade, accuracy: error,
+      bucketIndex: 0, bucketValue: value)
+  }
+  let bucket = EngineResultBucket(definition: EngineBucket(sprites: [],
+    unit: "degrees"), windows: [-3, 3, -6, 6, -10, 10],
+    imagePNG: UIImage(systemName: "music.note")?.pngData())
+  NavigationStack {
+    Form { EngineBucketSection(samples: samples, buckets: [bucket]) }
+      .navigationTitle("Result")
+  }
 }
 
 #Preview("Timing Charts") {

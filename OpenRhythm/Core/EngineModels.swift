@@ -125,6 +125,8 @@ struct EngineResultBucket: Codable, Equatable, Sendable {
   // LevelBucket order: min/max Perfect, min/max Great, min/max Good.
   // Invalid values stay unavailable, never guessed or used to rejudge input.
   let windows: [Double?]
+  var imagePNG: Data? = nil
+  var imageError: String? = nil
 }
 
 struct EnginePlayData: Decodable, Sendable {

@@ -93,26 +93,22 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** BF-25's data-capture unit retains final bucket/value,
-  definitions, fallback IDs and preprocessed windows through gameplay/history.
-  Five focused tests, normal build and independent review pass. The broader
-  run passed 384/391; seven audio-startup checks failed amid audio-queue start
-  timeouts and passed unchanged on rerun. This is not a single green full run;
-  that intermittent failure is retained as BF-26 below. Work is local.
-- **Selected next action:** finish BF-25 presentation: consume saved result
-  metadata, preserve rendered bucket identity without depending on later
-  engine/server changes, and display bucket-specific values/units/windows
-  separately from the requested timing-in-seconds charts.
-- **Why:** source review exposed another supplied field the client discards.
-  This affects requested complete statistics and engine-driven behavior, so
-  it outranks further speculation about atlas allocation or native parity.
-- **Acceptance:** engine-selected grouping/value/unit and graph participation
-  survive despawn and history persistence; declared sprite/fallback metadata
-  is honored in bucket presentation. Keep requested timing-in-seconds plots,
-  score/accuracy calculations and legacy-result readability intact. Verify
-  generic synthetic names and cached hold ticks before replacing name-based
-  exclusions. No bucket (-1) alone is not an automatic-hold classifier. No
-  physical checks or stack implementation are authorized here.
+- **Completed action:** BF-25 capture and presentation are implemented. New
+  and past plays show engine-selected bucket values, units, windows and saved
+  composite skin graphics. The existing timing charts remain separate. All
+  110 selected result/decoding/gameplay tests, normal build and independent
+  review pass; simulator UI previews and cached graphics were inspected.
+- **Selected next action:** BF-26, one bounded repeated-start/session-ownership
+  investigation of the seven intermittent simulator startup failures observed
+  during the earlier broad run. Preserve the failed and passing evidence.
+- **Why:** this is a concrete playback-readiness failure, more important than
+  further result styling or speculative allocation tuning. An isolated rerun
+  does not explain it, but neither does it establish a metadata regression.
+- **Acceptance:** capture the blocked startup phase and session/generation
+  sequence in a bounded repeated-start workload. Fix a reproduced app defect
+  if found; otherwise record the negative result and exact evidence needed.
+  Do not loosen assertions, invent timing shifts, repeatedly run the whole
+  suite until green, or reopen the physical-device/stack gates.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -162,7 +158,7 @@ The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
 | BF-22 / P2 — verified | Cross-engine preparation profiling isolated repeated per-pixel tint arithmetic as a main-actor loading cost. Exact 256-entry channel tables now amortize that work; below 256 pixels the original arithmetic avoids table setup. | Paired Debug presentation means: SEKAI 461.9→312.2 ms, SIF 10.6→8.6 ms, 22/7 61.3→40.6 ms. Exhaustive channel-byte equivalence, tiny/cutoff images, alpha, metadata and allocation-failure checks pass in 20 focused tests. Normal build and independent review pass. Loading improvement only; in-song/device performance remains open. |
 | BF-23 / P1 — verified | Native-clock/cached-engine contacts failed immediately in 22/7 with invalid StreamSet arguments. Cached engine node 627 explicitly writes stream ID -9999; the host invented a nonnegative-integer restriction. Prior no-touch lifecycle tests never reached that contact path. | All five stream functions now preserve finite numeric IDs without narrowing. New synthetic and cached contact/restart regressions failed before the fix; 16 focused tests, all 384 non-cached tests, normal build and independent review pass afterward. The actual GameplayModel probe now reaches chart time 8 s in all three engines, including 33 successful 22/7 judgments. |
 | BF-24 / P2 — verified | Declared skin/clip/particle IDs and bucket sprite references were narrowed to Int despite numeric public schemas. Fractional declarations failed to decode, and missing finite IDs could throw instead of reporting absence. | Numeric identities now survive resource maps, drawing, audio and particle caches; indices/counts and generated handles remain integers. All 387 non-cached tests, two bounded cached integrations, normal build and independent review pass. No sampled-engine fractional-ID occurrence or native-client parity is claimed. |
-| BF-25 / P2 — capture verified; presentation open | Final EntityInput bucket/value, bucket definitions/fallback IDs and preprocessed windows now survive gameplay/history. Bucket-specific UI and retained sprite imagery are not implemented. Intermediate hold exclusion remains a known-name list. | Finish engine-driven result presentation while retaining requested timing plots. No bucket means no bucket-graph entry, not automatic hold tick. Test custom units, primary/fallback sprites, explicit no bucket, old results, shared buckets/differing assignments and cached hold evidence. |
+| BF-25 / P2 — implemented and bounded verification complete | Final bucket/value, definitions, windows and selected-skin thumbnail snapshots survive gameplay/history. New/past result panels show bucket-specific values and windows in the declared unit, independently of accuracy seconds. | 110 selected tests, normal build and independent review pass. Default/accessibility UI previews and cached SEKAI/SIF/22/7 graphics inspected; repeated cached thumbnail preparation measured. Primary/fallback precedence, fractional IDs, rotation, custom units, shared/differing assignments, invalid metadata and legacy loading covered. Native pixel-layout parity is not claimed; the existing hold-name exclusion remains unchanged. |
 | BF-26 / P2 — intermittent validation finding | The BF-25 broad run passed 384/391; seven existing intro checks remained in startup while the console logged repeated AudioQueue start timeouts. All seven pass unchanged in an isolated rerun. The new gameplay persistence test ran later and passed. | Cause is not established. Investigate if repeated start/release and session ownership reproduce it; retain exact failed evidence and avoid declaring either a new bucket regression or a fixed simulator issue from the isolated pass. Do not repeatedly rerun the whole suite just to obtain green. |
 
 BF-24 evidence: the fractional decode regression failed before production
@@ -217,6 +213,42 @@ The broader result is `RunSomeTests/33017B1C-05EF-4DFF-97D5-A89FBFC82565.txt`
 `RunSomeTests/71D7368E-7A06-4264-A04A-819523F3C8D2.txt`. Normal build passes:
 `BuildProject/BuildProject-Log-20260930-215915.txt`; independent review is clean.
 No physical test, network chart fetch or push was performed.
+
+BF-25 presentation follow-up: a separate Engine Buckets section is now shared
+by just-completed and historical results. Selection uses the assigned bucket
+index rather than archetype names; the existing note-type filter applies to
+its samples as well. A dedicated scatterplot shows finite successful bucket
+values against song time, with six engine-supplied window boundaries and
+recorded miss counts. Custom values are not multiplied by 1000, inferred to
+be early/late, or used for scoring. Absent units are explicitly unspecified.
+Extreme finite values are normalized only for chart coordinates; axis labels
+and window values retain engine units. Accuracy-seconds plots are unchanged.
+
+Used buckets retain 128px PNG composites of the selected skin, including
+primary/fallback lookup, sprite transforms, declaration order and degree
+rotation. Fitting and padding are client presentation policy; cached SEKAI
+declares -90-degree bucket rotations, but native pixel-layout parity has not
+been measured. Old results without image snapshots show an unavailable notice,
+not a network fetch. Per-bucket failures retain the data and a descriptive image
+error. Optional image output is capped at 8M pixels per result and 16,384 layers
+per bucket; this is not a total source-decode or process-memory bound.
+
+Initial software-only thumbnail generation took 316–342 ms for all 24 cached
+SEKAI buckets. Reusing the existing native affine draw path with software warp
+fallback reduced three passes to 36.10/12.70/11.94 ms. SIF's three buckets took
+2.29/1.64/1.48 ms; 22/7's six took 10.97/3.56/3.06 ms. PNG totals were 194,842,
+55,016 and 56,832 bytes respectively. These are Debug simulator preparation
+measurements, not device/frame-tail results; actual saves prepare only assigned
+buckets. Probe: ignored `tmp/bucket-preview-profile.swift`.
+
+All 110 selected tests pass in
+`RunSomeTests/CF2EF2E0-5684-4CF1-A153-F231C2005720.txt`, including result
+history/legacy payloads, grouping across arbitrary archetype names, separate
+units, final gameplay persistence and primary/fallback image checks. Standard
+and AX 2 previews were inspected; chart height now scales with text size.
+Normal build: `BuildProject/BuildProject-Log-20260930-221333.txt`.
+Independent final review is clean. This focused evidence does not erase the
+earlier BF-26 broad-run failure or establish generic automatic-hold semantics.
 
 BF-23 is a contract/coverage correction, not an engine-name exception. The
 public [StreamSet contract](https://wiki.sonolus.com/engine-specs/functions/stream-set)

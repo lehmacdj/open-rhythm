@@ -654,6 +654,25 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertTrue(rendered[1].image === assets.skin[0.75]?.image)
     XCTAssertNotEqual(rendered[2].points, rendered[3].points,
       "Distinct effect definitions must not alias in lookup or endpoint caches")
+    func icon(_ id: Double, fallback: Double? = nil,
+      rotation: Double = 0) throws -> Data {
+      try XCTUnwrap(assets.bucketImage(EngineBucket(sprites: [EngineBucketSprite(
+        id: id, fallbackId: fallback, x: 0, y: 0, w: 2, h: 1,
+        rotation: rotation)], unit: nil)))
+    }
+    let primary = try icon(0.5)
+    XCTAssertEqual(try icon(100, fallback: 0.5), primary)
+    XCTAssertEqual(try icon(0.5, fallback: 0.75), primary,
+      "An available primary must win over the fallback")
+    XCTAssertNotEqual(try icon(0.75), primary)
+    let rotated = try icon(0.5, rotation: 90)
+    XCTAssertNotEqual(rotated, primary, "Degree rotation changes rectangular geometry")
+    XCTAssertEqual(try icon(0.5, rotation: 450), rotated)
+    XCTAssertNil(try assets.bucketImage(EngineBucket(sprites: [EngineBucketSprite(
+      id: 100, x: 0, y: 0, w: 2, h: 1, rotation: 0)], unit: nil)))
+    let decoded = try XCTUnwrap(UIImage(data: primary)?.cgImage)
+    XCTAssertEqual(decoded.width, 128)
+    XCTAssertEqual(decoded.height, 128)
   }
 
   func testTemporaryMemoryEpochWrapAndCopyOnWrite() {

@@ -2,6 +2,41 @@ import XCTest
 @testable import OpenRhythm
 
 final class ResultStoreTests: XCTestCase {
+  func testEngineBucketGroupingKeepsCustomUnitsSeparateFromTiming() throws {
+    let bucket = EngineResultBucket(definition: EngineBucket(sprites: [],
+      unit: "degrees"), windows: [-2, 3, -5, 6, -10, 11])
+    let samples = [
+      NoteTiming(id: 0, songTime: 1, noteType: "A", judgement: .great,
+        accuracy: -0.02, bucketIndex: 0, bucketValue: 5),
+      NoteTiming(id: 1, songTime: 2, noteType: "B", judgement: .perfect,
+        accuracy: 0.01, bucketIndex: 0, bucketValue: -1),
+      NoteTiming(id: 2, songTime: 3, noteType: "A", judgement: .good,
+        accuracy: 0.05, bucketIndex: 1, bucketValue: 9),
+      NoteTiming(id: 3, songTime: 4, noteType: "B", judgement: .perfect,
+        accuracy: 0, bucketIndex: -1, bucketValue: 0),
+      NoteTiming(id: 4, songTime: 5, noteType: "B", judgement: .miss,
+        accuracy: nil, bucketIndex: 0, bucketValue: 100),
+      NoteTiming(id: 5, songTime: 6, noteType: "B", judgement: .good,
+        accuracy: 0.1, bucketIndex: 0, bucketValue: .infinity),
+      NoteTiming(id: 6, songTime: 7, noteType: "B", judgement: .good,
+        accuracy: 0.1, bucketIndex: 0.5, bucketValue: 100)]
+    let stats = EngineBucketStatistics(samples: samples, index: 0, bucket: bucket)
+    XCTAssertEqual(stats.samples.map(\.id), [0, 1, 4, 5])
+    XCTAssertEqual(stats.points.map(\.bucketValue), [5, -1])
+    XCTAssertEqual(stats.misses, 1)
+    XCTAssertEqual(stats.unit, "degrees")
+    XCTAssertEqual(stats.windows, [-2...3, -5...6, -10...11])
+    let filtered = PlayStatistics(samples: samples, noteType: "A")
+    XCTAssertEqual(EngineBucketStatistics(samples: filtered.samples,
+      index: 0, bucket: bucket).points.map(\.id), [0])
+    XCTAssertEqual(filtered.timingsMS, [-20, 50])
+    let missing = EngineResultBucket(definition: EngineBucket(sprites: [], unit: nil),
+      windows: [2, -2, .nan, 0])
+    let invalid = EngineBucketStatistics(samples: [], index: 0, bucket: missing)
+    XCTAssertNil(invalid.unit)
+    XCTAssertTrue(invalid.windows.allSatisfy { $0 == nil })
+  }
+
   func testBucketMetadataSurvivesHistoryWithoutChangingTimingOrScores() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
@@ -17,7 +52,7 @@ final class ResultStoreTests: XCTestCase {
       NoteTiming(id: 1, songTime: 3, noteType: "CustomInput", judgement: .great,
         accuracy: 0.05, bucketIndex: -1, bucketValue: 0)]
     play.engineBuckets = [EngineResultBucket(definition: definition,
-      windows: [-1, 2, -3, 4, -5, 6])]
+      windows: [-1, 2, -3, 4, -5, 6], imagePNG: Data([1, 2, 3]))]
     play.engineScore = 875_000
     play.accuracyScore = 975_000
     let store = ResultStore(rootURL: root)

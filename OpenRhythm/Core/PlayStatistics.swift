@@ -1,5 +1,36 @@
 import Foundation
 
+struct EngineBucketStatistics {
+  let samples: [NoteTiming]
+  let points: [NoteTiming]
+  let windows: [ClosedRange<Double>?]
+  let unit: String?
+
+  init(samples: [NoteTiming], index: Int, bucket: EngineResultBucket) {
+    self.samples = samples.filter { $0.bucketIndex == Double(index) }
+    points = self.samples.filter {
+      $0.judgement != .miss && $0.bucketValue?.isFinite == true
+        && $0.songTime.isFinite && abs($0.songTime) <= 86_400
+    }
+    unit = bucket.definition.unit.map(EngineStandardText.label)
+    windows = stride(from: 0, to: 6, by: 2).map { offset in
+      guard bucket.windows.indices.contains(offset + 1),
+        let low = bucket.windows[offset], let high = bucket.windows[offset + 1],
+        low.isFinite, high.isFinite, low <= high else { return nil }
+      return low...high
+    }
+  }
+
+  var misses: Int { samples.filter { $0.judgement == .miss }.count }
+
+  static func formatValue(_ value: Double) -> String {
+    let magnitude = abs(value)
+    return value.formatted(.number.notation(
+      magnitude >= 1e6 || (magnitude > 0 && magnitude < 0.001)
+        ? .scientific : .automatic).precision(.significantDigits(1...5)))
+  }
+}
+
 struct NoteTiming: Codable, Identifiable, Equatable, Sendable {
   let id: Int
   let songTime: Double

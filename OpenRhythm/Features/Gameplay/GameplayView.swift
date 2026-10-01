@@ -282,7 +282,7 @@ struct GameplayView: View {
       }
       ModifiedEngineOptionsSection(options: model.modifiedOptions)
       ResultStatisticsSections(samples: model.noteTimings,
-        duration: model.currentTime)
+        duration: model.currentTime, engineBuckets: model.resultBuckets)
       PlaybackTimingSection(report: model.playbackTiming)
       Section {
         Button("Done") {

@@ -242,6 +242,7 @@ struct SongDetailView: View {
 struct ResultDetailView: View {
   let result: PlayResult
   @State private var timingSamples: [NoteTiming]?
+  @State private var engineBuckets: [EngineResultBucket]?
   @State private var timingError: String?
 
   private var hasTimings: Bool {
@@ -287,7 +288,8 @@ struct ResultDetailView: View {
           }
         }
       } else {
-        ResultStatisticsSections(samples: timingSamples, duration: result.duration)
+        ResultStatisticsSections(samples: timingSamples, duration: result.duration,
+          engineBuckets: engineBuckets)
       }
       PlaybackTimingSection(report: result.playbackTiming)
     }
@@ -297,11 +299,17 @@ struct ResultDetailView: View {
   }
 
   private func loadTimings() async {
-    guard hasTimings else { return }
+    timingSamples = nil
+    engineBuckets = nil
     timingError = nil
+    guard hasTimings else { return }
     do {
-      timingSamples = try await ResultStore.shared.noteTimings(for: result)
+      let details = try await ResultStore.shared.details(for: result)
+      guard !Task.isCancelled else { return }
+      timingSamples = details?.samples
+      engineBuckets = details?.engineBuckets
     } catch {
+      guard !Task.isCancelled else { return }
       timingError = "The detailed timing data could not be loaded. "
         + error.localizedDescription
     }

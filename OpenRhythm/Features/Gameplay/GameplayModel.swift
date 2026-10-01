@@ -258,6 +258,7 @@ final class GameplayModel {
   private var judgementSequence = 0
   private(set) var latestJudgement: JudgementFeedback?
   @ObservationIgnored private(set) var noteTimings = [NoteTiming]()
+  private(set) var resultBuckets: [EngineResultBucket]? = nil
   @ObservationIgnored private var inputMetadata = [(time: Double?, type: String)]()
   private(set) var engineRuntime: EnginePlayRuntime?
   private(set) var presentationAssets: EnginePresentationAssets?
@@ -586,6 +587,7 @@ final class GameplayModel {
     musicHasEnded = false
     latestJudgement = nil
     noteTimings.removeAll(keepingCapacity: true)
+    resultBuckets = nil
     timingHeatmap = EngineErrorHeatmap()
     errorHeatmap = timingHeatmap.snapshot
     combo = 0
@@ -1236,6 +1238,24 @@ final class GameplayModel {
 
   private func saveResult() {
     guard let level = resultLevel else { return }
+    if let runtime = engineRuntime, let assets = presentationAssets {
+      let used = Set(noteTimings.compactMap(\.bucketIndex))
+      // Bound optional thumbnail work independently of retained result data.
+      var previewPixels = 0
+      resultBuckets = runtime.resultBuckets.enumerated().map { index, bucket in
+        guard used.contains(Double(index)) else { return bucket }
+        var snapshot = bucket
+        do {
+          guard previewPixels <= 8_000_000 - 128 * 128 else {
+            throw EngineInterpreterError.resourceLimitExceeded("result bucket previews")
+          }
+          previewPixels += 128 * 128
+          snapshot.imagePNG = try assets.bucketImage(bucket.definition)
+        }
+        catch { snapshot.imageError = error.localizedDescription }
+        return snapshot
+      }
+    }
     let result = PlayResult(
       id: UUID(),
       levelID: resultLevelID,
@@ -1254,7 +1274,7 @@ final class GameplayModel {
       maximumLife: engineLife?.maximum, failed: engineLife?.failed,
       modifiedOptions: modifiedOptions, accuracyScore: accuracyScore,
       playbackTiming: playbackTiming,
-      engineBuckets: engineRuntime?.resultBuckets
+      engineBuckets: resultBuckets
     )
     resultSaveTask = Task {
       do {
