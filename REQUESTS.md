@@ -54,12 +54,13 @@ proposed replacement is not authority to change its scope or completion gate.
    regressions, remaining questions and deferred device checks. Push stable,
    tested units under the existing authorization without treating that subset
    as completion of this audit.
-   **September 30 push limit:** at most four repository pushes per calendar
+   **October 3 push limit:** at most one repository push per calendar
    day in America/New_York, to avoid App Store Connect limits. This is a cap,
    not a target: batch tested local commits into meaningful releases instead
    of pushing each fix. Check the day's successful pushes before publishing;
-   if the count cannot be established, do not assume unused capacity. No
-   further pushes on September 30. Continue local commits/testing normally.
+   if the count cannot be established, do not assume unused capacity.
+   Continue local commits/testing normally. This supersedes the September 30
+   four-push limit.
    Do not evade the limit through another branch, tag or release-trigger path.
 7. **Batch verification by risk.** Run the focused regression for a fix; run
    the broader non-cached suite for high-risk shared changes or a coherent
@@ -87,6 +88,24 @@ proposed replacement is not authority to change its scope or completion gate.
    them. A negative discovery pass is a valid result, not a reason to invent
    another patch. If all remaining required actions are genuinely gated,
    report the dependencies instead of cycling through cosmetic audit edits.
+
+## Build 82 release investigation — October 3, 2026
+
+- **Report:** the user reports the latest Xcode Cloud build failed and supplied
+  `OpenRhythm Build 82 Logs for OpenRhythm archive.zip`.
+- **Verified scope:** the archive log ends in `ARCHIVE SUCCEEDED` on September
+  30 at 20:45:38 UTC. Ad hoc, development and App Store exports all end in
+  `EXPORT SUCCEEDED` at 20:45:46–47 UTC. The supplied ZIP does not include an
+  overall failure summary or upload/TestFlight post-action log.
+- **Unresolved evidence:** the App Store export logs report that the Cloud
+  session proxy could not authenticate with App Store Connect while requesting
+  store configuration (credential authentication context, code 1). Export
+  continued successfully, so this warning does not establish the cause of
+  the reported overall failure. No rate-limit failure is established either.
+- **Next bounded action:** obtain the failed phase's error message/log or the
+  Xcode Cloud failure summary, then diagnose that phase. Do not alter signing,
+  credentials or source code based solely on a nonfatal export warning. No
+  push or Cloud build retry was performed for this investigation.
 
 ## Current work record — September 30, 2026
 
