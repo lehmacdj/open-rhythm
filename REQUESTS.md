@@ -126,21 +126,30 @@ proposed replacement is not authority to change its scope or completion gate.
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** BF-26 bounded investigation did not reproduce the
-  intermittent stall. Twelve real simulator audio starts across eight same-model
-  restarts and three replacements preserved session ownership; all 20 intro
-  tests also passed. Startup-phase/generation/player diagnostics now accompany
-  a recurrence. Independent review's preference-isolation finding was fixed;
-  final review is clean. This is a negative result, not a root-cause fix.
-- **Selected next action:** BF-11, one bounded source-decode/base-crop allocation
-  diagnostic using existing cached assets and small synthetic fixtures.
-- **Why:** repeated startup now has a bounded negative result and better failure
-  evidence. Do not keep rerunning it without a recurrence; atlas/base-crop work
-  remains a named unmeasured boundary before the existing allocation guards.
-- **Acceptance:** identify decode/crop ownership and retained payload versus
-  atlas dimensions/crop count; measure representative cost without inducing
-  OOM. Fix a demonstrated defect if found, otherwise record the boundary and
-  stop. Do not invent resource limits or claim nominal bytes bound process RSS.
+- **Completed action:** BF-11's bounded allocation diagnostic confirms crops
+  retain their source atlases outside later tint/upload accounting. Cached
+  SEKAI/SIF/22/7 crop-only preparation and small synthetic crop workloads
+  demonstrated no actionable leak or per-crop full-atlas duplication. Lazy
+  decoding and framework caching limit the RSS evidence; no new limit added.
+  Independent review agrees with that scope. BF-26 also remains a negative
+  bounded investigation with better diagnostics, not a root-cause fix.
+- **Selected next action:** continue the authorized cached stack-consumer
+  search under its dedicated agent. Reconcile its completed catalogs and
+  pending SEKAI work without treating enumerated pages as an atomic snapshot.
+- **Why:** the named non-stack allocation/startup investigations now have
+  bounded results. Repeating them without new evidence would not finish the
+  remaining stack ABI or physical checks; preserve those exact dependencies.
+- **Acceptance:** complete or explicitly account for crawl tasks/failures,
+  scan discovered engine graphs, and distinguish graph reachability from
+  actual chart execution. Do not implement an inferred stack ABI or reopen
+  physical tests. A negative crawl does not prove no stack consumer exists.
+- **Live handle, October 6:** crawler PID 16252 was verified live after a
+  successful paced recovery probe and first resumed request. It reuses the
+  existing cache; 22/7 and LLSIF enumerated tasks are complete, SEKAI has
+  2,159 levels done / 7,476 pending, and no stack hits are recorded. SEKAI page
+  counts drifted (481/483), so do not claim an atomic/full-server snapshot.
+  Poll this handle or request history before inferring a stopped worker; do
+  not restart based on an old report or an observation timeout.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -215,6 +224,29 @@ test rebuild. Independent review is clean after preference isolation. Earlier
 September 30 full-run artifact paths are no longer present in the temporary
 ActionArtifacts directory on this host; the recorded failure/isolated-pass
 summary below remains historical evidence, not a freshly inspected raw log.
+
+BF-11 bounded follow-up — October 6: the active iOS SDK's `CGImage.h`, in the
+`CGImageCreateWithImageInRect` documentation, explicitly states that the crop
+retains the original image. Selected skin crops are deduplicated by exact
+bounds; selected particle entries retain their crop and source atlas. Those
+source references are not covered by later tint or Metal texture budgets.
+This is an accounting boundary, not evidence of a leak or duplicated full
+atlas storage per crop.
+
+The ignored `tmp/atlas-allocation-profile.swift` ran two Debug simulator passes
+using existing cached assets and an identity tint factory to isolate base
+preparation. Results were SEKAI 136 unique skin crops / 62 particle crops,
+90–113 ms; SIF 11 / 3, 7.2–7.4 ms; 22/7 13 / 12, 7.0–7.6 ms. Combined
+skin+particle atlas dimensions correspond to nominal RGBA totals of
+20,971,520 / 1,310,720 / 20,971,520 bytes respectively, not measured decoded
+residency. A 512-square generated atlas with 1 / 16 / 256 overlapping 64-square
+crops took 0.018 / 0.014 / 0.118 ms to create handles. Sampled warm RSS was
+near-flat, but handle creation precedes the base-preparation baseline and
+decoding may be lazy. These are not attributed allocations, peak memory,
+tint/upload work, process-RSS bounds or physical-device measurements. No OOM
+was induced, no actionable allocation defect was demonstrated, and no new
+limits or production changes were justified. Independent review confirmed
+these limitations. Revisit only with new failure/allocation evidence.
 
 BF-24 evidence: the fractional decode regression failed before production
 changes in `RunSomeTests/4F1DCB41-5706-4CA1-8729-FFBE6B784DE2.txt`.

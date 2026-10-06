@@ -1452,6 +1452,18 @@ launch/resume, not completion of the multi-day crawl. Old hashless fixture
 bytes are not assumed current merely because their former URL is known;
 safe reuse requires a matching declared hash or this crawl's dated URL cache.
 
+October 6 recovery: the old worker was confirmed absent after its logged normal
+stop on October 5; recent requests had failed through a proxy tunnel (HTTP 502).
+A single paced recovery request succeeded. The same cache resumed as detached
+PID 16252 at 21:00:45 UTC, verified live with parent/process-group IDs 1/16252;
+its first resumed request also succeeded. At that point 22/7's 550 levels and
+28 pages and LLSIF's 1,916 levels and 96 pages were complete for the enumerated
+tasks. SEKAI had 2,159 levels complete and 7,476 pending, with observed page
+counts changing between 481 and 483. No stack hits are recorded in the three
+discovered engines. Neither completed enumerated tasks nor a multi-day crawl
+prove an atomic or permanently complete server snapshot. Continue the existing
+60–120-second host gates; revalidate the process before any future restart.
+
 The September 25 contract recheck still does not supply an interoperable stack
 layout. The [overview](
 https://wiki.sonolus.com/engine-specs/functions/stack-functions) locates the
@@ -1530,7 +1542,7 @@ because an older paragraph says “more conformance.”
 | Engine result buckets (BF-25) | Final values, units, windows and selected-skin composite PNGs survive history. Both result screens show a separate engine-value plot/window table; old payloads still load. 110 selected tests, preview inspection, cached graphic/cost checks, build and review pass. | Bounded implementation verified; no native pixel-layout parity or device performance claim. Explicit no-bucket does not establish automatic hold status; existing accuracy-seconds plots and hold-name heuristic stay separate. Thumbnail output caps are host policy, not source-decode/RSS bounds. |
 | Intermittent simulator startup (BF-26) | Seven intro checks failed in the BF-25 broad run amid repeated audio-queue start timeouts, then passed unchanged when isolated. October 6: twelve native simulator starts across restarts/replacements and all 20 intro tests pass; new failure diagnostics expose startup stage, generation and player state. | Cause remains unproven; the bounded ownership workload did not reproduce it. Revisit on a recurrence with those diagnostics, not repeated green runs. No full-suite or physical reliability claim. |
 | Resource/rendering policies | Atlas budgets, incomplete-schema tolerance, blur implementation and per-engine preference scope are explicit policies. Particle coefficient/easing defaults use the public Studio reference. | Exact native filtering/random realization/codec breadth remain evidence limits, not invented documented defaults. Texture metadata dimension disagreement is malformed-input handling, not a separate scaling default. Reproduce a valid-resource rejection or cite a missing rule before expanding support. |
-| Allocation exposure (BF-11) | Earlier atlas decode/base crops lie outside later tint/upload budgets; no observed failure established. | Bounded allocation/cost diagnostic before changing limits. Do not induce OOM or claim process RSS is bounded by nominal texture payload. |
+| Allocation exposure (BF-11) | October 6 bounded diagnostic confirms cropped images retain source atlases outside tint/upload accounting. Cached crop-only preparation and small synthetic workloads demonstrate no actionable allocation defect; independent review concurs with the limited claim. | Reopen for a reproduced failure or new allocation evidence. Handle creation/crop costs and sampled RSS do not establish full decoded residency, peak memory or device safety. No tighter resource limit was invented. |
 | Scheduled audio and calibration | Native scheduled-stop kernel, offset mapping and calibration controls have simulator regressions. Independent audio-offset sign/unit convention remains underdocumented. | Seek independent sign/unit evidence without inferring correction from user bias. Acoustic accuracy, stopped-clock transition precision and calibration usability require the deferred device batch. |
 | RuntimeUpdate skip metadata | No runtime clock jump is performed: intro search executes successive updates and leaves skip zero. | A future actual seek/resimulation path needs independently established skip semantics. Current conservative intro behavior is tracked separately, not repaired by guessing a skip value. |
 | Intro silence trimming (BF-19) | Approved static-scene policy implemented; cached SEKAI GameplayModel startup advances past the unchanged stage to visible input-owned notes and repeats after restart. | Initial changes/disappearance rewind; input-owned graphics, particles and later additions stop. This is client policy, not semantic recognition of arbitrary images drawn by non-input managers. Physical verification remains deferred. |
