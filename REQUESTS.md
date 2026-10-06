@@ -101,19 +101,25 @@ proposed replacement is not authority to change its scope or completion gate.
   analysis succeeded. The archive action's issue is "Preparing build for App
   Store Connect failed" in "Prepare Build for App Store Connect"; TestFlight
   Internal Testing did not run. The logs page nevertheless labels the
-  preparation group and its child step as passed. The issue identifies the
-  failing phase, but neither that generic message nor the passed-step labels
-  establish its underlying cause. Detailed preparation output still needs
-  inspection; Firefox's active picture-in-picture window interrupted access.
-- **Unresolved evidence:** the App Store export logs report that the Cloud
+  preparation group and its child step as passed. Expanded preparation output
+  only says it is preparing version 0.1.0, build 82.
+- **Confirmed cause:** in App Store Connect, OpenRhythm → TestFlight → iOS →
+  Build Uploads → build 82's Failed status, the error dialog reports:
+  `90382: Upload limit reached. The upload limit for your application has been
+  reached. Please wait 1 day and try again.` The upload is dated September 30,
+  2026 at 4:47 PM. This resolves the missing failure diagnosis: upload was
+  rejected for the application's limit, not a compilation or test failure.
+- **Separate warning:** the App Store export logs report that the Cloud
   session proxy could not authenticate with App Store Connect while requesting
   store configuration (credential authentication context, code 1). Export
   continued successfully, so this warning does not establish the cause of
-  the reported overall failure. No rate-limit failure is established either.
-- **Next bounded action:** inspect the preparation step's expanded output in
-  App Store Connect, then diagnose that phase. Do not alter signing,
-  credentials or source code based solely on a nonfatal export warning. No
-  push or Cloud build retry was performed for this investigation.
+  the reported overall failure; the upload dialog supplies the actual rejection.
+- **Disposition:** no source/signing/credential fix is indicated by error
+  90382. Retain the once-per-day push cap and batch tested local changes. The
+  error does not specify the numerical quota or its reset-time convention;
+  do not invent either or use manual retries to bypass the release policy.
+  No push or Cloud build retry was performed. Recovery remains unverified
+  until the next authorized release uploads successfully.
 
 ## Current work record — September 30, 2026
 
