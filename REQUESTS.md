@@ -121,6 +121,21 @@ proposed replacement is not authority to change its scope or completion gate.
   No push or Cloud build retry was performed. Recovery remains unverified
   until the next authorized release uploads successfully.
 
+### October 6 release follow-up
+
+At 17:22 EDT, the tested batch was pushed once to `origin/main`, advancing
+`52e12b2e` to `bc4071aa`. Before pushing, a fresh fetch showed the remote still
+at the September 30 commit; local operation history and paginated GitHub push
+events showed zero October 6 pushes (America/New_York). The successful push
+uses today's single slot. Do not push another change today, including this
+local-only release record, and do not manually retry a Cloud build.
+
+GitHub's `OpenRhythm | Default` status is pending for this exact commit and
+links to [the new Xcode Cloud build](https://appstoreconnect.apple.com/teams/c82e4c52-3c01-4bc3-ac1c-84a79e9f986a/apps/6810074703/ci/builds/eb59d3e9-6429-4069-b9e9-8bdbab4eedbe).
+Observe that build to terminal status; upload recovery is not yet verified.
+This release contains the 403-test validated batch, not completion of the
+remaining API and physical validation requirements.
+
 ## Current work record — October 6, 2026
 
 - **Outcome:** complete the requested features and documented play-mode API;
@@ -137,9 +152,11 @@ proposed replacement is not authority to change its scope or completion gate.
   393-test non-cached and ten-test cached runs, with no failures or skips;
   the normal simulator build passes. Independent backlog review found no
   overlooked actionable requirement outside the recorded dependencies.
-- **Selected next action:** continue the authorized cached stack-consumer
-  search under its dedicated agent. Reconcile its completed catalogs and
-  pending SEKAI work without treating enumerated pages as an atomic snapshot.
+- **Selected next action:** observe the pending Cloud build above for the
+  tested release, without another push/retry. Continue the authorized cached
+  stack-consumer search independently under its dedicated agent. Reconcile
+  completed catalogs and pending SEKAI work without treating enumerated pages
+  as an atomic snapshot.
 - **Why:** the named non-stack allocation/startup investigations now have
   bounded results. Repeating them without new evidence would not finish the
   remaining stack ABI or physical checks; preserve those exact dependencies.
