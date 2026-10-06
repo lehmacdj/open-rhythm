@@ -8,9 +8,7 @@ play, run engine-defined gameplay, and retain detailed results. It is an
 operational compatibility milestone, not a complete Sonolus replacement or a
 guarantee that every third-party engine works.
 
-Build 83 is available to the existing internal TestFlight group. Xcode Cloud
-completed compilation, tests, analysis, archive, and TestFlight distribution.
-The previous upload-limit failure did not recur.
+Build 83 is available to the existing internal TestFlight group.
 
 ## Browsing and managing songs
 
@@ -118,19 +116,10 @@ History no longer automatically discards plays after 500 entries. Older results
 show only what their original build recorded; missing timing data or previously
 deleted history cannot be reconstructed.
 
-## Engine coverage and verification
+## Engine runtime
 
-Compatibility work has exercised Love Live! School idol festival, SIF Custom
-Charts, Project SEKAI, and 22/7. Cached checks include “shake it!” Hard 18,
-Eleventh, 光 Hard 18, SIF UNSTOPPABLE, and a 22/7 Pro chart. Coverage includes
-chart lifecycles, restarts, successful contact/hold paths, SEKAI flick movement,
-intro skipping, and 22/7 stage-touch streams. This is sampled coverage, not a
-certification of every chart, option combination, or physical device.
-
-The current local suite passes all 403 tests across a 393-test non-cached run
-and ten cached integrations, with no failures or skips. The normal simulator
-build passes, and fix batches have received independent review. Cloud build
-83 also passed; its test action is separate from the local cached-fixture runs.
+Compatibility targets include Love Live! School idol festival, SIF Custom
+Charts, Project SEKAI, and 22/7.
 
 Shared runtime support includes lifecycle callbacks, documented play-memory
 access rules, control flow, easing, BPM/time-scale conversion, spawning,
@@ -147,13 +136,11 @@ paths. Missing resources do not silently replace the engine with generic lanes.
 2. **Physical validation:** audio/display alignment, close multitouch, dense
    flicks and holds, hit effects, intro behavior, calibration usability,
    interruptions, repeated starts, scrolling, and live frame-time tails remain
-   in the deferred device batch. Simulator passes are not device sign-off.
-3. **Audio contract uncertainty:** the implemented calibration arithmetic has
-   regression-test coverage, but the public runtime audio-offset convention and exact
-   stopped-clock transition precision remain unresolved.
-4. **Intermittent startup failure:** an earlier simulator run encountered audio
-   startup timeouts. Later focused and full runs passed, and diagnostics were
-   improved, but its cause has not been established.
+   in the deferred device batch.
+3. **Audio contract uncertainty:** the public runtime audio-offset convention
+   and exact stopped-clock transition precision remain unresolved.
+4. **Intermittent startup failure:** simulator audio startup timeouts have been
+   observed; their cause has not been established.
 
 No other identified, reproduced defect is currently awaiting a fix. Exact
 native-client rendering parity, unrestricted resource/codec support, and
