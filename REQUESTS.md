@@ -130,11 +130,24 @@ events showed zero October 6 pushes (America/New_York). The successful push
 uses today's single slot. Do not push another change today, including this
 local-only release record, and do not manually retry a Cloud build.
 
-GitHub's `OpenRhythm | Default` status is pending for this exact commit and
-links to [the new Xcode Cloud build](https://appstoreconnect.apple.com/teams/c82e4c52-3c01-4bc3-ac1c-84a79e9f986a/apps/6810074703/ci/builds/eb59d3e9-6429-4069-b9e9-8bdbab4eedbe).
-Observe that build to terminal status; upload recovery is not yet verified.
-This release contains the 403-test validated batch, not completion of the
-remaining API and physical validation requirements.
+[Xcode Cloud Build 83](https://appstoreconnect.apple.com/teams/c82e4c52-3c01-4bc3-ac1c-84a79e9f986a/apps/6810074703/ci/builds/eb59d3e9-6429-4069-b9e9-8bdbab4eedbe)
+succeeded for this exact commit. The October 6 overview shows Build, Test,
+Analyze, Archive and TestFlight Internal Testing all succeeded. The TestFlight
+post-action started at 17:28:42 EDT, completed in three seconds and reports no
+issues. GitHub's `OpenRhythm | Default` status independently became `success`
+at 21:28:52 UTC. This verifies recovery of the Cloud archive/upload pipeline
+without a signing change, manual retry or second push; error 90382 did not
+recur. It does not establish a numerical upload quota or a safe daily cadence
+beyond the user's existing once-per-day cap.
+
+TestFlight's Build Uploads table independently lists version 0.1.0 (83) as
+`Complete`, created October 6 at 17:24 EDT. The build appears in the `internal`
+group with one invite and no recorded installs yet. This verifies availability
+to the existing internal group, not installation or gameplay on the phone.
+
+This release contains the locally 403-test validated batch. Cloud's successful
+test action is separate evidence, not a claim that opt-in cached fixtures were
+present there. Remaining API and physical validation requirements are open.
 
 ## Current work record — October 6, 2026
 
@@ -152,11 +165,10 @@ remaining API and physical validation requirements.
   393-test non-cached and ten-test cached runs, with no failures or skips;
   the normal simulator build passes. Independent backlog review found no
   overlooked actionable requirement outside the recorded dependencies.
-- **Selected next action:** observe the pending Cloud build above for the
-  tested release, without another push/retry. Continue the authorized cached
-  stack-consumer search independently under its dedicated agent. Reconcile
-  completed catalogs and pending SEKAI work without treating enumerated pages
-  as an atomic snapshot.
+- **Selected next action:** Cloud release recovery is verified above. Continue
+  the authorized cached stack-consumer search independently under its dedicated
+  agent. Reconcile completed catalogs and pending SEKAI work without treating
+  enumerated pages as an atomic snapshot. No further push today.
 - **Why:** the named non-stack allocation/startup investigations now have
   bounded results. Repeating them without new evidence would not finish the
   remaining stack ABI or physical checks; preserve those exact dependencies.
