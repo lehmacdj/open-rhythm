@@ -4,6 +4,9 @@ OpenRhythm is a clean-room iOS client for the public Sonolus server and engine
 specifications. The initial compatibility target is the Love Live! School idol
 festival server at `https://sonolus.milkbun.org/llsif`.
 
+For a concise overview of the shipped app and its remaining limitations, see
+[OpenRhythm capabilities and current status](APP_STATUS.md).
+
 The project intentionally contains no proprietary Sonolus application code,
 assets, keys, branding, or reverse-engineered implementation details. Standard
 English protocol labels are bundled from the public MIT-licensed
