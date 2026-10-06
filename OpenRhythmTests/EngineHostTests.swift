@@ -1801,7 +1801,7 @@ final class EngineHostTests: XCTestCase {
       XCTAssertEqual(model.judgements.values.reduce(0, +), 1)
       return
     }
-    XCTAssertFalse(model.isStartingPlayback)
+    XCTAssertFalse(model.isStartingPlayback, model.startupDiagnostics)
     XCTAssertEqual(model.skippedIntroDuration,
       rewind || resolveAt != nil || lifeChangeAt != nil || stageMovesAt != nil
         ? 0 : appearanceTime == 0 && !earlyInput ? 1.95

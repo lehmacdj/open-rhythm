@@ -121,27 +121,26 @@ proposed replacement is not authority to change its scope or completion gate.
   No push or Cloud build retry was performed. Recovery remains unverified
   until the next authorized release uploads successfully.
 
-## Current work record — September 30, 2026
+## Current work record — October 6, 2026
 
 - **Outcome:** complete the requested features and documented play-mode API;
   establish dependable timing, input and rendering with the deferred physical
   validation batch, without claiming that simulator tests prove those outcomes.
-- **Completed action:** BF-25 capture and presentation are implemented. New
-  and past plays show engine-selected bucket values, units, windows and saved
-  composite skin graphics. The existing timing charts remain separate. All
-  110 selected result/decoding/gameplay tests, normal build and independent
-  review pass; simulator UI previews and cached graphics were inspected.
-- **Selected next action:** BF-26, one bounded repeated-start/session-ownership
-  investigation of the seven intermittent simulator startup failures observed
-  during the earlier broad run. Preserve the failed and passing evidence.
-- **Why:** this is a concrete playback-readiness failure, more important than
-  further result styling or speculative allocation tuning. An isolated rerun
-  does not explain it, but neither does it establish a metadata regression.
-- **Acceptance:** capture the blocked startup phase and session/generation
-  sequence in a bounded repeated-start workload. Fix a reproduced app defect
-  if found; otherwise record the negative result and exact evidence needed.
-  Do not loosen assertions, invent timing shifts, repeatedly run the whole
-  suite until green, or reopen the physical-device/stack gates.
+- **Completed action:** BF-26 bounded investigation did not reproduce the
+  intermittent stall. Twelve real simulator audio starts across eight same-model
+  restarts and three replacements preserved session ownership; all 20 intro
+  tests also passed. Startup-phase/generation/player diagnostics now accompany
+  a recurrence. Independent review's preference-isolation finding was fixed;
+  final review is clean. This is a negative result, not a root-cause fix.
+- **Selected next action:** BF-11, one bounded source-decode/base-crop allocation
+  diagnostic using existing cached assets and small synthetic fixtures.
+- **Why:** repeated startup now has a bounded negative result and better failure
+  evidence. Do not keep rerunning it without a recurrence; atlas/base-crop work
+  remains a named unmeasured boundary before the existing allocation guards.
+- **Acceptance:** identify decode/crop ownership and retained payload versus
+  atlas dimensions/crop count; measure representative cost without inducing
+  OOM. Fix a demonstrated defect if found, otherwise record the boundary and
+  stop. Do not invent resource limits or claim nominal bytes bound process RSS.
 - **Dependencies:** stack ABI implementation remains deferred; the dedicated
   cached crawl is independent, serial within each server with 60–120 second
   jitter and caching. Physical testing waits for full Sonolus API coverage
@@ -193,6 +192,29 @@ The probe is retained in ignored `tmp/intro-boundary-audit.swift`.
 | BF-24 / P2 — verified | Declared skin/clip/particle IDs and bucket sprite references were narrowed to Int despite numeric public schemas. Fractional declarations failed to decode, and missing finite IDs could throw instead of reporting absence. | Numeric identities now survive resource maps, drawing, audio and particle caches; indices/counts and generated handles remain integers. All 387 non-cached tests, two bounded cached integrations, normal build and independent review pass. No sampled-engine fractional-ID occurrence or native-client parity is claimed. |
 | BF-25 / P2 — implemented and bounded verification complete | Final bucket/value, definitions, windows and selected-skin thumbnail snapshots survive gameplay/history. New/past result panels show bucket-specific values and windows in the declared unit, independently of accuracy seconds. | 110 selected tests, normal build and independent review pass. Default/accessibility UI previews and cached SEKAI/SIF/22/7 graphics inspected; repeated cached thumbnail preparation measured. Primary/fallback precedence, fractional IDs, rotation, custom units, shared/differing assignments, invalid metadata and legacy loading covered. Native pixel-layout parity is not claimed; the existing hold-name exclusion remains unchanged. |
 | BF-26 / P2 — intermittent validation finding | The BF-25 broad run passed 384/391; seven existing intro checks remained in startup while the console logged repeated AudioQueue start timeouts. All seven pass unchanged in an isolated rerun. The new gameplay persistence test ran later and passed. | Cause is not established. Investigate if repeated start/release and session ownership reproduce it; retain exact failed evidence and avoid declaring either a new bucket regression or a fixed simulator issue from the isolated pass. Do not repeatedly rerun the whole suite just to obtain green. |
+
+BF-26 bounded follow-up — October 6: a new native AVAudioSession/AVPlayer and
+engine-audio workload completed twelve starts, including eight restarts and
+three overlapping model replacements, without an intermediate deactivation.
+The final owner released once. Each cycle required actual clock advancement,
+including after the previous model's cleanup; observed durations were
+0.11–0.21 s including the 30 ms post-start observation. This uses generated
+four-second audio on iPhone 17 Pro / iOS 26.5 Simulator, not cached songs or
+physical/acoustic timing. The fixture has a unique server preference key.
+All 20 gameplay-intro checks passed separately. No stall, ownership defect or
+new timing correction was established. Startup diagnostics now identify intro,
+activation, seek, engine-start and play-request stages alongside generation and
+player state; the formerly terse intro assertion includes that snapshot.
+Revisit on a recurrence with those diagnostics, not repeated green runs.
+
+Evidence: final repeated-start result
+`RunSomeTests/4348437C-AC49-4FD4-A0BC-150F9A0150C3.txt`; intro result
+`RunSomeTests/3FB553D7-AF7C-4C80-BF11-F96335D6925C.txt`; successful
+build-for-testing `BuildProject/BuildProject-Log-20261006-165314.txt` and final
+test rebuild. Independent review is clean after preference isolation. Earlier
+September 30 full-run artifact paths are no longer present in the temporary
+ActionArtifacts directory on this host; the recorded failure/isolated-pass
+summary below remains historical evidence, not a freshly inspected raw log.
 
 BF-24 evidence: the fractional decode regression failed before production
 changes in `RunSomeTests/4F1DCB41-5706-4CA1-8729-FFBE6B784DE2.txt`.

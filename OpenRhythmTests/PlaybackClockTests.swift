@@ -7,6 +7,76 @@ import Metal
 
 final class PlaybackClockTests: XCTestCase {
   @MainActor
+  func testRepeatedNativeStartupAndReplacementPreserveSessionOwnership()
+    async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("repeated-start-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let probe = AudioSessionProbe()
+    let released = expectation(description: "Final native session release")
+    let session = PlaybackAudioSession { active in
+      let native = AVAudioSession.sharedInstance()
+      if active { try native.setCategory(.playback) }
+      try native.setActive(active)
+      probe.record(active)
+      if !active { released.fulfill() }
+    }
+    var model: GameplayModel?
+    defer { model?.stop() }
+    let size = CGSize(width: 800, height: 400)
+    for cycle in 0..<12 {
+      let previous = model
+      let replacing = cycle % 3 == 0
+      if replacing {
+        let root = directory.appendingPathComponent("model-\(cycle)")
+        try FileManager.default.createDirectory(at: root,
+          withIntermediateDirectories: true)
+        model = try makeSessionModel(session, directory: root,
+          nativeEngine: true,
+          serverURL: URL(string: "https://\(UUID().uuidString).example")!)
+        model?.start()
+      } else {
+        model?.restart()
+      }
+      let current = try XCTUnwrap(model)
+      let began = ProcessInfo.processInfo.systemUptime
+      var lastStage = ""
+      while ProcessInfo.processInfo.systemUptime - began < 5 {
+        current.engineFrame(size: size, touches: [])
+        let snapshot = current.startupDiagnostics
+        if snapshot != lastStage {
+          print("Startup cycle \(cycle): \(snapshot)")
+          lastStage = snapshot
+        }
+        if !current.isStartingPlayback && current.playbackTime > 0 { break }
+        if current.phase != .playing { break }
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      XCTAssertEqual(current.phase, .playing, current.startupDiagnostics)
+      XCTAssertFalse(current.isStartingPlayback, current.startupDiagnostics)
+      XCTAssertGreaterThan(current.playbackTime, 0, current.startupDiagnostics)
+      // A replaced model releases only after its successor owns the session.
+      if replacing { previous?.stop() }
+      let before = current.playbackTime
+      try await Task.sleep(for: .milliseconds(30))
+      XCTAssertGreaterThan(current.playbackTime, before,
+        "Old cleanup must not stall the successor: \(current.startupDiagnostics)")
+      XCTAssertFalse(probe.values.contains(false),
+        "Restart/replacement must not deactivate an owned session")
+      print("Startup cycle \(cycle) ready after "
+        + "\(ProcessInfo.processInfo.systemUptime - began)s; "
+        + "session calls=\(probe.values)")
+      if current.isStartingPlayback || current.phase != .playing { break }
+    }
+    model?.stop()
+    model = nil
+    await fulfillment(of: [released], timeout: 2)
+    XCTAssertEqual(probe.values, Array(repeating: true, count: 12) + [false])
+  }
+
+  @MainActor
   func testAudioSessionLeaseReleaseCannotStopAnotherModel() async throws {
     let probe = AudioSessionProbe()
     let ended = expectation(description: "Both final-owner releases complete")
@@ -549,6 +619,7 @@ final class PlaybackClockTests: XCTestCase {
     directory: URL, nativeEngine: Bool = false,
     audioNotifications: NotificationCenter = .default,
     inputProbe: Bool = false,
+    serverURL: URL = URL(string: "https://example.com")!,
     makePlayer: @escaping (URL) -> AVPlayer = { AVPlayer(url: $0) }
   ) throws -> GameplayModel {
     let audio = directory.appendingPathComponent("tone.caf")
@@ -596,7 +667,7 @@ final class PlaybackClockTests: XCTestCase {
           "configuration": Data(#"{"options":[]}"#.utf8)]) : nil,
       playbackMode: nativeEngine ? .engine : .basicLanes), level: level,
       server: ServerDescriptor(id: "session-failure", name: "Fixture",
-        baseURL: URL(string: "https://example.com")!), title: "Session failure")
+        baseURL: serverURL), title: "Session failure")
     return model
   }
 

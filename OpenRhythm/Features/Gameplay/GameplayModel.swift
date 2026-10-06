@@ -188,6 +188,13 @@ final class GameplayModel {
   private(set) var debugLog = [EngineDebugLogEntry]()
   private(set) var isEngineDebugMode = false
   private(set) var isStartingPlayback = false
+  @ObservationIgnored private var startupStage = "idle"
+  var startupDiagnostics: String {
+    "generation=\(playbackGeneration), stage=\(startupStage), "
+      + "phase=\(phase), starting=\(isStartingPlayback), "
+      + "introSteps=\(startupSteps), seekComplete=\(audioSeekCompleted); "
+      + eventClockDiagnostics
+  }
   private(set) var playbackNotice: String?
   private(set) var areAudioServicesAvailable = true
   private var audioSeekCompleted = false
@@ -580,6 +587,7 @@ final class GameplayModel {
     isEngineDebugMode = false
     let generation = playbackGeneration
     isStartingPlayback = true
+    startupStage = "inspecting intro"
     audioSeekCompleted = false
     startupLimitMediaTime = nil
     startupPreparationComplete = false
@@ -681,6 +689,7 @@ final class GameplayModel {
     skippedIntroDuration = mediaTime
     Task {
       guard phase == .playing, playbackGeneration == generation else { return }
+      startupStage = "activating session"
       // Own the audio session before seeking can prepare player I/O. This
       // also reports activation failure instead of waiting on a blocked seek.
       do {
@@ -694,6 +703,7 @@ final class GameplayModel {
         return
       }
       guard phase == .playing, playbackGeneration == generation else { return }
+      startupStage = "seeking audio"
       let sought = await player.seek(to: CMTime(
         seconds: mediaTime, preferredTimescale: 60_000),
         toleranceBefore: .zero, toleranceAfter: .zero)
@@ -704,6 +714,7 @@ final class GameplayModel {
         return
       }
       audioSeekCompleted = true
+      startupStage = "waiting for engine"
       startPreparedAudio()
     }
   }
@@ -789,6 +800,7 @@ final class GameplayModel {
           object: AVAudioSession.sharedInstance(), queue: nil
         ) { _ in Self.recordAudioRoute(recorder) }
       }
+      startupStage = "starting engine audio"
       try engineAudio?.start()
       if engineRuntime != nil { engineHaptics.start() }
       if let timebase = player?.currentItem?.timebase {
@@ -796,6 +808,7 @@ final class GameplayModel {
           recordTransitions: timingRecorder != nil)
       }
       isStartingPlayback = false
+      startupStage = "play requested"
       player?.play()
     } catch {
       stop()
@@ -917,6 +930,7 @@ final class GameplayModel {
     inputGeneration += 1
     debugPausedTime = nil
     isStartingPlayback = false
+    startupStage = "stopped"
     audioSeekCompleted = false
     startupAnalysis?.cancel()
     startupAnalysis = nil
