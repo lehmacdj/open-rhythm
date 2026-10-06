@@ -89,7 +89,7 @@ proposed replacement is not authority to change its scope or completion gate.
    another patch. If all remaining required actions are genuinely gated,
    report the dependencies instead of cycling through cosmetic audit edits.
 
-## Build 82 release investigation — October 3, 2026
+## Build 82 release investigation — October 6, 2026
 
 - **Report:** the user reports the latest Xcode Cloud build failed and supplied
   `OpenRhythm Build 82 Logs for OpenRhythm archive.zip`.
@@ -97,13 +97,21 @@ proposed replacement is not authority to change its scope or completion gate.
   30 at 20:45:38 UTC. Ad hoc, development and App Store exports all end in
   `EXPORT SUCCEEDED` at 20:45:46–47 UTC. The supplied ZIP does not include an
   overall failure summary or upload/TestFlight post-action log.
+- **Cloud UI follow-up:** Build 82 at commit `52e12b2` shows build, test and
+  analysis succeeded. The archive action's issue is "Preparing build for App
+  Store Connect failed" in "Prepare Build for App Store Connect"; TestFlight
+  Internal Testing did not run. The logs page nevertheless labels the
+  preparation group and its child step as passed. The issue identifies the
+  failing phase, but neither that generic message nor the passed-step labels
+  establish its underlying cause. Detailed preparation output still needs
+  inspection; Firefox's active picture-in-picture window interrupted access.
 - **Unresolved evidence:** the App Store export logs report that the Cloud
   session proxy could not authenticate with App Store Connect while requesting
   store configuration (credential authentication context, code 1). Export
   continued successfully, so this warning does not establish the cause of
   the reported overall failure. No rate-limit failure is established either.
-- **Next bounded action:** obtain the failed phase's error message/log or the
-  Xcode Cloud failure summary, then diagnose that phase. Do not alter signing,
+- **Next bounded action:** inspect the preparation step's expanded output in
+  App Store Connect, then diagnose that phase. Do not alter signing,
   credentials or source code based solely on a nonfatal export warning. No
   push or Cloud build retry was performed for this investigation.
 
