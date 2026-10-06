@@ -225,6 +225,17 @@ September 30 full-run artifact paths are no longer present in the temporary
 ActionArtifacts directory on this host; the recorded failure/isolated-pass
 summary below remains historical evidence, not a freshly inspected raw log.
 
+October 6 release-batch validation: all 393 non-cached tests passed in one run,
+with zero failures/skips/not-run results, on iPhone 17 Pro / iOS 26.5 Simulator:
+`RunSomeTests/2AC74ED5-6471-4A82-BB31-F0EDC259F009.txt`. This includes the new
+repeated-start regression and all intro checks. The normal build also passed:
+`BuildProject/BuildProject-Log-20261006-170627.txt`. The console still contains
+AudioConverterService -302 during a passing intro check, but no matching
+AudioQueue start-timeout failure was found. That warning alone does not diagnose
+BF-26; the original intermittent cause remains unresolved. This was a single
+batch validation, not a loop of retries. Ten opt-in cached-chart integrations
+were excluded explicitly; no physical or cloud run and no push were performed.
+
 BF-11 bounded follow-up — October 6: the active iOS SDK's `CGImage.h`, in the
 `CGImageCreateWithImageInRect` documentation, explicitly states that the crop
 retains the original image. Selected skin crops are deduplicated by exact
