@@ -1543,7 +1543,7 @@ because an older paragraph says “more conformance.”
 | Intermittent simulator startup (BF-26) | Seven intro checks failed in the BF-25 broad run amid repeated audio-queue start timeouts, then passed unchanged when isolated. October 6: twelve native simulator starts across restarts/replacements and all 20 intro tests pass; new failure diagnostics expose startup stage, generation and player state. | Cause remains unproven; the bounded ownership workload did not reproduce it. Revisit on a recurrence with those diagnostics, not repeated green runs. No full-suite or physical reliability claim. |
 | Resource/rendering policies | Atlas budgets, incomplete-schema tolerance, blur implementation and per-engine preference scope are explicit policies. Particle coefficient/easing defaults use the public Studio reference. | Exact native filtering/random realization/codec breadth remain evidence limits, not invented documented defaults. Texture metadata dimension disagreement is malformed-input handling, not a separate scaling default. Reproduce a valid-resource rejection or cite a missing rule before expanding support. |
 | Allocation exposure (BF-11) | October 6 bounded diagnostic confirms cropped images retain source atlases outside tint/upload accounting. Cached crop-only preparation and small synthetic workloads demonstrate no actionable allocation defect; independent review concurs with the limited claim. | Reopen for a reproduced failure or new allocation evidence. Handle creation/crop costs and sampled RSS do not establish full decoded residency, peak memory or device safety. No tighter resource limit was invented. |
-| Scheduled audio and calibration | Native scheduled-stop kernel, offset mapping and calibration controls have simulator regressions. Independent audio-offset sign/unit convention remains underdocumented. | Seek independent sign/unit evidence without inferring correction from user bias. Acoustic accuracy, stopped-clock transition precision and calibration usability require the deferred device batch. |
+| Scheduled audio and calibration | Native scheduled-stop kernel, offset mapping and calibration controls have simulator regressions. Official settings prose independently supports the positive user-control direction; the runtime field's unit/speed convention remains underdocumented. | Do not equate UI wording with proof of the RuntimeEnvironment field's numerical mapping. Acoustic accuracy, stopped-clock transition precision and calibration usability require the deferred device batch. |
 | RuntimeUpdate skip metadata | No runtime clock jump is performed: intro search executes successive updates and leaves skip zero. | A future actual seek/resimulation path needs independently established skip semantics. Current conservative intro behavior is tracked separately, not repaired by guessing a skip value. |
 | Intro silence trimming (BF-19) | Approved static-scene policy implemented; cached SEKAI GameplayModel startup advances past the unchanged stage to visible input-owned notes and repeats after restart. | Initial changes/disappearance rewind; input-owned graphics, particles and later additions stop. This is client policy, not semantic recognition of arbitrary images drawn by non-input managers. Physical verification remains deferred. |
 | Pagination | Cache invalidation, cursor recovery, stable append and bounded prefetch have regressions. | Concurrent remote numbered-page changes cannot be made atomic without a server snapshot contract. That limitation is not an unimplemented client cache rule; physical scroll smoothness remains in the device batch. |
@@ -2024,6 +2024,16 @@ pages do not independently specify offset sign/units or retroactive behavior
 if preprocessing changes the offset after issuing a scheduled command. These
 under-specified cases remain compatibility uncertainties; the deterministic
 tests are not a native-client oracle.
+
+October 6 source reconciliation: the official [settings descriptions](
+https://github.com/Sonolus/i18n/blob/20bab26806ed8f5bf0977d61a294d3bca27caa67/src/localizations/en/Localization.json#L4377-L4379)
+instruct players to increase device audio offset when audio is late; level and
+server descriptions use the same direction (lines 3538–3544). This supports
+the user-facing direction already implemented: for a fixed chart event,
+increasing the offset increases its media position in the inverse mapping
+above. It does not independently specify RuntimeEnvironment[2]'s numerical
+mapping, units, speed scaling or retroactive preprocessing behavior. Independent
+review confirmed that distinction. No calibration constant or code changed.
 
 Verification: five focused simulator tests passed at 02:01 September 25, and
 the normal-size iPhone settings preview at 02:02 shows the new control,

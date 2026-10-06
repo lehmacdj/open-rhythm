@@ -2445,8 +2445,12 @@ model level, checking that future judgments and spawned entities do not leak.
    independently of input-judgment adjustment. Passing simulator regressions
    and explicit sign/unit documentation do not certify acoustic alignment.
    Check calibration usability and alignment in the deferred device batch;
-   resolve the public API's underdocumented audio-offset sign/unit convention
-   without guessing a correction from the user's early/late distribution.
+   resolve the public API's underdocumented audio-offset numerical mapping,
+   units and speed convention without guessing from early/late distribution.
+   October 6: official settings prose supports our user-facing positive
+   direction (increase when audio is late), but does not establish the runtime
+   field's numerical mapping. See COMPATIBILITY.md for the pinned source and
+   independent review; no timing behavior changed.
 6. Independently establish stopped-clock transition precision and physical
    alignment in the deferred batch. The September 27 affine-origin history
    defect is fixed, independently reviewed and verified by the 297-test full
