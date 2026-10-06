@@ -2198,6 +2198,13 @@ empty/shrinking-search regression pass. The first analytics query mistakenly
 used the old bundle ID; the current project ID was verified before retrieving
 the actual report. No claim is made about other unreported crash signatures.
 
+October 6 evidence refresh: TestFlight's Crash Feedback view still lists only
+the two September 10 build-1 reports, both marked “Crashed while searching.”
+No newer feedback entry was visible. Xcode's separate 14-day analytics query
+failed with “Product not found” for the verified current bundle identifier,
+so this is not proof of no recent crashes. No new signature was available to
+diagnose; do not repeat the negative check without new reports or evidence.
+
 Historical detail means the complete payload retained for that play, not
 reconstruction of data older builds never recorded. The former automatic
 500-play eviction was removed by BF-01 on September 30: new plays preserve
