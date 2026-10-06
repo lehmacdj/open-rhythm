@@ -133,6 +133,10 @@ proposed replacement is not authority to change its scope or completion gate.
   decoding and framework caching limit the RSS evidence; no new limit added.
   Independent review agrees with that scope. BF-26 also remains a negative
   bounded investigation with better diagnostics, not a root-cause fix.
+  Release-batch validation now passes all 403 current tests across separate
+  393-test non-cached and ten-test cached runs, with no failures or skips;
+  the normal simulator build passes. Independent backlog review found no
+  overlooked actionable requirement outside the recorded dependencies.
 - **Selected next action:** continue the authorized cached stack-consumer
   search under its dedicated agent. Reconcile its completed catalogs and
   pending SEKAI work without treating enumerated pages as an atomic snapshot.
@@ -235,6 +239,28 @@ AudioQueue start-timeout failure was found. That warning alone does not diagnose
 BF-26; the original intermittent cause remains unresolved. This was a single
 batch validation, not a loop of retries. Ten opt-in cached-chart integrations
 were excluded explicitly; no physical or cloud run and no push were performed.
+
+The separate October 6 cached release batch subsequently passed all ten
+integrations, with no failures or skips, on the same simulator. This includes
+Eleventh, 光, SIF Custom, 22/7, SEKAI intro/flick regressions, and three
+“shake it!” Hard 18 workloads: no contacts, repeated contacts, and pooled
+stationary contacts. The original result request timed out at 300 seconds;
+the same run continued to completion without being restarted. The final
+report lists ten passes and the console ends in `TEST FINISHED`:
+`RunSomeTests/EBDD6FAD-2839-46EB-9754-2ED7269F0E97.txt` and
+`RunSomeTests/test-console-log-2026-10-06T17-07-30-04-00.txt`.
+
+These two batches cover all 403 current tests, not a single combined run.
+The cached checks make no server requests and compare dense/sparse runtime
+state, input resolution and restart snapshots. Repeated-contact “shake it!”
+resolved all 544 inputs, with 489 successful hits including hold heads, ticks
+and releases, and verified hit particles. Its Debug runtime-plus-sprite CPU
+mean/p95/p99 was 9.98/17.58/23.80 ms; this synthetic workload excludes physical
+input delivery, music and live GPU submission, and is not performance sign-off.
+Independent read-only backlog review found no overlooked required non-stack,
+non-device action outside the recorded dependencies. No production change was
+needed for this batch. Physical timing/frame pacing, missing stack semantics
+and successful Cloud upload remain unverified; no push was performed.
 
 BF-11 bounded follow-up — October 6: the active iOS SDK's `CGImage.h`, in the
 `CGImageCreateWithImageInRect` documentation, explicitly states that the crop
