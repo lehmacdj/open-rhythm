@@ -102,6 +102,21 @@ final class ServerStore {
     try save(reordered)
   }
 
+  /// Keeps an unreadable list as servers.json.bad (replacing an older copy)
+  /// and starts again from the default servers.
+  func resetToDefaults() throws {
+    let manager = FileManager.default
+    let backup = fileURL.appendingPathExtension("bad")
+    if manager.fileExists(atPath: fileURL.path) {
+      if manager.fileExists(atPath: backup.path) {
+        try manager.removeItem(at: backup)
+      }
+      try manager.moveItem(at: fileURL, to: backup)
+    }
+    loadError = nil
+    servers = ServerDescriptor.defaults
+  }
+
   private func save(_ value: [ServerDescriptor]) throws {
     guard loadError == nil else { throw ServerStoreError.unreadableConfiguration }
     let bytes = try JSONEncoder().encode(value)
@@ -109,32 +124,5 @@ final class ServerStore {
       withIntermediateDirectories: true)
     try bytes.write(to: fileURL, options: .atomic)
     servers = value
-  }
-}
-
-enum ServerRegistry {
-  static func load(fileManager: FileManager = .default) -> [ServerDescriptor] {
-    guard
-      let documents = fileManager.urls(
-        for: .documentDirectory,
-        in: .userDomainMask
-      ).first
-    else {
-      return ServerDescriptor.defaults
-    }
-
-    let configurationURL = documents.appendingPathComponent("servers.json")
-    guard
-      let data = try? Data(contentsOf: configurationURL),
-      let servers = try? JSONDecoder().decode(
-        [ServerDescriptor].self,
-        from: data
-      ),
-      !servers.isEmpty
-    else {
-      return ServerDescriptor.defaults
-    }
-
-    return servers
   }
 }

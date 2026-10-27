@@ -14,7 +14,7 @@ struct CatalogView: View {
 
   var body: some View {
     List {
-      if model.isLoading && model.loadedPageCount == 0 {
+      if model.isAwaitingFirstPage {
         Section {
           HStack {
             ProgressView()
@@ -30,7 +30,8 @@ struct CatalogView: View {
           systemImage: "exclamationmark.triangle",
           description: Text(errorMessage)
         )
-      } else if !model.isLoading && model.visibleSongs.isEmpty {
+      } else if !model.isAwaitingFirstPage && !model.isLoading
+        && model.visibleSongs.isEmpty {
         ContentUnavailableView.search(text: model.query)
       }
 
@@ -95,7 +96,9 @@ struct CatalogView: View {
     }
     .sheet(isPresented: $showsFilters) {
       CatalogFilterPanel(filter: $model.filter, engines: model.engines,
-        selectedEngineKey: $model.selectedEngineKey, songs: model.songs)
+        selectedEngineKey: Binding(get: { model.selectedEngineKey },
+          set: { model.chooseEngine($0) }),
+        songs: model.songs)
     }
     .refreshable {
       await model.refresh(forceReload: true)

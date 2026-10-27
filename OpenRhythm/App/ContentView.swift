@@ -26,7 +26,15 @@ struct ContentView: View {
             .disabled(store.loadError != nil)
         }
         if let error = store.loadError {
-          Section { Text(error).foregroundStyle(.red) }
+          Section {
+            Text(error).foregroundStyle(.red)
+            Button("Reset Server List", role: .destructive) {
+              do { try store.resetToDefaults() }
+              catch { errorMessage = error.localizedDescription }
+            }
+          } footer: {
+            Text("Resetting keeps the unreadable list as servers.json.bad.")
+          }
         }
 
         Section {

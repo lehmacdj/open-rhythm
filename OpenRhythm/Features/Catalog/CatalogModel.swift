@@ -29,13 +29,22 @@ final class CatalogModel {
       updateVisibleSongs()
     }
   }
-  var selectedEngineKey: String {
+  private(set) var selectedEngineKey: String {
     didSet {
       guard oldValue != selectedEngineKey else { return }
       filter = preferences.filter(for: selectedEngineKey)
     }
   }
-  var engines: [CatalogEngineChoice] { CatalogEngineChoice.choices(in: songs) }
+  /// The engine the player chose on this server (in any session). Loaded
+  /// pages that lack its songs never replace it.
+  private var chosenEngine: CatalogEngineChoice?
+  var engines: [CatalogEngineChoice] {
+    let loaded = CatalogEngineChoice.choices(in: songs)
+    guard let chosenEngine,
+      !loaded.contains(where: { $0.id == chosenEngine.id })
+    else { return loaded }
+    return loaded + [chosenEngine]
+  }
   private(set) var visibleSongs = [CatalogSong]()
   private(set) var isLoading = false
   private(set) var loadedPageCount = 0
@@ -45,6 +54,9 @@ final class CatalogModel {
 
   var hasMorePages: Bool { loadedPageCount < totalPageCount }
   var canRefreshAfterError: Bool { errorMessage != nil && loadedPageCount > 0 }
+  /// Before the first page arrives (including the search debounce) the list
+  /// is loading, not empty.
+  var isAwaitingFirstPage: Bool { loadedPageCount == 0 && errorMessage == nil }
   var showsPaginationStatus: Bool {
     if errorMessage != nil && !isLoading { return true }
     return loadedPageCount > 0 && (isLoading || (hasMorePages
@@ -58,8 +70,17 @@ final class CatalogModel {
     self.client = client
     self.preferences = preferences
     self.now = now
-    selectedEngineKey = server.preferenceKey
-    filter = preferences.filter(for: server.preferenceKey)
+    let chosen = preferences.catalogEngine(for: server.preferenceKey)
+    chosenEngine = chosen
+    selectedEngineKey = chosen?.id ?? server.preferenceKey
+    filter = preferences.filter(for: selectedEngineKey)
+  }
+
+  func chooseEngine(_ key: String) {
+    guard let choice = engines.first(where: { $0.id == key }) else { return }
+    chosenEngine = choice
+    preferences.saveCatalogEngine(choice, for: server.preferenceKey)
+    selectedEngineKey = key
   }
 
   private func updateVisibleSongs(preservingOrder: Bool = false) {
@@ -145,8 +166,12 @@ final class CatalogModel {
         continue
       }
       do {
-        let response = try await client.levels(on: server, page: page,
-          query: query, cursor: cursor, forceReload: reloadPages)
+        // Cancelling this task stops later prefetches but not a started
+        // request, so its response still reaches the cache and the buffer.
+        let response = try await Task { [client, server, cursor, reloadPages] in
+          try await client.levels(on: server, page: page, query: query,
+            cursor: cursor, forceReload: reloadPages)
+        }.value
         // A list append cancels its old prefetch task. Keep a completed
         // response in the same generation so forced refreshes don't fetch
         // that page twice when the replacement task starts.
@@ -220,7 +245,8 @@ final class CatalogModel {
       let previousIDs = Set(visibleSongs.map(\.id))
       songs = grouped
       if page == 0 { firstPageFetchedAt = response.fetchedAt }
-      if !engines.contains(where: { $0.id == selectedEngineKey }),
+      if chosenEngine == nil,
+        !engines.contains(where: { $0.id == selectedEngineKey }),
         let first = engines.first {
         selectedEngineKey = first.id
       }
@@ -240,7 +266,7 @@ final class CatalogModel {
     } catch is CancellationError {
       return
     } catch {
-      guard currentGeneration == generation else { return }
+      guard currentGeneration == generation, !Task.isCancelled else { return }
       errorMessage = error.localizedDescription
     }
   }

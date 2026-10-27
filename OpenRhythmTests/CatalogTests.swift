@@ -373,6 +373,155 @@ final class CatalogTests: XCTestCase {
     XCTAssertNotNil(broken.loadError)
     XCTAssertThrowsError(try broken.add(url: normalized, name: "New"))
     XCTAssertEqual(try Data(contentsOf: url), corrupt)
+    let backup = root.appendingPathComponent("servers.json.bad")
+    try Data("older".utf8).write(to: backup)
+    try broken.resetToDefaults()
+    XCTAssertNil(broken.loadError)
+    XCTAssertEqual(broken.servers, ServerDescriptor.defaults)
+    XCTAssertEqual(try Data(contentsOf: backup), corrupt,
+      "Reset keeps the newest unreadable list")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    try broken.add(url: normalized, name: "New")
+    XCTAssertEqual(ServerStore(fileURL: url).servers.map(\.name),
+      ServerDescriptor.defaults.map(\.name) + ["New"])
+  }
+
+  @MainActor
+  func testChosenEngineSurvivesSearchesAndReopening() async throws {
+    let suite = "ChosenEngine.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let preferences = UserPreferences(defaults: defaults)
+    func item(_ name: String, engine: String) -> SonolusLevelItem {
+      var value = level(name: name, rating: 9, difficulty: "#EXPERT")
+      value.engine = SonolusEngineIdentity(name: engine,
+        title: LocalizedText(engine.capitalized))
+      return value
+    }
+    let alpha = item("a", engine: "alpha")
+    let beta = item("b", engine: "beta")
+    let alphaOnly = item("a2", engine: "alpha")
+    CatalogStubProtocol.handler = { request in
+      let keywords = URLComponents(url: request.url!,
+        resolvingAgainstBaseURL: false)?.queryItems?
+        .first { $0.name == "keywords" }?.value
+      return try JSONEncoder().encode(SonolusLevelList(pageCount: 1,
+        items: keywords == nil ? [alpha, beta] : [alphaOnly]))
+    }
+    defer { CatalogStubProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [CatalogStubProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let client = SonolusClient(session: session)
+    let alphaKey = alpha.engineKey(server: server)
+    let betaKey = beta.engineKey(server: server)
+
+    let model = CatalogModel(server: server, client: client,
+      preferences: preferences)
+    XCTAssertTrue(model.isAwaitingFirstPage,
+      "The debounce before the first load is not an empty result")
+    await model.refresh()
+    XCTAssertFalse(model.isAwaitingFirstPage)
+    XCTAssertEqual(model.selectedEngineKey, alphaKey)
+    XCTAssertNil(preferences.catalogEngine(for: server.preferenceKey),
+      "An automatic fallback is not a choice")
+    model.chooseEngine(betaKey)
+    XCTAssertEqual(model.visibleSongs.map(\.variants[0].name), ["b"])
+    model.query = "only alpha"
+    await model.refresh()
+    XCTAssertEqual(model.selectedEngineKey, betaKey)
+    XCTAssertTrue(model.visibleSongs.isEmpty)
+    XCTAssertEqual(Set(model.engines.map(\.id)), [alphaKey, betaKey],
+      "The chosen engine stays selectable without matching songs")
+
+    let reopened = CatalogModel(server: server, client: client,
+      preferences: preferences)
+    XCTAssertEqual(reopened.selectedEngineKey, betaKey)
+    await reopened.refresh()
+    XCTAssertEqual(reopened.selectedEngineKey, betaKey)
+    XCTAssertEqual(reopened.visibleSongs.map(\.variants[0].name), ["b"])
+  }
+
+  func testFetchTimeDoesNotComeFromAnOlderCacheFile() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root,
+      withIntermediateDirectories: true)
+    defer {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o755],
+        ofItemAtPath: root.path)
+      try? FileManager.default.removeItem(at: root)
+    }
+    let url = URL(string: "https://example.test/levels?page=0")!
+    let file = root.appendingPathComponent(
+      Data(url.absoluteString.utf8).sha256Hex)
+    let old = Date().addingTimeInterval(-3600)
+    try Data("old".utf8).write(to: file)
+    try FileManager.default.setAttributes([.modificationDate: old],
+      ofItemAtPath: file.path)
+    // The new response cannot be stored, so the old file keeps its date.
+    try FileManager.default.setAttributes([.posixPermissions: 0o555],
+      ofItemAtPath: root.path)
+    let cache = SonolusResponseCache(rootURL: root)
+    let fetched = try await cache.timestampedData(at: url, maximumAge: 600,
+      forceReload: true) { Data("new".utf8) }
+    XCTAssertEqual(fetched.data, Data("new".utf8))
+    XCTAssertEqual(try Data(contentsOf: file), Data("old".utf8))
+    XCTAssertLessThan(Date().timeIntervalSince(fetched.fetchedAt), 60)
+    let recent = Date().addingTimeInterval(-100)
+    try FileManager.default.setAttributes([.modificationDate: recent],
+      ofItemAtPath: file.path)
+    let cached = try await cache.timestampedData(at: url, maximumAge: 600) {
+      XCTFail("A fresh cache file needs no request")
+      return Data()
+    }
+    XCTAssertEqual(cached.data, Data("old".utf8))
+    XCTAssertEqual(cached.fetchedAt.timeIntervalSince1970,
+      recent.timeIntervalSince1970, accuracy: 1)
+  }
+
+  func testCancellingEveryWaiterCancelsTheSharedRequest() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let cache = SonolusResponseCache(rootURL: root)
+    let probe = FetchProbe()
+    let fetch: @Sendable () async throws -> Data = {
+      await probe.started()
+      do { try await Task.sleep(for: .seconds(1)) } catch {
+        await probe.cancelled()
+        throw error
+      }
+      return Data("done".utf8)
+    }
+    let shared = URL(string: "https://example.test/shared")!
+    let first = Task { try await cache.data(at: shared, maximumAge: 600,
+      fetch: fetch) }
+    let second = Task { try await cache.data(at: shared, maximumAge: 600,
+      fetch: fetch) }
+    try await Task.sleep(for: .milliseconds(100))
+    first.cancel()
+    let value = try await second.value
+    XCTAssertEqual(value, Data("done".utf8),
+      "Another waiter keeps the shared request alive")
+    _ = await first.result
+    var counts = await probe.counts
+    XCTAssertEqual(counts.started, 1)
+    XCTAssertEqual(counts.cancelled, 0)
+
+    let only = Task { try await cache.data(
+      at: URL(string: "https://example.test/only")!, maximumAge: 600,
+      fetch: fetch) }
+    try await Task.sleep(for: .milliseconds(100))
+    only.cancel()
+    do {
+      _ = try await only.value
+      XCTFail("The request should have been cancelled")
+    } catch is CancellationError { }
+    counts = await probe.counts
+    XCTAssertEqual(counts.started, 2)
+    XCTAssertEqual(counts.cancelled, 1)
   }
 
   func testGroupsDifficultiesByBGM() {
@@ -469,4 +618,39 @@ final class CatalogTests: XCTestCase {
       data: ResourceLocator(hash: nil, url: "/level.json")
     )
   }
+}
+
+private actor FetchProbe {
+  private(set) var counts = (started: 0, cancelled: 0)
+  func started() { counts.started += 1 }
+  func cancelled() { counts.cancelled += 1 }
+}
+
+private final class CatalogStubProtocol: URLProtocol {
+  static var handler: ((URLRequest) throws -> Data)?
+
+  override class func canInit(with request: URLRequest) -> Bool { true }
+
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+    request
+  }
+
+  override func startLoading() {
+    do {
+      guard let handler = Self.handler else {
+        throw URLError(.badServerResponse)
+      }
+      let data = try handler(request)
+      let response = HTTPURLResponse(url: request.url!, statusCode: 200,
+        httpVersion: nil, headerFields: nil)!
+      client?.urlProtocol(self, didReceive: response,
+        cacheStoragePolicy: .notAllowed)
+      client?.urlProtocol(self, didLoad: data)
+      client?.urlProtocolDidFinishLoading(self)
+    } catch {
+      client?.urlProtocol(self, didFailWithError: error)
+    }
+  }
+
+  override func stopLoading() {}
 }

@@ -82,28 +82,34 @@ struct GameplayPreferences: Codable, Equatable {
     case engineDebugMode
   }
 
+  // Each field falls back alone: a value this build cannot read (such as a
+  // newer enum case) must not reset the player's other preferences.
   init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
-    scoreDisplay = try values.decodeIfPresent(ScoreDisplayMode.self,
+    scoreDisplay = values.lenient(ScoreDisplayMode.self,
       forKey: .scoreDisplay) ?? .countUp
-    noteSpeed = try values.decodeIfPresent(Double.self, forKey: .noteSpeed)
-    scoreMode = try values.decodeIfPresent(Int.self, forKey: .scoreMode)
-    engineOptions = try values.decodeIfPresent([String: Double].self,
+    noteSpeed = values.lenient(Double.self, forKey: .noteSpeed)
+    scoreMode = values.lenient(Int.self, forKey: .scoreMode)
+    engineOptions = values.lenient([String: Double].self,
       forKey: .engineOptions) ?? [:]
-    judgementDisplay = try values.decodeIfPresent(JudgementDisplayMode.self,
+    judgementDisplay = values.lenient(JudgementDisplayMode.self,
       forKey: .judgementDisplay) ?? .timing
-    skinRenderMode = try values.decodeIfPresent(EngineSkinRenderMode.self,
+    skinRenderMode = values.lenient(EngineSkinRenderMode.self,
       forKey: .skinRenderMode) ?? .standard
-    recordTimingDiagnostics = try values.decodeIfPresent(Bool.self,
+    recordTimingDiagnostics = values.lenient(Bool.self,
       forKey: .recordTimingDiagnostics) ?? false
-    engineDebugMode = try values.decodeIfPresent(Bool.self,
+    engineDebugMode = values.lenient(Bool.self,
       forKey: .engineDebugMode) ?? false
     inputOffsetMilliseconds = Self.clampedInputOffset(
-      try values.decodeIfPresent(Double.self,
-        forKey: .inputOffsetMilliseconds) ?? 0)
+      values.lenient(Double.self, forKey: .inputOffsetMilliseconds) ?? 0)
     visualOffsetMilliseconds = Self.clampedInputOffset(
-      try values.decodeIfPresent(Double.self,
-        forKey: .visualOffsetMilliseconds) ?? 0)
+      values.lenient(Double.self, forKey: .visualOffsetMilliseconds) ?? 0)
+  }
+}
+
+private extension KeyedDecodingContainer {
+  func lenient<T: Decodable>(_ type: T.Type, forKey key: Key) -> T? {
+    (try? decodeIfPresent(type, forKey: key)) ?? nil
   }
 }
 
@@ -120,6 +126,22 @@ final class UserPreferences {
 
   func save(_ filter: CatalogFilter, for engine: String) {
     write(filter, key: "filter:\(engine)")
+  }
+
+  /// The catalog engine last chosen on a server, if any.
+  func catalogEngine(for server: String) -> CatalogEngineChoice? {
+    read(StoredEngine.self, key: "catalogEngine:\(server)")
+      .map { CatalogEngineChoice(id: $0.id, name: $0.name) }
+  }
+
+  func saveCatalogEngine(_ engine: CatalogEngineChoice, for server: String) {
+    write(StoredEngine(id: engine.id, name: engine.name),
+      key: "catalogEngine:\(server)")
+  }
+
+  private struct StoredEngine: Codable {
+    let id: String
+    let name: String
   }
 
   func gameplay(for engine: String) -> GameplayPreferences {

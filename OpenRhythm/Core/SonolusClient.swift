@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 enum SonolusClientError: LocalizedError {
   case invalidURL
@@ -60,9 +59,10 @@ actor SonolusClient {
       throw SonolusClientError.invalidURL
     }
 
-    let data = try await requestData(from: url, forceReload: forceReload)
+    let (data, fetchedAt) = try await timestampedData(from: url,
+      forceReload: forceReload)
     var response = try decoder.decode(SonolusLevelList.self, from: data)
-    response.fetchedAt = await cache?.storedAt(url) ?? Date()
+    response.fetchedAt = fetchedAt
     return response
   }
 
@@ -159,6 +159,16 @@ actor SonolusClient {
     forceReload: Bool = false,
     expectedSHA1: String? = nil
   ) async throws -> Data {
+    try await timestampedData(from: url, accept: accept,
+      forceReload: forceReload, expectedSHA1: expectedSHA1).data
+  }
+
+  private func timestampedData(
+    from url: URL?,
+    accept: String = "application/json",
+    forceReload: Bool = false,
+    expectedSHA1: String? = nil
+  ) async throws -> (data: Data, fetchedAt: Date) {
     let hash = try expectedSHA1.map(ContentAddress.normalizedSHA1)
     let fetch: @Sendable () async throws -> Data = { [session] in
       guard let url else {
@@ -187,9 +197,9 @@ actor SonolusClient {
       if let hash, data.sha1Hex != hash {
         throw SonolusClientError.resourceChecksumMismatch(hash)
       }
-      return data
+      return (data, Date())
     }
-    return try await cache.data(
+    return try await cache.timestampedData(
       at: url, maximumAge: 600,
       forceReload: forceReload, expectedSHA1: hash, fetch: fetch
     )
@@ -204,7 +214,12 @@ actor SonolusClient {
 actor SonolusResponseCache {
   static let shared = SonolusResponseCache()
   private let rootURL: URL
-  private var inFlight = [String: Task<Data, Error>]()
+  typealias Fetched = (data: Data, fetchedAt: Date)
+  private struct Fetch {
+    let task: Task<Fetched, Error>
+    var waiters = Set<UUID>()
+  }
+  private var inFlight = [String: Fetch]()
   private let maximumBytes = 256 * 1024 * 1024
 
   init(rootURL: URL? = nil) {
@@ -218,43 +233,80 @@ actor SonolusResponseCache {
     expectedSHA1: String? = nil,
     fetch: @escaping @Sendable () async throws -> Data
   ) async throws -> Data {
+    try await timestampedData(at: url, maximumAge: maximumAge,
+      forceReload: forceReload, expectedSHA1: expectedSHA1, fetch: fetch).data
+  }
+
+  /// Also returns when the data was fetched: the modification date of a fresh
+  /// cache file, or the completion time of a network request even if storing
+  /// its response fails.
+  func timestampedData(
+    at url: URL?, maximumAge: TimeInterval, forceReload: Bool = false,
+    expectedSHA1: String? = nil,
+    fetch: @escaping @Sendable () async throws -> Data
+  ) async throws -> Fetched {
     let hash = try expectedSHA1.map(ContentAddress.normalizedSHA1)
     let urlKey = url.map { Data($0.absoluteString.utf8).sha256Hex }
     guard let key = hash ?? urlKey else { throw SonolusClientError.invalidURL }
     // Content identity coalesces aliases, but never joins a different hash
     // or an unverified URL request that happens to use the same address.
-    if let task = inFlight[key] { return try await task.value }
-    let file = rootURL.appendingPathComponent(key)
-    if let hash {
-      // Verified content is immutable. A refresh fetches metadata, not the
-      // same known bytes again. Also migrate a matching legacy URL-cache hit.
-      for candidate in [key, urlKey].compactMap({ $0 }) {
-        if let data = try? Data(contentsOf: rootURL.appendingPathComponent(candidate)),
-          data.sha1Hex == hash {
-          if candidate != key { store(data, at: file) }
-          return data
+    let task: Task<Fetched, Error>
+    if let existing = inFlight[key]?.task {
+      task = existing
+    } else {
+      let file = rootURL.appendingPathComponent(key)
+      if let hash {
+        // Verified content is immutable. A refresh fetches metadata, not the
+        // same known bytes again. Also migrate a matching legacy URL-cache hit.
+        for candidate in [key, urlKey].compactMap({ $0 }) {
+          if let data = try? Data(contentsOf: rootURL.appendingPathComponent(candidate)),
+            data.sha1Hex == hash {
+            if candidate != key { store(data, at: file) }
+            return (data, Date())
+          }
         }
+      } else if !forceReload,
+        let attributes = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
+        let date = attributes.contentModificationDate,
+        Date().timeIntervalSince(date) >= 0,
+        Date().timeIntervalSince(date) < maximumAge,
+        let data = try? Data(contentsOf: file) {
+        return (data, date)
       }
-    } else if !forceReload,
-      let attributes = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
-      let date = attributes.contentModificationDate,
-      Date().timeIntervalSince(date) >= 0,
-      Date().timeIntervalSince(date) < maximumAge,
-      let data = try? Data(contentsOf: file) {
-      return data
-    }
-    let task = Task {
-      let data = try await fetch()
-      if let hash, data.sha1Hex != hash {
-        throw SonolusClientError.resourceChecksumMismatch(hash)
+      task = Task {
+        let data = try await fetch()
+        if let hash, data.sha1Hex != hash {
+          throw SonolusClientError.resourceChecksumMismatch(hash)
+        }
+        self.store(data, at: file)
+        return (data, Date())
       }
-      return data
+      inFlight[key] = Fetch(task: task)
     }
-    inFlight[key] = task
-    defer { inFlight[key] = nil }
-    let data = try await task.value
-    store(data, at: file)
-    return data
+    // The request is shared by its waiters and cancelled when none remain.
+    // A cancelled waiter keeps waiting while others still need the result.
+    let waiter = UUID()
+    inFlight[key]?.waiters.insert(waiter)
+    defer { leave(key, waiter: waiter, task: task) }
+    do {
+      return try await withTaskCancellationHandler {
+        try await task.value
+      } onCancel: {
+        Task { await self.leave(key, waiter: waiter, task: task) }
+      }
+    } catch {
+      // The request may report cancellation as a URLError.
+      if Task.isCancelled { throw CancellationError() }
+      throw error
+    }
+  }
+
+  private func leave(_ key: String, waiter: UUID, task: Task<Fetched, Error>) {
+    guard inFlight[key]?.task == task else { return }
+    inFlight[key]?.waiters.remove(waiter)
+    guard inFlight[key]?.waiters.isEmpty == true else { return }
+    inFlight[key] = nil
+    task.cancel()
   }
 
   private func store(_ data: Data, at file: URL) {
@@ -263,13 +315,6 @@ actor SonolusResponseCache {
       withIntermediateDirectories: true)
     try? data.write(to: file, options: .atomic)
     trim()
-  }
-
-  func storedAt(_ url: URL) -> Date? {
-    let key = SHA256.hash(data: Data(url.absoluteString.utf8))
-      .map { String(format: "%02x", $0) }.joined()
-    return (try? rootURL.appendingPathComponent(key).resourceValues(
-      forKeys: [.contentModificationDateKey]))?.contentModificationDate
   }
 
   private func trim() {
