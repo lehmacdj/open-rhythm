@@ -101,6 +101,15 @@ struct PlaybackClockHistory {
       appliedHostTime: boundary, usedNotificationTime: candidate != nil)
   }
 
+  /// A stopped timebase holds the media time at which it stopped. Inverting
+  /// the previous moving mapping there gives the exact stop host time.
+  func stopHostTime(of stopped: Segment) -> Double? {
+    guard stopped.rate == 0, let previous = segments.last?.mapping,
+      previous.rate != 0 else { return nil }
+    return previous.hostTime
+      + (stopped.mediaTime - previous.mediaTime) / previous.rate
+  }
+
   func mediaTime(at hostTime: Double) -> Double? {
     guard hostTime.isFinite,
       let entry = segments.last(where: { $0.validFrom <= hostTime })
@@ -112,8 +121,9 @@ struct PlaybackClockHistory {
 
 /// UIKit event timestamps and Core Media's host clock share system uptime.
 /// Capture transitions on the posting thread. Moving notification times can
-/// be inverted into host time; stopped mappings have only an observation
-/// bracket, not a documented exact host timestamp.
+/// be inverted into host time; a stop is dated by inverting the previous
+/// moving mapping at the stopped media time. Either is accepted only inside
+/// the observation bracket.
 final class PlaybackEventClock: @unchecked Sendable {
   struct Observation {
     let observedHostTime: Double
@@ -190,7 +200,7 @@ final class PlaybackEventClock: @unchecked Sendable {
     if let eventTime, rate != 0 {
       transition = host.seconds + (eventTime - media.seconds) / rate
     } else {
-      transition = nil
+      transition = history.stopHostTime(of: segment)
     }
     let recorded = history.observe(segment, at: observedHost,
       transitionHostTime: transition)

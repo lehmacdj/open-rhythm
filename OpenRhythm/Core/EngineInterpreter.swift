@@ -77,6 +77,8 @@ struct EngineTemporaryMemory {
 }
 
 final class EngineMemory {
+  private typealias Block = EnginePlayBlock
+
   enum Callback: String, CaseIterable {
     case preprocess, spawnOrder, shouldSpawn, initialize
     case updateSequential, touch, updateParallel, terminate
@@ -108,16 +110,25 @@ final class EngineMemory {
       $0 >= 0 && $0 <= Int.max / 32
     }) else { throw EngineInterpreterError.invalidArguments("memory layout") }
     let declared = [
-      1000: 9, 1001: 5, 1002: 0, 1003: 16, 1004: 16, 1005: 8,
-      1006: 80, 1007: 10, 2000: 4096, 2001: 4096,
-      2002: optionCount, 2003: bucketCount * 6, 2004: 12, 2005: 8,
-      3000: rom.count, 4000: 64, 4001: 32, 4002: 32, 4003: 3,
-      4004: 1, 4005: 5, 4006: 1, 4007: 4,
-      4101: entityCount * 32, 4102: entityCount * 32,
-      4103: entityCount * 3, 4106: entityCount, 4107: entityCount * 4,
-      5000: archetypeCount * 4, 5001: archetypeCount, 10000: 4096
+      Block.runtimeEnvironment: 9, Block.runtimeUpdate: 5,
+      Block.runtimeTouchArray: 0, Block.runtimeSkinTransform: 16,
+      Block.runtimeParticleTransform: 16, Block.runtimeBackground: 8,
+      Block.runtimeUI: 80, Block.runtimeUIConfiguration: 10,
+      Block.levelMemory: 4096, Block.levelData: 4096,
+      Block.levelOption: optionCount, Block.levelBucket: bucketCount * 6,
+      Block.levelScore: 12, Block.levelLife: 8, Block.engineROM: rom.count,
+      Block.entityMemory: 64, Block.entityData: 32,
+      Block.entitySharedMemory: 32, Block.entityInfo: 3,
+      Block.entityDespawn: 1, Block.entityInput: 5, Block.entityScore: 1,
+      Block.entityLife: 4, Block.entityDataArray: entityCount * 32,
+      Block.entitySharedMemoryArray: entityCount * 32,
+      Block.entityInfoArray: entityCount * 3,
+      Block.entityScoreArray: entityCount,
+      Block.entityLifeArray: entityCount * 4,
+      Block.archetypeLife: archetypeCount * 4,
+      Block.archetypeScore: archetypeCount, Block.temporaryMemory: 4096
     ]
-    var table = [Int](repeating: 0, count: 10001)
+    var table = [Int](repeating: 0, count: Block.temporaryMemory + 1)
     for (block, count) in declared { table[block] = count }
     lengths = table
   }
@@ -126,8 +137,8 @@ final class EngineMemory {
     guard count >= 0, count <= Int.max / 15 else {
       throw EngineInterpreterError.invalidArguments("touch count")
     }
-    if lengths != nil { lengths?[1002] = count * 15 }
-    set(block: 1001, index: 3, value: Double(count))
+    if lengths != nil { lengths?[Block.runtimeTouchArray] = count * 15 }
+    set(block: Block.runtimeUpdate, index: 3, value: Double(count))
   }
 
   private func contains(block: Int, index: Int) -> Bool {
@@ -140,15 +151,22 @@ final class EngineMemory {
     guard let callback else { return true }
     let writable: Bool
     switch block {
-    case 1000, 1006, 1007, 2001, 2003...2005, 4001, 4006, 4007,
-      4101, 4106, 4107, 5000, 5001:
+    case Block.runtimeEnvironment, Block.runtimeUI,
+      Block.runtimeUIConfiguration, Block.levelData, Block.levelBucket,
+      Block.levelScore, Block.levelLife, Block.entityData, Block.entityScore,
+      Block.entityLife, Block.entityDataArray, Block.entityScoreArray,
+      Block.entityLifeArray, Block.archetypeLife, Block.archetypeScore:
       writable = callback == .preprocess
-    case 1003...1005, 2000, 4002, 4102:
+    case Block.runtimeSkinTransform, Block.runtimeParticleTransform,
+      Block.runtimeBackground, Block.levelMemory, Block.entitySharedMemory,
+      Block.entitySharedMemoryArray:
       writable = callback == .preprocess || callback == .updateSequential
         || callback == .touch
-    case 4000, 4004, 4005, 10000:
+    case Block.entityMemory, Block.entityDespawn, Block.entityInput,
+      Block.temporaryMemory:
       writable = true
-    case 1001, 1002, 2002, 3000, 4003, 4103:
+    case Block.runtimeUpdate, Block.runtimeTouchArray, Block.levelOption,
+      Block.engineROM, Block.entityInfo, Block.entityInfoArray:
       writable = false
     default:
       // Get explicitly returns zero for a nonexistent block. Keep invalid
@@ -160,7 +178,8 @@ final class EngineMemory {
     // Spawn explicitly excludes these four level-backed blocks. Do not
     // infer additional restrictions from a spawned entity's lack of input.
     let unavailable = entityIndex == nil
-      && ((4001...4003).contains(block) || block == 4005)
+      && ((Block.entityData...Block.entityInfo).contains(block)
+        || block == Block.entityInput)
     if unavailable && !write { return false }
     guard !unavailable, !write || writable else {
       throw EngineInterpreterError.invalidMemoryAccess(
@@ -195,7 +214,7 @@ final class EngineMemory {
   }
 
   func loadROM(_ data: Data?) throws {
-    defer { if lengths != nil { lengths?[3000] = rom.count } }
+    defer { if lengths != nil { lengths?[Block.engineROM] = rom.count } }
     guard let data else { rom = []; return }
     let decoded = try data.starts(with: [0x1f, 0x8b])
       ? GzipDecoder.decompress(data, maximumSize: 16 * 1024 * 1024) : data
@@ -214,7 +233,7 @@ final class EngineMemory {
   func selectEntity(key: Int, index: Int?) {
     entityKey = key
     entityIndex = index
-    blocks[10000] = nil
+    blocks[Block.temporaryMemory] = nil
     temporary?.clear()
   }
 
@@ -224,27 +243,32 @@ final class EngineMemory {
 
   private func arrayAddress(block: Int, index: Int) -> (Int, Int)? {
     guard let entityIndex else { return nil }
-    let size: Int
+    let size: Int, array: Int
     switch block {
-    case 4001, 4002: size = 32
-    case 4003: size = 3
-    case 4006: size = 1
-    case 4007: size = 4
+    case Block.entityData: (size, array) = (32, Block.entityDataArray)
+    case Block.entitySharedMemory:
+      (size, array) = (32, Block.entitySharedMemoryArray)
+    case Block.entityInfo: (size, array) = (3, Block.entityInfoArray)
+    case Block.entityScore: (size, array) = (1, Block.entityScoreArray)
+    case Block.entityLife: (size, array) = (4, Block.entityLifeArray)
     default: return nil
     }
     guard index < size else { return nil }
-    return (block + 100, entityIndex * size + index)
+    return (array, entityIndex * size + index)
   }
 
   func value(block: Int, index: Int) -> Double {
     guard contains(block: block, index: index) else { return 0 }
-    if block == 10000, index < EngineTemporaryMemory.count,
+    if block == Block.temporaryMemory, index < EngineTemporaryMemory.count,
       let temporary { return temporary[index] }
-    if block == 3000 { return rom.indices.contains(index) ? rom[index] : 0 }
+    if block == Block.engineROM {
+      return rom.indices.contains(index) ? rom[index] : 0
+    }
     if let (array, offset) = arrayAddress(block: block, index: index) {
       return blocks[array]?[offset] ?? 0
     }
-    if (4000...4007).contains(block), let entityKey {
+    if (Block.entityMemory...Block.entityLife).contains(block),
+      let entityKey {
       return entityBlocks[entityKey]?[block]?[index] ?? 0
     }
     return blocks[block]?[index] ?? 0
@@ -252,8 +276,10 @@ final class EngineMemory {
 
   @discardableResult
   func set(block: Int, index: Int, value: Double) -> Double {
-    guard contains(block: block, index: index), block != 3000 else { return value }
-    if block == 10000, index < EngineTemporaryMemory.count, temporary != nil {
+    guard contains(block: block, index: index), block != Block.engineROM
+    else { return value }
+    if block == Block.temporaryMemory, index < EngineTemporaryMemory.count,
+      temporary != nil {
       temporary?[index] = value
       return value
     }
@@ -261,7 +287,8 @@ final class EngineMemory {
       blocks[array, default: [:]][offset] = value
       return value
     }
-    if (4000...4007).contains(block), let entityKey {
+    if (Block.entityMemory...Block.entityLife).contains(block),
+      let entityKey {
       entityBlocks[entityKey, default: [:]][block, default: [:]][index] = value
       return value
     }
@@ -679,16 +706,18 @@ final class EngineInterpreter {
     case .random, .randomInteger:
       try require(arguments, count: 2, function: function)
       let a = try values(arguments)
-      guard a.allSatisfy(\.isFinite), a[0] <= a[1] else {
+      guard a.allSatisfy(\.isFinite) else {
         throw EngineInterpreterError.invalidArguments(function)
       }
+      // Neither function has an error case. Random interpolates, so reversed
+      // bounds are fine; an empty integer range yields its lower bound.
       if operation == .random {
         let fraction = Double.random(in: 0...1)
         return fraction * a[1] + (1 - fraction) * a[0]
       }
       let lower = try integer(ceil(a[0]), function: function)
       let upper = try integer(ceil(a[1]), function: function)
-      guard lower < upper else { throw EngineInterpreterError.invalidArguments(function) }
+      guard lower < upper else { return Double(lower) }
       return Double(Int.random(in: lower..<upper))
     default:
       throw EngineInterpreterError.unsupportedFunction(function)

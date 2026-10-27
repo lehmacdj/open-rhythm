@@ -61,8 +61,14 @@ enum EngineSoftwareRenderer {
     let v: Double
   }
 
+  /// Examined pixels per frame: 16 per output pixel (each triangle scans its
+  /// bounding box), never below the 64M that fixed-size frames always had.
+  static func pixelBudget(width: Int, height: Int) -> Int {
+    max(64_000_000, 16 * width * height)
+  }
+
   static func render(_ sprites: [EngineRenderSprite], size: CGSize,
-    scale: Double = 1, pixelBudget: Int = 64_000_000) throws -> CGImage {
+    scale: Double = 1, pixelBudget: Int? = nil) throws -> CGImage {
     let w = ceil(size.width * scale)
     let h = ceil(size.height * scale)
     guard w.isFinite, h.isFinite, w > 0, h > 0, w <= 16384, h <= 16384,
@@ -74,6 +80,7 @@ enum EngineSoftwareRenderer {
     var textures = [ObjectIdentifier: Texture]()
     var textureBytes = 0
     var remaining = pixelBudget
+      ?? Self.pixelBudget(width: width, height: height)
     var vertexCount = 0
     for sprite in sprites {
       let mesh = EngineMetalRenderer.vertices(for: sprite, size: size)
@@ -151,7 +158,7 @@ enum EngineSoftwareRenderer {
   }
 
   static func draw(_ sprites: [EngineRenderSprite], context: CGContext,
-    size: CGSize, pixelBudget: Int = 64_000_000) throws {
+    size: CGSize, pixelBudget: Int? = nil) throws {
     let scale = max(hypot(context.ctm.a, context.ctm.b), hypot(context.ctm.c, context.ctm.d))
     let image = try render(sprites, size: size, scale: scale, pixelBudget: pixelBudget)
     context.saveGState()

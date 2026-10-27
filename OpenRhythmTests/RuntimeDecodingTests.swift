@@ -1618,17 +1618,19 @@ final class RuntimeDecodingTests: XCTestCase {
     }
   }
 
-  func testRandomBoundsAndInvalidRanges() throws {
+  func testRandomBoundsAndEmptyOrReversedRanges() throws {
     for _ in 0..<100 {
       XCTAssertTrue((-3...2).contains(try evaluate("Random", [-3, 2])))
+      XCTAssertTrue((1...2).contains(try evaluate("Random", [2, 1])))
       let integer = try evaluate("RandomInteger", [-1.5, 2.2])
       XCTAssertTrue((-1...2).contains(integer))
       XCTAssertEqual(integer, integer.rounded())
     }
     XCTAssertEqual(try evaluate("Random", [4, 4]), 4)
-    XCTAssertThrowsError(try evaluate("RandomInteger", [4, 4]))
-    XCTAssertThrowsError(try evaluate("Random", [2, 1]))
+    XCTAssertEqual(try evaluate("RandomInteger", [4, 4]), 4)
+    XCTAssertEqual(try evaluate("RandomInteger", [3.5, 1]), 4)
     XCTAssertThrowsError(try evaluate("Random", [.nan, 1]))
+    XCTAssertThrowsError(try evaluate("RandomInteger", [1, .infinity]))
   }
 
   func testUIVisibilityDecodesInRuntimeBlockOrder() throws {

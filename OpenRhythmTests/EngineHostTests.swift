@@ -4540,6 +4540,17 @@ final class EngineHostTests: XCTestCase {
   }
 
   @MainActor
+  func testSoftwarePixelBudgetScalesWithFramePixels() {
+    // Thumbnails keep the old fixed floor; a 13-inch iPad frame gets more.
+    XCTAssertEqual(EngineSoftwareRenderer.pixelBudget(width: 128, height: 128),
+      64_000_000)
+    XCTAssertEqual(EngineSoftwareRenderer.pixelBudget(width: 2752, height: 2064),
+      16 * 2752 * 2064)
+    XCTAssertGreaterThan(
+      EngineSoftwareRenderer.pixelBudget(width: 2752, height: 2064), 64_000_000)
+  }
+
+  @MainActor
   func testSoftwareCoveragePreservesTranslucentReflectedAndFoldedCurves() throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
       throw XCTSkip("Metal is unavailable on this test device")
@@ -6357,6 +6368,27 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(variables, EngineGeometry.randomVariables(seed: 123))
     XCTAssertEqual(variables["sinr1"]!, sin(2 * .pi * variables["r1"]!))
     XCTAssertEqual(EngineEasing.value("outCubic", 0.5), 0.875)
+  }
+
+  func testParticleRandomVariablesDecorrelateNeighboringSeeds() {
+    // Repetitions of one group use consecutive seeds. An affine generator
+    // advances every r_k by a constant step mod 1 between them.
+    let seeds = (0..<256).map { UInt64(7) &* 65_537 &+ UInt64($0) }
+    for name in ["r1", "r2", "r8"] {
+      let values = seeds.map { EngineGeometry.randomVariables(seed: $0)[name]! }
+      let steps = zip(values, values.dropFirst()).map { pair -> Double in
+        let step = pair.1 - pair.0
+        return ((step - floor(step)) * 1e6).rounded()
+      }
+      XCTAssertGreaterThan(Set(steps).count, 200, name)
+      let mean = values.reduce(0, +) / Double(values.count)
+      XCTAssertEqual(mean, 0.5, accuracy: 0.1, name)
+      let deviations = values.map { $0 - mean }
+      let lagged = zip(deviations, deviations.dropFirst())
+        .reduce(0) { $0 + $1.0 * $1.1 }
+      let variance = deviations.reduce(0) { $0 + $1 * $1 }
+      XCTAssertLessThan(abs(lagged / variance), 0.25, name)
+    }
   }
 
   @MainActor

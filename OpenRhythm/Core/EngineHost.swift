@@ -147,7 +147,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private(set) var debugLog = [EngineDebugLogEntry]()
   private var debugLogSequence = 0
   private var debugPauseRequested = false
-  var isDebugMode: Bool { memory.value(block: 1000, index: 0) != 0 }
+  var isDebugMode: Bool {
+    memory.value(block: EnginePlayBlock.runtimeEnvironment, index: 0) != 0
+  }
 
   func takeDebugPause() -> Bool {
     defer { debugPauseRequested = false }
@@ -208,7 +210,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     self.introStageSpriteIDs = introStageSpriteIDs
     self.archetypeCount = archetypeCount
     self.streamEntryLimit = max(0, streamEntryLimit)
-    for block in [1003, 1004] {
+    for block in [EnginePlayBlock.runtimeSkinTransform,
+      EnginePlayBlock.runtimeParticleTransform] {
       for index in 0..<16 {
         memory.set(block: block, index: index, value: index % 5 == 0 ? 1 : 0)
       }
@@ -384,7 +387,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
         spriteID: id, points: points(a),
         zValues: [a[9]] + Array(a.dropFirst(required))
           + Array(repeating: 0, count: required + 3 - a.count),
-        alpha: min(1, max(0, a[10])), transform: transform(block: 1003),
+        alpha: min(1, max(0, a[10])),
+        transform: transform(block: EnginePlayBlock.runtimeSkinTransform),
         curve: curve, isStaticIntroDecoration: staticIntroDrawing
           && introStageSpriteIDs.contains(id), isInputVisual: inputDrawing
       ))
@@ -527,7 +531,8 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   private func audioTime(_ scheduledTime: Double) throws -> Double {
     // Scheduled effects use the BGM timeline. Immediate effects remain on
     // the current runtime clock so hit feedback is never deliberately delayed.
-    let result = scheduledTime - memory.value(block: 1000, index: 2)
+    let result = scheduledTime
+      - memory.value(block: EnginePlayBlock.runtimeEnvironment, index: 2)
     guard result.isFinite else {
       throw EngineInterpreterError.invalidArguments("scheduled audio offset")
     }

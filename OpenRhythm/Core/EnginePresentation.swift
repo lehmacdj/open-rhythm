@@ -325,7 +325,9 @@ struct EngineConfiguration: Decodable {
 struct EngineUIElement: Equatable {
   let values: [Double]
   init(memory: EngineMemory, index: Int) {
-    values = (0..<10).map { memory.value(block: 1006, index: index * 10 + $0) }
+    values = (0..<10).map {
+      memory.value(block: EnginePlayBlock.runtimeUI, index: index * 10 + $0)
+    }
   }
   var isVisible: Bool {
     values.allSatisfy(\.isFinite) && values[5] > 0 && values[7] > 0
@@ -553,17 +555,28 @@ enum EngineGeometry {
     )
   }
 
+  /// Deterministic per seed. Seeds are structured (instance, group,
+  /// repetition), so mix them first: a plain LCG is affine in its seed and
+  /// would place neighboring repetitions on a visible lattice.
   static func randomVariables(seed: UInt64) -> EngineExpression {
-    var state = seed
+    let state = splitMix(seed)
     var values: EngineExpression = ["c": 1]
     for index in 1...8 {
-      state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-      let value = Double(state >> 11) / 9_007_199_254_740_992
+      let bits = splitMix(state &+ UInt64(index) &* 0x9E37_79B9_7F4A_7C15)
+      let value = Double(bits >> 11) / 9_007_199_254_740_992
       values["r\(index)"] = value
       values["sinr\(index)"] = sin(2 * .pi * value)
       values["cosr\(index)"] = cos(2 * .pi * value)
     }
     return values
+  }
+
+  /// SplitMix64's finalizer: https://prng.di.unimi.it/splitmix64.c
+  static func splitMix(_ value: UInt64) -> UInt64 {
+    var z = value
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
   }
 
   static func curvedPatches(_ quad: [EnginePoint], curve: EngineCurve)
@@ -1213,7 +1226,7 @@ enum EngineRenderer {
   }
 
   static func draw(_ sprites: [EngineRenderSprite], context: CGContext,
-    size: CGSize, pixelBudget: Int = 64_000_000) throws {
+    size: CGSize, pixelBudget: Int? = nil) throws {
     if sprites.contains(where: { sprite in
       guard sprite.textureRegion == .full, sprite.points.count == 4,
         sprite.matrix.count == 16 else { return true }
@@ -1276,7 +1289,10 @@ enum EngineRenderer {
     // The particle transform is frame-wide. Reading its sixteen values for
     // every emitted particle duplicates thousands of VM reads on busy hits.
     let particleMatrix = host.particles.isEmpty ? []
-      : (0..<16).map { host.memory.value(block: 1004, index: $0) }
+      : (0..<16).map {
+        host.memory.value(block: EnginePlayBlock.runtimeParticleTransform,
+          index: $0)
+      }
     for instance in host.particles.values.sorted(by: { $0.id < $1.id }) {
       guard let effect = assets.particles[instance.effectID] else { continue }
       let elapsed = (host.time - instance.startTime) / instance.duration

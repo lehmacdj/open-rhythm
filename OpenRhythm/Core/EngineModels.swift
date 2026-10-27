@@ -3,6 +3,42 @@ import Foundation
 // Named resource identities are engine numbers, not array indices.
 typealias EngineResourceID = Double
 
+/// Play-mode block IDs, named as in the public engine specs:
+/// https://wiki.sonolus.com/engine-specs/play-blocks/overview
+enum EnginePlayBlock {
+  static let runtimeEnvironment = 1000
+  static let runtimeUpdate = 1001
+  static let runtimeTouchArray = 1002
+  static let runtimeSkinTransform = 1003
+  static let runtimeParticleTransform = 1004
+  static let runtimeBackground = 1005
+  static let runtimeUI = 1006
+  static let runtimeUIConfiguration = 1007
+  static let levelMemory = 2000
+  static let levelData = 2001
+  static let levelOption = 2002
+  static let levelBucket = 2003
+  static let levelScore = 2004
+  static let levelLife = 2005
+  static let engineROM = 3000
+  static let entityMemory = 4000
+  static let entityData = 4001
+  static let entitySharedMemory = 4002
+  static let entityInfo = 4003
+  static let entityDespawn = 4004
+  static let entityInput = 4005
+  static let entityScore = 4006
+  static let entityLife = 4007
+  static let entityDataArray = 4101
+  static let entitySharedMemoryArray = 4102
+  static let entityInfoArray = 4103
+  static let entityScoreArray = 4106
+  static let entityLifeArray = 4107
+  static let archetypeLife = 5000
+  static let archetypeScore = 5001
+  static let temporaryMemory = 10000
+}
+
 struct EngineNamedID: Decodable, Sendable {
   let name: String
   let id: EngineResourceID
@@ -180,8 +216,10 @@ struct EnginePlayData: Decodable, Sendable {
       "HasParticleEffect"]
     // These blocks cannot change after preprocessing, including writes via
     // Entity Data's array alias. Only level-backed entities receive the flag.
-    let fixedBlocks: Set<Double> = [2001, 2002, 3000, 4001]
-    // Entity Memory (4000) has no cross-entity alias. It is also stable once
+    let fixedBlocks = Set([EnginePlayBlock.levelData,
+      EnginePlayBlock.levelOption, EnginePlayBlock.engineROM,
+      EnginePlayBlock.entityData].map(Double.init))
+    // Entity Memory has no cross-entity alias. It is also stable once
     // preparation finishes IF subsequent callbacks never write it. The
     // whole-archetype checks below establish that condition: any possible
     // write disqualifies the entity, even when a shared read node was memoized.
@@ -213,7 +251,8 @@ struct EnginePlayData: Decodable, Sendable {
       guard node.arguments.count == count,
         nodes.indices.contains(node.arguments[0]),
         nodes.indices.contains(node.arguments[1]),
-        nodes[node.arguments[0]].value == 10000,
+        nodes[node.arguments[0]].value
+          == Double(EnginePlayBlock.temporaryMemory),
         let index = nodes[node.arguments[1]].value,
         let slot = Int(exactly: index.rounded(.towardZero)),
         (0..<4096).contains(slot) else { return nil }
@@ -330,7 +369,8 @@ struct EnginePlayData: Decodable, Sendable {
         let readArity = function == "Get" ? 2
           : function == "GetShifted" ? 4 : nil
         let fixedRead = readArity == node.arguments.count
-          && first.map { fixedBlocks.contains($0) || $0 == 4000 } == true
+          && first.map { fixedBlocks.contains($0)
+            || $0 == Double(EnginePlayBlock.entityMemory) } == true
         // Identity is checked per emitted draw by the host, including literal
         // IDs. An unselected custom draw must not taint a selected stage draw.
         // Draw arguments must be fixed, with no external/persistent effects.

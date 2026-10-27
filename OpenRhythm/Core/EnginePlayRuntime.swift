@@ -276,6 +276,8 @@ struct EngineTouchPool<Key: Hashable> {
 /// Executes the play lifecycle serially. "Parallel" callbacks have independent
 /// entity memory, but need not run on parallel threads to preserve semantics.
 final class EnginePlayRuntime {
+  private typealias Block = EnginePlayBlock
+
   private struct Entity {
     let key: Int
     let index: Int?
@@ -375,45 +377,52 @@ final class EnginePlayRuntime {
     inputCount = level.entities.filter {
       archetypes[$0.archetype].map { engine.archetypes[$0].hasInput } ?? false
     }.count
-    memory.set(block: 1000, index: 0, value: debugMode ? 1 : 0)
-    memory.set(block: 1000, index: 1, value: aspectRatio)
-    memory.set(block: 1000, index: 2, value: audioOffset)
-    memory.set(block: 1000, index: 3, value: inputOffset)
+    memory.set(block: Block.runtimeEnvironment, index: 0,
+      value: debugMode ? 1 : 0)
+    memory.set(block: Block.runtimeEnvironment, index: 1, value: aspectRatio)
+    memory.set(block: Block.runtimeEnvironment, index: 2, value: audioOffset)
+    memory.set(block: Block.runtimeEnvironment, index: 3, value: inputOffset)
     for (index, value) in (backgroundQuad ??
       [-aspectRatio, -1, -aspectRatio, 1, aspectRatio, 1, aspectRatio, -1]).enumerated() {
-      memory.set(block: 1005, index: index, value: value)
+      memory.set(block: Block.runtimeBackground, index: index, value: value)
     }
     for (index, value) in (safeArea ?? [-aspectRatio, aspectRatio, -1, 1]).enumerated() {
-      memory.set(block: 1000, index: 5 + index, value: value)
+      memory.set(block: Block.runtimeEnvironment, index: 5 + index,
+        value: value)
     }
-    memory.set(block: 2005, index: 6, value: 1000)
-    memory.set(block: 2005, index: 7, value: 1000)
+    memory.set(block: Block.levelLife, index: 6, value: 1000)
+    memory.set(block: Block.levelLife, index: 7, value: 1000)
     for (index, value) in options.enumerated() {
-      memory.set(block: 2002, index: index, value: value)
+      memory.set(block: Block.levelOption, index: index, value: value)
     }
     for index in 0..<10 {
-      memory.set(block: 1007, index: index, value: uiConfiguration[index])
+      memory.set(block: Block.runtimeUIConfiguration, index: index,
+        value: uiConfiguration[index])
     }
     for index in engine.archetypes.indices {
-      memory.set(block: 5001, index: index, value: 1)
+      memory.set(block: Block.archetypeScore, index: index, value: 1)
     }
     for (index, source) in level.entities.enumerated() {
       // Preserve original indices, including built-in timing entities.
       guard let archetypeID = archetypes[source.archetype] else {
         // Charts may include editor-only metadata as well as built-in timing
         // entities. These preserve their indices but have no play callbacks.
-        memory.set(block: 4103, index: index * 3, value: Double(index))
-        memory.set(block: 4103, index: index * 3 + 1, value: -1)
-        memory.set(block: 4103, index: index * 3 + 2, value: 2)
+        memory.set(block: Block.entityInfoArray, index: index * 3,
+          value: Double(index))
+        memory.set(block: Block.entityInfoArray, index: index * 3 + 1,
+          value: -1)
+        memory.set(block: Block.entityInfoArray, index: index * 3 + 2, value: 2)
         continue
       }
       let entity = Entity(key: index, index: index, archetype: archetypeID)
       entities.append(entity)
       select(entity)
-      memory.set(block: 4005, index: 2, value: -1)
-      memory.set(block: 4103, index: index * 3, value: Double(index))
+      memory.set(block: Block.entityInput, index: 2, value: -1)
+      memory.set(block: Block.entityInfoArray, index: index * 3,
+        value: Double(index))
       memory.set(
-        block: 4103, index: index * 3 + 1, value: Double(archetypeID)
+        block: Block.entityInfoArray, index: index * 3 + 1,
+        value: Double(archetypeID)
       )
       for field in engine.archetypes[archetypeID].imports {
         guard (0..<32).contains(field.index) else {
@@ -431,7 +440,7 @@ final class EnginePlayRuntime {
           value = source.archetype == "#BPM_CHANGE" && field.name == "#BPM"
             ? rawValue * playbackSpeed : rawValue
         }
-        memory.set(block: 4001, index: field.index, value: value)
+        memory.set(block: Block.entityData, index: field.index, value: value)
       }
     }
     for entity in ordered(entities, by: \.preprocess) {
@@ -439,19 +448,24 @@ final class EnginePlayRuntime {
     }
     resultBuckets = engine.buckets.enumerated().map { index, definition in
       EngineResultBucket(definition: definition, windows: (0..<6).map {
-        let value = memory.value(block: 2003, index: index * 6 + $0)
+        let value = memory.value(block: Block.levelBucket,
+          index: index * 6 + $0)
         return value.isFinite ? value : nil
       })
     }
     let weights = Dictionary(uniqueKeysWithValues: entities.compactMap { entity in
       guard let index = entity.index, engine.archetypes[entity.archetype].hasInput
       else { return nil as (Int, Double)? }
-      return (index, memory.value(block: 5001, index: entity.archetype)
-        + memory.value(block: 4106, index: index))
+      return (index, memory.value(block: Block.archetypeScore,
+        index: entity.archetype)
+        + memory.value(block: Block.entityScoreArray, index: index))
     })
     arcadeScore = EngineArcadeScore(configuration:
-      (0..<12).map { memory.value(block: 2004, index: $0) }, weights: weights)
-    let lifeConfiguration = (0..<8).map { memory.value(block: 2005, index: $0) }
+      (0..<12).map { memory.value(block: Block.levelScore, index: $0) },
+      weights: weights)
+    let lifeConfiguration = (0..<8).map {
+      memory.value(block: Block.levelLife, index: $0)
+    }
     guard lifeConfiguration.allSatisfy(\.isFinite),
       lifeConfiguration[6] >= 0, lifeConfiguration[7] >= 0 else {
       throw EngineInterpreterError.invalidArguments("Level Life")
@@ -498,7 +512,7 @@ final class EnginePlayRuntime {
 
   var audioOffset: Double {
     get throws {
-      let offset = memory.value(block: 1000, index: 2)
+      let offset = memory.value(block: Block.runtimeEnvironment, index: 2)
       guard offset.isFinite else {
         throw EngineInterpreterError.invalidArguments("audio offset")
       }
@@ -510,7 +524,7 @@ final class EnginePlayRuntime {
     _ = try audioOffset
     // RuntimeEnvironment is writable in preprocess. Use the engine's resulting
     // value, and adjust only event times, not frame time or measured velocity.
-    let inputOffset = memory.value(block: 1000, index: 3)
+    let inputOffset = memory.value(block: Block.runtimeEnvironment, index: 3)
     guard inputOffset.isFinite else {
       throw EngineInterpreterError.invalidArguments("input offset")
     }
@@ -524,7 +538,7 @@ final class EnginePlayRuntime {
     for (index, value) in [time, delta, host.timeScale.scaledTime(at: time),
       Double(touches.count)]
       .enumerated() {
-      memory.set(block: 1001, index: index, value: value)
+      memory.set(block: Block.runtimeUpdate, index: index, value: value)
     }
     for (index, touch) in touches.enumerated() {
       let velocity = touch.velocity ?? EnginePoint(
@@ -540,7 +554,8 @@ final class EnginePlayRuntime {
         atan2(velocity.y, velocity.x)
       ]
       for (offset, value) in values.enumerated() {
-        memory.set(block: 1002, index: index * 15 + offset, value: value)
+        memory.set(block: Block.runtimeTouchArray, index: index * 15 + offset,
+          value: value)
       }
     }
     var newlyActive = [Entity]()
@@ -562,7 +577,7 @@ final class EnginePlayRuntime {
       nextKey += 1
       select(entity)
       for (index, value) in command.memory.enumerated() {
-        memory.set(block: 4000, index: index, value: value)
+        memory.set(block: Block.entityMemory, index: index, value: value)
       }
       newlyActive.append(entity)
     }
@@ -610,7 +625,8 @@ final class EnginePlayRuntime {
     var terminating = [Entity]()
     for entity in active {
       select(entity)
-      guard memory.value(block: 4004, index: 0) != 0 else { continue }
+      guard memory.value(block: Block.entityDespawn, index: 0) != 0
+      else { continue }
       terminating.append(entity)
     }
     for entity in terminating {
@@ -620,8 +636,8 @@ final class EnginePlayRuntime {
     for entity in terminating {
       select(entity)
       if let index = entity.index, engine.archetypes[entity.archetype].hasInput {
-        let grade = memory.value(block: 4005, index: 0)
-        let accuracy = memory.value(block: 4005, index: 1)
+        let grade = memory.value(block: Block.entityInput, index: 0)
+        let accuracy = memory.value(block: Block.entityInput, index: 1)
         guard accuracy.isFinite else {
           throw EngineInterpreterError.invalidArguments("EntityInput accuracy")
         }
@@ -630,14 +646,16 @@ final class EnginePlayRuntime {
         let lifeGrade = Int(exactly: grade) ?? 0
         let gradeIndex = (1...3).contains(lifeGrade) ? lifeGrade - 1 : 3
         life.record(grade: lifeGrade,
-          increment: memory.value(block: 5000, index: entity.archetype * 4 + gradeIndex)
-            + memory.value(block: 4007, index: gradeIndex))
-        let bucketIndex = memory.value(block: 4005, index: 2)
-        let bucketValue = memory.value(block: 4005, index: 3)
+          increment: memory.value(block: Block.archetypeLife,
+            index: entity.archetype * 4 + gradeIndex)
+            + memory.value(block: Block.entityLife, index: gradeIndex))
+        let bucketIndex = memory.value(block: Block.entityInput, index: 2)
+        let bucketValue = memory.value(block: Block.entityInput, index: 3)
         judgments.append(EngineJudgment(
           entityIndex: index, grade: Int(exactly: grade) ?? 0,
           accuracy: accuracy,
-          haptic: EngineHaptic(runtimeValue: memory.value(block: 4005, index: 4)),
+          haptic: EngineHaptic(runtimeValue:
+            memory.value(block: Block.entityInput, index: 4)),
           bucketIndex: bucketIndex.isFinite ? bucketIndex : nil,
           bucketValue: bucketValue.isFinite ? bucketValue : nil
         ))
@@ -661,14 +679,14 @@ final class EnginePlayRuntime {
       exportCount: engine.archetypes[entity.archetype].exports.count,
       staticIntroDrawing: parallelDrawing && entity.index != nil
         && staticIntroArchetypes.contains(entity.archetype)
-        && memory.value(block: 4004, index: 0) == 0,
+        && memory.value(block: Block.entityDespawn, index: 0) == 0,
       inputDrawing: engine.archetypes[entity.archetype].hasInput
     )
   }
 
   private func setState(_ entity: Entity, value: Double) {
     guard let index = entity.index else { return }
-    memory.set(block: 4103, index: index * 3 + 2, value: value)
+    memory.set(block: Block.entityInfoArray, index: index * 3 + 2, value: value)
   }
 
   private func execute(
