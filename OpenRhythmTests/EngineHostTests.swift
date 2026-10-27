@@ -44,10 +44,6 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(Set(host.particles.values.map(\.effectID)), ids)
     let commands = host.takeAudioCommands()
     XCTAssertEqual(Set(commands.map(\.clipID)), ids)
-    var scheduler = EngineAudioScheduler()
-    try scheduler.enqueue(commands)
-    XCTAssertEqual(Set(scheduler.due(at: 0).map(\.clipID)), ids,
-      "Minimum-distance histories must not alias fractional clip identities")
     try audio.update(commands, at: 0, loopCommands: host.takeLoopCommands())
     for id in ids {
       XCTAssertEqual(voices[id]?.flatMap(\.looping).sorted { !$0 && $1 },
@@ -103,10 +99,12 @@ final class EngineHostTests: XCTestCase {
     check("active audio loops") {
       _ = try host.call(function: "PlayLooped", arguments: [8])
     }
-    var scheduler = EngineAudioScheduler()
+    let audio = try EngineAudioPlayback(clips: [8: Data()]) { _, _ in
+      MockEffectVoice()
+    }
     check("queued audio commands") {
-      try scheduler.enqueue(Array(repeating: EngineAudioCommand(
-        clipID: 8, time: 0, minimumDistance: 0), count: 16_385))
+      try audio.update(Array(repeating: EngineAudioCommand(
+        clipID: 8, time: 100, minimumDistance: 0), count: 16_385), at: 0)
     }
     check("effect audio clips") {
       _ = try EngineAudioPlayback(clips: Dictionary(uniqueKeysWithValues:
@@ -3294,6 +3292,61 @@ final class EngineHostTests: XCTestCase {
     }
   }
 
+  func testNaNSpawnOrderQueuesLast() throws {
+    let b = RuntimeNodeBuilder()
+    func get(_ block: Int, _ index: Int) -> Int {
+      b.call("Get", [b.value(Double(block)), b.value(Double(index))])
+    }
+    // 0 / 0 gives the first entity a NaN spawn order.
+    let order = b.call("Divide", [get(4001, 0), get(4001, 1)])
+    let spawn = b.call("GreaterOr", [get(1001, 0), get(4001, 2)])
+    let despawn = b.call("Set", [b.value(4004), b.value(0), b.value(1)])
+    let engine = try b.engine(archetypes: [[
+      "name": "Note", "hasInput": false,
+      "imports": [["name": "a", "index": 0], ["name": "b", "index": 1],
+                  ["name": "time", "index": 2]], "exports": [],
+      "spawnOrder": ["index": order], "shouldSpawn": ["index": spawn],
+      "initialize": ["index": despawn]]])
+    let level = try JSONDecoder().decode(LevelData.self, from: Data(#"""
+      {"bgmOffset":0,"entities":[
+        {"archetype":"Note","data":[{"name":"a","value":0},
+          {"name":"b","value":0},{"name":"time","value":0}]},
+        {"archetype":"Note","data":[{"name":"a","value":1},
+          {"name":"b","value":1},{"name":"time","value":2}]},
+        {"archetype":"Note","data":[{"name":"a","value":0},
+          {"name":"b","value":1},{"name":"time","value":1}]}]}
+      """#.utf8))
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    func spawned() -> [Bool] {
+      (0..<3).map { runtime.memory.value(block: 4103, index: $0 * 3 + 2) != 0 }
+    }
+    try runtime.update(at: 0)
+    XCTAssertEqual(spawned(), [false, false, false],
+      "The NaN entity must wait behind the blocked queue head")
+    try runtime.update(at: 1)
+    XCTAssertEqual(spawned(), [false, false, true])
+    try runtime.update(at: 2)
+    XCTAssertEqual(spawned(), [true, true, true])
+  }
+
+  func testTouchPoolEndsContactWhoseReleaseWasMissed() {
+    var pool = EngineTouchPool<Int>()
+    pool.beginPlayback(generation: 1)
+    pool.receive(key: 10, position: EnginePoint(x: 0, y: 0), time: 1,
+      started: true, ended: false)
+    pool.nextFrame(at: 1)
+    pool.receive(key: 10, position: EnginePoint(x: 1, y: 0), time: 2,
+      started: true, ended: false)
+    XCTAssertEqual(pool.touches.map(\.id), [1, 2])
+    XCTAssertEqual(pool.touches.map(\.ended), [true, false],
+      "The replaced contact must report its end to the engine")
+    XCTAssertEqual(pool.touches.first?.position, EnginePoint(x: 0, y: 0))
+    pool.nextFrame(at: 2)
+    XCTAssertEqual(pool.touches.map(\.id), [2])
+  }
+
   func testLargeSpawnQueueAdvancesOneEntityPerFrame() throws {
     let b = RuntimeNodeBuilder()
     let index = b.call("Get", [b.value(4003), b.value(0)])
@@ -5418,21 +5471,19 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(try host.call(function: "StreamHas", arguments: [2, 0]), 0)
   }
 
-  func testMovingParticlesPreservesLifetimeAndRefreshesTransform() throws {
+  func testMovingParticlesPreservesLifetime() throws {
     let host = makeHost()
     try host.beginFrame(at: 2)
     let id = try host.call(function: "SpawnParticleEffect",
       arguments: [9] + quad + [3, 0])
     let before = try XCTUnwrap(host.particles[Int(id)])
     try host.beginFrame(at: 3)
-    host.memory.set(block: 1004, index: 0, value: 2)
     _ = try host.call(function: "MoveParticleEffect",
       arguments: [id] + quad.map { $0 * 2 })
     let moved = try XCTUnwrap(host.particles[Int(id)])
     XCTAssertEqual(moved.startTime, before.startTime)
     XCTAssertEqual(moved.duration, before.duration)
     XCTAssertEqual(moved.points[0], EnginePoint(x: -2, y: -2))
-    XCTAssertEqual(moved.transform[0], 2)
     _ = try host.call(function: "MoveParticleEffect", arguments: [999] + quad)
     XCTAssertEqual(host.particles.count, 1)
     try host.beginFrame(at: 5)
@@ -5508,6 +5559,7 @@ final class EngineHostTests: XCTestCase {
     XCTAssertEqual(try makeHost().call(function: "BeatToBPM", arguments: [10]), 60)
   }
 
+  @MainActor
   func testAudioSeparationUsesPlaybackOrderAndClipIdentity() throws {
     let host = makeHost()
     try host.beginFrame(at: 1)
@@ -5516,13 +5568,68 @@ final class EngineHostTests: XCTestCase {
     _ = try host.call(function: "Play", arguments: [8, 0.1])
     _ = try host.call(function: "Play", arguments: [10, 0.1])
     _ = try host.call(function: "Play", arguments: [999, 0.1])
-    var scheduler = EngineAudioScheduler()
-    try scheduler.enqueue(host.takeAudioCommands())
+    var played = [EngineResourceID]()
+    let audio = try EngineAudioPlayback(clips: [8: Data(), 10: Data()]) {
+      id, _ in
+      let voice = MockEffectVoice()
+      voice.onPlay = { played.append(id) }
+      return voice
+    }
+    try audio.update(host.takeAudioCommands(), at: 1)
     XCTAssertTrue(host.takeAudioCommands().isEmpty)
-    XCTAssertEqual(scheduler.due(at: 1).map(\.clipID), [8, 10])
-    XCTAssertTrue(scheduler.due(at: 1.5).isEmpty)
-    XCTAssertEqual(scheduler.due(at: 2).map(\.clipID), [8])
-    XCTAssertTrue(scheduler.due(at: 3).isEmpty)
+    XCTAssertEqual(played.sorted(), [8, 10],
+      "A future clip must not suppress an earlier hit")
+    try audio.update([], at: 1.4)
+    XCTAssertEqual(played.count, 2)
+    try audio.update([], at: 2)
+    XCTAssertEqual(played.sorted(), [8, 8, 10])
+    try audio.update([], at: 3)
+    XCTAssertEqual(played.count, 3)
+  }
+
+  @MainActor
+  func testZeroMinimumDistanceAcceptsEarlierTimedPlay() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update([EngineAudioCommand(clipID: 1, time: 2,
+      minimumDistance: 0)], at: 2)
+    try audio.update([EngineAudioCommand(clipID: 1, time: 1.5,
+      minimumDistance: 0)], at: 2)
+    XCTAssertEqual(voices.flatMap(\.delays), [0, 0])
+    // The earlier play must not rewind the history used for later distances.
+    try audio.update([EngineAudioCommand(clipID: 1, time: 2.05,
+      minimumDistance: 0.1)], at: 2.05)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 2)
+    audio.stop()
+  }
+
+  @MainActor
+  func testExhaustedEffectVoicesDropSoundsWithoutEndingPlay() throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    try audio.update(Array(repeating: EngineAudioCommand(clipID: 1,
+      time: 0, minimumDistance: 0), count: 300), at: 0)
+    XCTAssertEqual(audio.allocatedVoiceCount, 256)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 256)
+    try audio.update([], at: 0,
+      loopCommands: [.start(id: 1, clipID: 1, time: 0)])
+    XCTAssertFalse(voices.flatMap(\.looping).contains(true),
+      "A loop that finds no voice is dropped")
+    // Finished voices are reused for later hits.
+    for voice in voices { voice.isPlaying = false }
+    try audio.update([EngineAudioCommand(clipID: 1, time: 1,
+      minimumDistance: 0)], at: 1)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 257)
+    XCTAssertEqual(audio.allocatedVoiceCount, 256)
+    audio.stop()
   }
 
   @MainActor
@@ -5618,7 +5725,7 @@ final class EngineHostTests: XCTestCase {
     ), 0)
   }
 
-  func testExtendedDrawAndCumulativeAudioLimits() throws {
+  func testExtendedDrawPadsZValues() throws {
     let host = makeHost()
     for extra in 0...3 {
       _ = try host.call(
@@ -5629,13 +5736,20 @@ final class EngineHostTests: XCTestCase {
         [100] + Array([-2.0, -3, 4].prefix(extra))
           + Array(repeating: 0, count: 3 - extra))
     }
-    var scheduler = EngineAudioScheduler()
+  }
+
+  @MainActor
+  func testQueuedAudioCommandLimitIsCumulative() throws {
+    let audio = try EngineAudioPlayback(clips: [8: Data()]) { _, _ in
+      MockEffectVoice()
+    }
     let command = EngineAudioCommand(clipID: 8, time: 100, minimumDistance: 0)
-    try scheduler.enqueue(Array(repeating: command, count: 16_384))
-    XCTAssertTrue(scheduler.due(at: 0).isEmpty)
-    XCTAssertThrowsError(try scheduler.enqueue([command]))
-    XCTAssertEqual(scheduler.due(at: 100).count, 16_384)
-    XCTAssertNoThrow(try scheduler.enqueue([command]))
+    try audio.update(Array(repeating: command, count: 16_384), at: 0)
+    XCTAssertThrowsError(try audio.update([command], at: 0))
+    // Due commands leave the queue even when voices run out.
+    try audio.update([], at: 100)
+    XCTAssertNoThrow(try audio.update([command], at: 100))
+    audio.stop()
   }
 
   func testSpawnsAreDeferredAndExportsAreEntityScoped() throws {
@@ -6088,6 +6202,25 @@ final class EngineHostTests: XCTestCase {
       "H4sIAAAAAAAAA8tIzcnJBwCGphA2BQAAAA=="))
     XCTAssertEqual(try GzipDecoder.decompress(compressed), Data("hello".utf8))
     XCTAssertThrowsError(try GzipDecoder.decompress(compressed, maximumSize: 4))
+  }
+
+  func testGzipErrorsDescribeTheFailureAndKeepTheZlibStatus() throws {
+    let member = try XCTUnwrap(Data(base64Encoded:
+      "H4sIAAAAAAAC/8tIzcnJBwCGphA2BQAAAA=="))
+    func message(_ data: Data, maximumSize: Int = 1024) -> String {
+      do {
+        _ = try GzipDecoder.decompress(data, maximumSize: maximumSize)
+        return "no error"
+      } catch { return error.localizedDescription }
+    }
+    XCTAssertEqual(message(member, maximumSize: 4),
+      "The resource is too large to decompress (limit 4 bytes).")
+    var corrupt = member
+    corrupt[2] ^= 0xff
+    XCTAssertEqual(message(corrupt),
+      "The compressed resource is corrupt (zlib status \(Z_DATA_ERROR)).")
+    XCTAssertEqual(message(member.prefix(member.count - 4)),
+      "The compressed resource is truncated (zlib status \(Z_BUF_ERROR)).")
   }
 
   func testGzipConcatenatedMembersPreserveAllResourceData() throws {

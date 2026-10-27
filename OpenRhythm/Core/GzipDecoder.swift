@@ -4,13 +4,26 @@ import zlib
 enum GzipDecoderError: LocalizedError {
   case initializationFailed(Int32)
   case decompressionFailed(Int32)
+  /// Input or output exceeds this many bytes.
+  case sizeLimitExceeded(Int)
 
   var errorDescription: String? {
     switch self {
     case .initializationFailed(let status):
-      "Couldn’t initialize the gzip decoder (zlib status \(status))."
+      let reason = status == Z_MEM_ERROR ? " because memory ran out" : ""
+      return "Couldn’t initialize the gzip decoder\(reason) "
+        + "(zlib status \(status))."
     case .decompressionFailed(let status):
-      "Couldn’t decompress the resource (zlib status \(status))."
+      let summary = switch status {
+      case Z_DATA_ERROR: "The compressed resource is corrupt"
+      case Z_BUF_ERROR: "The compressed resource is truncated"
+      case Z_MEM_ERROR: "Memory ran out while decompressing the resource"
+      default: "Couldn’t decompress the resource"
+      }
+      return "\(summary) (zlib status \(status))."
+    case .sizeLimitExceeded(let limit):
+      return "The resource is too large to decompress "
+        + "(limit \(limit) bytes)."
     }
   }
 }
@@ -27,8 +40,11 @@ enum GzipDecoder {
     _ data: Data, windowBits: Int32 = MAX_WBITS + 16,
     maximumSize: Int = 64 * 1024 * 1024
   ) throws -> Data {
-    guard data.count <= Int(UInt32.max), maximumSize >= 0 else {
-      throw GzipDecoderError.decompressionFailed(Z_MEM_ERROR)
+    guard data.count <= Int(UInt32.max) else {
+      throw GzipDecoderError.sizeLimitExceeded(Int(UInt32.max))
+    }
+    guard maximumSize >= 0 else {
+      throw GzipDecoderError.sizeLimitExceeded(maximumSize)
     }
     var stream = z_stream()
     let initialization = inflateInit2_(
@@ -68,7 +84,7 @@ enum GzipDecoder {
           return output.count - Int(stream.avail_out)
         }
         guard written <= maximumSize - result.count else {
-          throw GzipDecoderError.decompressionFailed(Z_MEM_ERROR)
+          throw GzipDecoderError.sizeLimitExceeded(maximumSize)
         }
         result.append(contentsOf: chunk.prefix(written))
         guard status == Z_STREAM_END else { continue }

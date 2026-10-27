@@ -705,9 +705,11 @@ final class EngineInterpreter {
       try require(arguments, count: 5, function: function)
       let a = try values(arguments).map { try integer($0, function: function) }
       let count = a[4]
-      guard count >= 0, count <= operationLimit - operationCount,
-        a[1] >= 0, a[3] >= 0, a[1] <= Int.max - count,
+      guard count >= 0, a[1] >= 0, a[3] >= 0, a[1] <= Int.max - count,
         a[3] <= Int.max - count else {
+        throw EngineInterpreterError.invalidArguments(function)
+      }
+      guard count <= operationLimit - operationCount else {
         throw EngineInterpreterError.operationLimitExceeded
       }
       operationCount += count

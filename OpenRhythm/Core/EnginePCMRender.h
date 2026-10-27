@@ -83,7 +83,8 @@ static OSStatus ORRenderPCM(ORPCMRenderState *state, BOOL *isSilence,
   state->started = true;
   for (AVAudioFrameCount frame = begin; frame < end;) {
     if (state->position == state->length) {
-      if (command->looped) state->position = 0;
+      // An empty looped clip would never advance; it renders silence.
+      if (command->looped && state->length > 0) state->position = 0;
       else break;
     }
     AVAudioFrameCount available = state->length - state->position;

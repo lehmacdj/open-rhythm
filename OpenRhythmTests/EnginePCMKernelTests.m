@@ -57,4 +57,31 @@
   }
   XCTAssertEqual(failures, 0);
 }
+
+- (void)testEmptyClipRendersSilenceInsteadOfSpinning {
+  float rendered[64];
+  for (int looped = 0; looped < 2; looped++) {
+    ORPCMRenderState state = {0};
+    atomic_init(&state.middle, 2);
+    atomic_init(&state.completedGeneration, 0);
+    state.channels = 1;
+    state.rate = 48000;
+    state.commands[0] = (ORPCMCommand){
+      .generation = 1, .playing = true, .looped = looped, .manual = true,
+      .start = 0, .end = INFINITY
+    };
+    AudioTimeStamp time = { .mSampleTime = 0,
+      .mFlags = kAudioTimeStampSampleTimeValid };
+    struct { UInt32 count; AudioBuffer buffers[1]; } output = {
+      1, {{1, sizeof(rendered), rendered}}
+    };
+    BOOL silent = NO;
+    XCTAssertEqual(ORRenderPCM(&state, &silent, &time, 64,
+      (AudioBufferList *)&output), noErr);
+    XCTAssertTrue(silent);
+    // A one-shot still reports completion so its voice can be recycled.
+    XCTAssertEqual(atomic_load(&state.completedGeneration),
+      looped ? 0u : 1u);
+  }
+}
 @end

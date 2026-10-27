@@ -57,7 +57,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
     let assets = try EnginePresentationAssets(engine: engine,
       presentation: RuntimePresentation(resources: resources))
     let runtime = try EnginePlayRuntime(engine: engine, level: level,
-      options: assets.options, aspectRatio: 1.8,
+      options: assets.configuration.options.map(\.def), aspectRatio: 1.8,
       skinSpriteIDs: Set(assets.skin.keys),
       effectClipIDs: Set(engine.effect.clips.map(\.id)),
       particleEffectIDs: Set(assets.particles.keys))
@@ -173,7 +173,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
       presentation: presentation)
     let audio = try EngineAudioPlayback(engine: engine, presentation: presentation)
     let runtime = try EnginePlayRuntime(engine: engine, level: level,
-      options: assets.options, aspectRatio: 1.8,
+      options: assets.configuration.options.map(\.def), aspectRatio: 1.8,
       skinSpriteIDs: Set(assets.skin.keys), effectClipIDs: audio.clipIDs,
       particleEffectIDs: Set(assets.particles.keys),
       rom: Data(contentsOf: root.appendingPathComponent("rom.bin")))
@@ -317,7 +317,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
       ? try Data(contentsOf: romURL) : nil
     func makeRuntime(dense: Bool) throws -> EnginePlayRuntime {
       try EnginePlayRuntime(engine: engine, level: level,
-        options: assets.options, aspectRatio: 1.8,
+        options: assets.configuration.options.map(\.def), aspectRatio: 1.8,
         skinSpriteIDs: Set(assets.skin.keys), effectClipIDs: audio.clipIDs,
         particleEffectIDs: Set(assets.particles.keys), rom: rom,
         denseTemporaryMemory: dense)
@@ -1336,8 +1336,19 @@ final class RuntimeDecodingTests: XCTestCase {
         memory.value(block: 2000, index: $0)
       }, [1, 2, 3, 4])
     }
-    XCTAssertThrowsError(try evaluate("Copy", [2000, 0, 2001, 0, 100], limit: 20))
-    XCTAssertThrowsError(try evaluate("Copy", [2000, 0, 2001, 0, -1]))
+    func assertError(_ arguments: [Double], limit: Int = 1_000_000,
+      _ expected: String) {
+      XCTAssertThrowsError(try evaluate("Copy", arguments, limit: limit)) {
+        XCTAssertEqual($0.localizedDescription, expected)
+      }
+    }
+    let budget = EngineInterpreterError.operationLimitExceeded
+    let invalid = EngineInterpreterError.invalidArguments("Copy")
+    assertError([2000, 0, 2001, 0, 100], limit: 20, budget.localizedDescription)
+    // Malformed arguments are not a budget overrun.
+    assertError([2000, 0, 2001, 0, -1], invalid.localizedDescription)
+    assertError([2000, -1, 2001, 0, 1], invalid.localizedDescription)
+    assertError([2000, 0, 2001, 0x1p62, 0x1p62], invalid.localizedDescription)
     XCTAssertEqual(try evaluate("GetPointed", [2000, .infinity, 0]), 0)
   }
 

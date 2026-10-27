@@ -79,7 +79,6 @@ struct EngineParticleInstance: Equatable, Sendable {
   let startTime: TimeInterval
   let duration: TimeInterval
   let isLooped: Bool
-  var transform: [Double]
 }
 
 private struct EngineStream {
@@ -442,8 +441,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       nextParticleID += 1
       particles[id] = EngineParticleInstance(
         id: id, effectID: effectID, points: points(a), startTime: time,
-        duration: a[9], isLooped: a[10] != 0,
-        transform: transform(block: 1004)
+        duration: a[9], isLooped: a[10] != 0
       )
       return Double(id)
     case "DestroyParticleEffect":
@@ -455,7 +453,6 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       let id = try identifier(a[0], function: function)
       guard particles[id] != nil else { return 0 }
       particles[id]?.points = points(a)
-      particles[id]?.transform = transform(block: 1004)
       return 0
     case "StreamSet", "StreamHas", "StreamGetValue",
       "StreamGetNextKey", "StreamGetPreviousKey":
@@ -566,38 +563,5 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     guard count < commandLimit else {
       throw EngineInterpreterError.resourceLimitExceeded(resource)
     }
-  }
-}
-
-/// Resolves clip separation in playback-time order, not callback order. Future
-/// scheduled clips must not suppress an immediate hit sound in an earlier frame.
-struct EngineAudioScheduler {
-  private var pending = [EngineAudioCommand]()
-  private var lastPlayed = [EngineResourceID: TimeInterval]()
-
-  mutating func enqueue(_ commands: [EngineAudioCommand]) throws {
-    guard commands.count <= 16_384 - pending.count else {
-      throw EngineInterpreterError.resourceLimitExceeded("queued audio commands")
-    }
-    pending.append(contentsOf: commands)
-    pending = pending.enumerated().sorted {
-      if $0.element.time == $1.element.time { return $0.offset < $1.offset }
-      return $0.element.time < $1.element.time
-    }.map(\.element)
-  }
-
-  mutating func due(at time: TimeInterval) -> [EngineAudioCommand] {
-    var result = [EngineAudioCommand]()
-    let count = pending.prefix { $0.time <= time }.count
-    for command in pending.prefix(count) {
-      if let last = lastPlayed[command.clipID],
-         command.time - last < command.minimumDistance {
-        continue
-      }
-      lastPlayed[command.clipID] = command.time
-      result.append(command)
-    }
-    pending.removeFirst(count)
-    return result
   }
 }

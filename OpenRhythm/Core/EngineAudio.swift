@@ -10,7 +10,9 @@ final class PlaybackAudioSession {
   static let shared = PlaybackAudioSession { active in
     let session = AVAudioSession.sharedInstance()
     if active { try session.setCategory(.playback) }
-    try session.setActive(active)
+    // Let interrupted apps (e.g. music) resume once gameplay audio ends.
+    try session.setActive(active,
+      options: active ? [] : .notifyOthersOnDeactivation)
   }
 
   private let queue = DispatchQueue(label: "OpenRhythm.AudioSession",
@@ -508,6 +510,11 @@ private final class NativeEffectBank {
         throw EngineInterpreterError.resourcePreparationFailed("an effect audio buffer")
       }
       try file.read(into: buffer)
+      // A header can promise frames that fail to decode. A zero-length voice
+      // has nothing to play and must never reach the render loop.
+      guard buffer.frameLength > 0 else {
+        throw EngineInterpreterError.invalidArguments("effect audio format")
+      }
       buffers[id] = buffer
     }
   }
@@ -712,32 +719,31 @@ final class EngineAudioPlayback {
     var retained = [Pending]()
     for event in pending {
       let command = event.command
-      let accepted = prior[command.clipID].map {
-        command.time - $0 >= command.minimumDistance
-      } ?? true
+      // Without a distance, an earlier-timed play is never suppressed.
+      let accepted = command.minimumDistance <= 0
+        || prior[command.clipID].map {
+          command.time - $0 >= command.minimumDistance
+        } ?? true
       guard accepted else {
         recycle(event.id, stop: true)
         if command.time > time { retained.append(event) }
         continue
       }
-      prior[command.clipID] = command.time
       if players[event.id] == nil, command.time <= time + 0.5,
         let bytes = clips[command.clipID] {
-        let voice: any EngineEffectVoice
-        if let ready = available[command.clipID]?.popLast() {
-          voice = ready
-        } else {
-          guard allocatedVoiceCount < 256 else {
-            throw EngineInterpreterError.resourceLimitExceeded("effect audio voices")
-          }
-          voice = try makeVoice(command.clipID, bytes)
-          allocatedVoiceCount += 1
+        // Losing one hit sound to voice exhaustion must not end the play.
+        guard let voice = try reserveVoice(command.clipID, bytes) else {
+          continue
         }
         voice.play(after: max(0, command.time - (try readTime())), looped: false)
         players[event.id] = (command.clipID, voice)
       }
+      // Keep the latest time so an earlier play cannot rewind the history.
+      prior[command.clipID] = max(command.time,
+        prior[command.clipID] ?? -.infinity)
       if command.time <= time {
-        lastPlayed[command.clipID] = command.time
+        lastPlayed[command.clipID] = max(command.time,
+          lastPlayed[command.clipID] ?? -.infinity)
       } else {
         retained.append(event)
       }
@@ -789,14 +795,10 @@ final class EngineAudioPlayback {
       }
       guard loop.voice == nil, loop.start <= now + 0.5,
         let bytes = clips[loop.clipID] else { continue }
-      let voice: any EngineEffectVoice
-      if let ready = available[loop.clipID]?.popLast() { voice = ready }
-      else {
-        guard allocatedVoiceCount < 256 else {
-          throw EngineInterpreterError.resourceLimitExceeded("effect audio voices")
-        }
-        voice = try makeVoice(loop.clipID, bytes)
-        allocatedVoiceCount += 1
+      // Drop a loop that finds no voice rather than ending the play.
+      guard let voice = try reserveVoice(loop.clipID, bytes) else {
+        loops[id] = nil
+        continue
       }
       let startTime = try currentTime()
       guard loop.end > startTime else {
@@ -819,6 +821,16 @@ final class EngineAudioPlayback {
       loop.end <= time || loop.end <= loop.start else { return }
     releaseLoopVoice(id)
     loops[id] = nil
+  }
+
+  /// A pooled or new voice, or nil once all 256 voices are allocated.
+  private func reserveVoice(_ clipID: EngineResourceID, _ bytes: Data) throws
+    -> (any EngineEffectVoice)? {
+    if let ready = available[clipID]?.popLast() { return ready }
+    guard allocatedVoiceCount < 256 else { return nil }
+    let voice = try makeVoice(clipID, bytes)
+    allocatedVoiceCount += 1
+    return voice
   }
 
   private func releaseLoopVoice(_ id: Int) {

@@ -743,14 +743,11 @@ final class EnginePresentationAssets {
     let image: UIImage
     let region: EngineTextureRegion
   }
-  let options: [Double]
   let configuration: EngineConfiguration
   let ui: EngineConfiguration.UI?
   let noteSpeedOption: EngineConfiguration.Option?
   let judgementErrorMinimum: Double?
   let scoreModeOption: EngineConfiguration.Option?
-  private let scoreModeIndex: Int?
-  private let noteSpeedIndex: Int?
   let skin: [EngineResourceID: Sprite]
   let particles: [EngineResourceID: ParticleData.Effect]
   // Retain resource indices without cropping or allocating unused sprites.
@@ -800,15 +797,12 @@ final class EnginePresentationAssets {
       ? try EngineBackgroundAssets(presentation: presentation) : nil
     try configuration.validateOptions()
     try configuration.ui?.validate()
-    options = configuration.options.map(\.def)
     ui = configuration.ui
-    noteSpeedIndex = configuration.options.firstIndex(where: \.usesNoteSpeedControl)
-    noteSpeedOption = noteSpeedIndex.map { configuration.options[$0] }
+    noteSpeedOption = configuration.options.first(where: \.usesNoteSpeedControl)
     judgementErrorMinimum = configuration.ui?.judgmentErrorMin.flatMap {
       $0.isFinite && $0 >= 0 ? $0 / 1000 : nil
     }
-    scoreModeIndex = configuration.options.firstIndex(where: \.usesScoreModeControl)
-    scoreModeOption = scoreModeIndex.map { configuration.options[$0] }
+    scoreModeOption = configuration.options.first(where: \.usesScoreModeControl)
     var sprites = [EngineResourceID: Sprite]()
     if engine.skin.sprites.isEmpty {
       interpolation = false
@@ -922,11 +916,6 @@ final class EnginePresentationAssets {
       tintedParticles[key] = try makeTint(source, EngineRenderer.color(variant.color))
     }
     tintBudget = planned
-  }
-
-  func runtimeOptions(noteSpeed: Double?, scoreMode: Int? = nil) -> [Double] {
-    configuration.runtimeOptions(preferences:
-      GameplayPreferences(noteSpeed: noteSpeed, scoreMode: scoreMode))
   }
 
   var preparedImages: [UIImage] {

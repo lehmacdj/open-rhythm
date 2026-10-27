@@ -234,7 +234,13 @@ struct EngineTouchPool<Key: Hashable> {
   mutating func receive(key: Key, position: EnginePoint, time: Double,
     started: Bool, ended: Bool, sampleTime: Double? = nil) {
     if started {
-      if let previous = contacts[key] { completed.append(previous) }
+      if let previous = contacts[key] {
+        // A missed release must still end the old contact, or the engine
+        // would see a hold that never lifts.
+        completed.append(previous.ended ? previous : previous.moved(
+          to: previous.position, at: previous.time, ended: true,
+          sampleTime: previous.velocitySampleTime))
+      }
       contacts[key] = EngineTouch(id: nextID, started: true, ended: ended,
         time: time, startTime: time, position: position, startPosition: position,
         delta: EnginePoint(x: 0, y: 0), velocitySampleTime: sampleTime ?? time)
@@ -453,7 +459,9 @@ final class EnginePlayRuntime {
     life = EngineLife(configuration: lifeConfiguration)
     var orders = [Int: Double]()
     for entity in ordered(entities, by: \.spawnOrder) {
-      orders[entity.key] = try execute(entity, callback: \.spawnOrder)
+      // NaN breaks the sort's strict weak ordering; queue it last instead.
+      let order = try execute(entity, callback: \.spawnOrder)
+      orders[entity.key] = order.isNaN ? .infinity : order
     }
     waiting = entities.sorted {
       let lhs = orders[$0.key, default: 0]

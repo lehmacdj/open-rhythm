@@ -66,8 +66,12 @@ final class EngineMetalRenderer {
   }
 
   func resize(to size: CGSize, scale: CGFloat) {
+    // A standalone sublayer would otherwise animate to its new frame.
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
     layer.frame = CGRect(origin: .zero, size: size)
     layer.contentsScale = scale
+    CATransaction.commit()
     let pixels = CGSize(width: size.width * scale, height: size.height * scale)
     if layer.drawableSize != pixels { layer.drawableSize = pixels }
   }

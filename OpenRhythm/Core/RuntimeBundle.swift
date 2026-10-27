@@ -6,6 +6,8 @@ enum RuntimeBundleError: LocalizedError {
   case unsupportedEngineVersion(Int)
   case invalidResourceURL(String)
   case unsupportedPresentationValue(field: String, value: String)
+  case emptyMusic
+  case musicTooLarge(Int)
 
   var errorDescription: String? {
     switch self {
@@ -19,6 +21,10 @@ enum RuntimeBundleError: LocalizedError {
       "The \(name) resource must use an HTTP or HTTPS URL."
     case .unsupportedPresentationValue(let field, let value):
       "The engine uses an unsupported \(field) value: \(value)."
+    case .emptyMusic:
+      "The music file is empty."
+    case .musicTooLarge(let size):
+      "The music file is larger than 128 MiB (\(size) bytes)."
     }
   }
 }
@@ -183,8 +189,9 @@ final class PreparedRuntimeAudio: Sendable {
 
   init(data: Data, sourceURL: URL?, temporaryDirectory: URL =
     FileManager.default.temporaryDirectory) throws {
-    guard !data.isEmpty, data.count <= 128 * 1024 * 1024 else {
-      throw RuntimeBundleError.missingResource("music smaller than 128 MiB")
+    guard !data.isEmpty else { throw RuntimeBundleError.emptyMusic }
+    guard data.count <= 128 * 1024 * 1024 else {
+      throw RuntimeBundleError.musicTooLarge(data.count)
     }
     let directory = temporaryDirectory.appendingPathComponent(
       "OpenRhythmPlayback-\(UUID().uuidString)", isDirectory: true)
