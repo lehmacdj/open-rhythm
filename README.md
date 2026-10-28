@@ -93,8 +93,11 @@ streams, and exports. Metal renders engine sprite geometry with a software
 fallback. Engine score and life configuration is consumed after preprocessing.
 Server playback requires engine configuration and always executes the engine;
 missing presentation resources never silently select the basic-lane adapter.
-No music, charts or artwork is bundled here. The attributed public protocol
-label table described above is included for offline settings display.
+The app bundles no music, charts or artwork; the repository holds only small
+synthetic test charts. The attributed public protocol label table described
+above is included for offline settings display.
+
+Engine regression tests use the built data of two MIT-licensed open-source engines by NonSpicyBurrito, [sonolus-pjsekai-engine](https://github.com/NonSpicyBurrito/sonolus-pjsekai-engine) 1.9.0 and [sonolus-bandori-engine](https://github.com/NonSpicyBurrito/sonolus-bandori-engine) 1.6.4. They are git submodules under `OpenRhythmTests/Fixtures/Engines` (forks that add the build output to each release, with each project's `LICENSE.txt`), are used only by tests and are not part of the app. Run `git submodule update --init` to fetch them; the tests skip otherwise. Their skins, effects, particles and backgrounds are generated placeholders.
 
 Before play, a callback-graph scan reports unsupported functions, including
 those in lazy successful-hit branches and dynamically spawnable archetypes.
