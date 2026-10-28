@@ -103,13 +103,43 @@ actor SonolusClient {
   func completeSong(_ song: CatalogSong, forceReload: Bool = false) async throws -> CatalogSong {
     guard let first = song.variants.first else { return song }
     let server = song.server(for: first)
-    let query = song.title.displayValue()
-    guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw SonolusClientError.invalidResponse
+    // Charts of one song can have different titles (e.g. "Song [EXPERT]" and
+    // "Song [MASTER]"), and a search for one need not find the others. Search
+    // for each known title so every chart still listed is found by its own.
+    let queries = Set(song.variants.map { $0.title.displayValue() })
+      .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+      .sorted()
+    guard !queries.isEmpty else { throw SonolusClientError.invalidResponse }
+    var items = [SonolusLevelItem]()
+    for query in queries {
+      items += try await searchLevels(on: server, query: query,
+        forceReload: forceReload)
     }
+    // Music URLs often contain a content hash and change when audio is
+    // replaced. A stable chart identity locates the song's current key. The
+    // known charts only locate that group: the server's group alone defines
+    // the difficulties, so a retired or renamed chart is dropped.
+    let known = Set(song.variants.map(\.id))
+    guard let current = items.first(where: { $0.id == first.id })
+      ?? items.first(where: { known.contains($0.id) }),
+      let matching = CatalogBuilder.groupedLevels(items, server: server)
+        .first(where: { $0.contains { $0.id == current.id } })
+    else {
+      throw RuntimeBundleError.missingResource("the song's difficulty list")
+    }
+    // Shifting pages can repeat a chart; keep its newest copy.
+    let levels = Dictionary(matching.map { ($0.id, $0) },
+      uniquingKeysWith: { _, newest in newest })
+    return CatalogBuilder.group(levels: Array(levels.values), server: server)
+      .first { $0.variants.contains { $0.id == current.id } } ?? song
+  }
+
+  /// Every page of a keyword search, refusing to crawl a server that
+  /// ignores search.
+  private func searchLevels(on server: ServerDescriptor, query: String,
+    forceReload: Bool) async throws -> [SonolusLevelItem] {
     let firstPage = try await levels(on: server, page: 0, query: query,
       forceReload: forceReload)
-    // Do not accidentally crawl a whole server if it ignores keyword search.
     guard firstPage.pageCount <= 20 else {
       throw RuntimeBundleError.missingResource("a bounded song difficulty search")
     }
@@ -137,23 +167,7 @@ actor SonolusClient {
           forceReload: forceReload).items
       }
     }
-    // Music URLs often contain a content hash and change when audio is
-    // replaced. A stable chart identity locates the song's current key. The
-    // known charts only locate that group: the server's group alone defines
-    // the difficulties, so a retired or renamed chart is dropped.
-    let known = Set(song.variants.map(\.id))
-    guard let current = items.first(where: { $0.id == first.id })
-      ?? items.first(where: { known.contains($0.id) }),
-      let matching = CatalogBuilder.groupedLevels(items, server: server)
-        .first(where: { $0.contains { $0.id == current.id } })
-    else {
-      throw RuntimeBundleError.missingResource("the song's difficulty list")
-    }
-    // Shifting pages can repeat a chart; keep its newest copy.
-    let levels = Dictionary(matching.map { ($0.id, $0) },
-      uniquingKeysWith: { _, newest in newest })
-    return CatalogBuilder.group(levels: Array(levels.values), server: server)
-      .first { $0.variants.contains { $0.id == current.id } } ?? song
+    return items
   }
 
   private func requestData(

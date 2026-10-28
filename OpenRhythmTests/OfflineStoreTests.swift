@@ -1061,6 +1061,48 @@ final class OfflineStoreTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: keptURL.path))
   }
 
+  func testOnlyInvalidJSONRecordsAreOfferedForRemoval() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("newer-offline-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("Manifests")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://example.com")!)
+    let level = SonolusLevelItem(name: "chart", source: nil, version: 1,
+      rating: 1, title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+      author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+    let manifest = OfflineLevelManifest(id: "x", server: server, level: level,
+      itemData: Data("{}".utf8), resources: [], downloadedAt: Date())
+    var object = try XCTUnwrap(JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(manifest)) as? [String: Any])
+    object["downloadedAt"] = "a newer date format"
+    // Valid JSON in another schema may be a newer version's record.
+    let records: [(String, Data, Bool)] = [
+      ("a-missing-key.json", Data(#"{"schema":2}"#.utf8), false),
+      ("b-mismatched-type.json", Data(#"{"id":5}"#.utf8), false),
+      ("c-unknown-value.json",
+        try JSONSerialization.data(withJSONObject: object), false),
+      ("d-empty.json", Data(), true),
+      ("e-truncated.json", Data(#"{"id":"x""#.utf8), true)
+    ]
+    for (name, data, _) in records {
+      try data.write(to: directory.appendingPathComponent(name))
+    }
+    let store = OfflineStore(rootURL: root)
+    let issues = try await store.catalogSnapshot().issues
+    XCTAssertEqual(issues.map(\.fileName), records.map(\.0))
+    XCTAssertEqual(issues.map(\.isDamaged), records.map(\.2))
+    for (name, _, _) in records {
+      try await store.removeDamagedRecord(named: name)
+    }
+    let remaining = try FileManager.default
+      .contentsOfDirectory(atPath: directory.path).sorted()
+    XCTAssertEqual(remaining, records.filter { !$0.2 }.map(\.0))
+  }
+
   func testOfflineCatalogDistinguishesEmptyAllDamagedAndEnumerationFailure()
     async throws {
     let root = FileManager.default.temporaryDirectory
@@ -1399,6 +1441,41 @@ final class OfflineStoreTests: XCTestCase {
       _ = try await client.completeSong(song)
       XCTFail("A cursor loop must not report a partial download as complete")
     } catch { }
+  }
+
+  func testDifficultyDiscoverySearchesEveryKnownTitle() async throws {
+    let levels = ["Song [EXPERT]", "Song [MASTER]"].enumerated().map {
+      SonolusLevelItem(name: "chart-\($0.offset)", source: nil, version: 1,
+        rating: Double($0.offset + 1), title: LocalizedText($0.element),
+        artists: LocalizedText("Artist"), author: "Fixture", tags: [],
+        cover: ResourceLocator(hash: nil, url: nil),
+        bgm: ResourceLocator(hash: nil, url: "music"),
+        data: ResourceLocator(hash: nil, url: "chart-\($0.offset)"))
+    }
+    let server = ServerDescriptor.defaults[0]
+    let song = CatalogBuilder.group(levels: levels, server: server)[0]
+    XCTAssertEqual(song.variants.count, 2)
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel(); StubURLProtocol.handler = nil }
+    let client = SonolusClient(session: session)
+    // Like the reference server: every space-separated term must appear.
+    StubURLProtocol.handler = { request in
+      let keywords = URLComponents(url: request.url!,
+        resolvingAgainstBaseURL: false)?.queryItems?
+        .first { $0.name == "keywords" }?.value?.lowercased() ?? ""
+      let terms = keywords.split(separator: " ")
+      let matches = levels.filter { level in
+        let title = level.title.displayValue().lowercased()
+        return terms.allSatisfy { title.contains($0) }
+      }
+      return try! JSONEncoder().encode(SonolusLevelList(pageCount: 1,
+        items: matches))
+    }
+    let complete = try await client.completeSong(song, forceReload: true)
+    XCTAssertEqual(Set(complete.variants.map(\.id)), Set(levels.map(\.id)),
+      "A chart whose title differs from the song title must not be dropped")
   }
   @MainActor
   func testAppendingPagesPreservesRowsUntilExplicitSortChange() async throws {

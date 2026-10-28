@@ -36,8 +36,9 @@ struct OfflineLevelManifest: Codable, Hashable, Identifiable, Sendable {
 struct OfflineManifestIssue: Identifiable, Sendable, LocalizedError {
   let fileName: String
   let diagnostic: String
-  /// The record was read but isn't a valid manifest. A read failure may be
-  /// transient, so only damaged records are offered for removal.
+  /// The record was read but isn't valid JSON. A read failure may be
+  /// transient and a newer schema may be valid, so only damaged records are
+  /// offered for removal.
   var isDamaged = false
   var id: String { fileName }
   var errorDescription: String? {
@@ -341,7 +342,7 @@ actor OfflineStore {
         manifests.append(try JSONDecoder.offline.decode(OfflineLevelManifest.self,
           from: readStoredData(file)))
       } catch {
-        let isDamaged = error is DecodingError
+        let isDamaged = Self.isInvalidJSON(error)
         let error = error as NSError
         let issue = OfflineManifestIssue(fileName: file.lastPathComponent,
           diagnostic: "\(error.localizedDescription) (\(error.domain), \(error.code))",
@@ -633,12 +634,27 @@ actor OfflineStore {
     // A record repaired since it was listed is kept. A read error propagates:
     // it may be transient, so it never justifies deletion.
     let data = try readStoredData(url)
-    guard (try? JSONDecoder.offline.decode(OfflineLevelManifest.self,
-      from: data)) == nil else { return }
+    do {
+      _ = try JSONDecoder.offline.decode(OfflineLevelManifest.self, from: data)
+      return
+    } catch {
+      guard Self.isInvalidJSON(error) else { return }
+    }
     try fileManager.removeItem(at: url)
     cleanupRequested = true
     // Other damaged records still block cleanup; it is retried later.
     if activeDownloads == 0 { try? collectUnusedResources() }
+  }
+
+  /// JSONDecoder reports a syntax error as top-level data corruption caused
+  /// by a Cocoa read-corrupt error. Missing keys, mismatched types and
+  /// unknown enum values may come from a newer schema, so they aren't damage.
+  private static func isInvalidJSON(_ error: Error) -> Bool {
+    guard case DecodingError.dataCorrupted(let context) = error,
+      context.codingPath.isEmpty,
+      let underlying = context.underlyingError as NSError? else { return false }
+    return underlying.domain == NSCocoaErrorDomain
+      && underlying.code == CocoaError.propertyListReadCorrupt.rawValue
   }
 
   private func finishDownload() {
