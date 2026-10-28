@@ -1,0 +1,8 @@
+[submodule "OpenRhythmTests/Fixtures/Engines/pjsekai"]
+	path = OpenRhythmTests/Fixtures/Engines/pjsekai
+	url = https://github.com/lehmacdj/sonolus-pjsekai-engine.git
+	branch = openrhythm-fixtures
+[submodule "OpenRhythmTests/Fixtures/Engines/bandori"]
+	path = OpenRhythmTests/Fixtures/Engines/bandori
+	url = https://github.com/lehmacdj/sonolus-bandori-engine.git
+	branch = openrhythm-fixtures
