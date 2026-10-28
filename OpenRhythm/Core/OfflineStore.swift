@@ -492,18 +492,32 @@ actor OfflineStore {
       issues: listing.issues)
   }
 
-  private func catalogSongs(from manifests: [OfflineLevelManifest]) -> [CatalogSong] {
+  /// Downloaded charts the Offline library lists in the same song as one of
+  /// `song`'s charts but that `song` doesn't list, e.g. because the server
+  /// no longer does.
+  func unlistedDownloads(of song: CatalogSong) throws -> [SonolusLevelItem] {
+    let listed = Set(song.variants.map {
+      originKey(level: $0, server: song.server(for: $0))
+    })
+    return try manifests(groupedWith: song,
+      in: readManifests(allowPartial: true).manifests)
+      .filter {
+        !listed.contains(originKey(level: $0.level, server: $0.server))
+      }
+      .map(\.level)
+      .sorted { $0.difficulty.sortOrder < $1.difficulty.sortOrder }
+  }
+
+  /// Groups downloads into songs as the Offline library lists them, keyed by
+  /// server origin and song.
+  private func songGroups(_ manifests: [OfflineLevelManifest])
+    -> [(key: String, manifests: [OfflineLevelManifest])] {
     // Older builds may have retained one manifest per alias of a server.
     // Prefer the newest copy without deleting recoverable on-disk metadata.
     let entries = Dictionary(manifests.map {
       (originKey(level: $0.level, server: $0.server), $0)
     }, uniquingKeysWith: { first, _ in first }).values
-    let offlineServer = ServerDescriptor(
-      id: "offline",
-      name: "Offline",
-      baseURL: rootURL
-    )
-    let grouped = Dictionary(grouping: entries) { serverOrigin($0.server) }
+    return Dictionary(grouping: entries) { serverOrigin($0.server) }
       .flatMap { origin, manifests -> [(String, [OfflineLevelManifest])] in
         let server = manifests[0].server
         let byLevel = Dictionary(manifests.map { ($0.catalogLevel, $0) },
@@ -513,9 +527,30 @@ actor OfflineStore {
             (origin + "\u{0}" + CatalogBuilder.songKey(levels, server: server),
               levels.compactMap { byLevel[$0] })
           }
-    }
+      }
+  }
 
-    return grouped.map { key, manifests in
+  /// The downloads of every Offline library song containing one of `song`'s
+  /// charts, so including charts `song` itself no longer lists.
+  private func manifests(groupedWith song: CatalogSong,
+    in manifests: [OfflineLevelManifest]) -> [OfflineLevelManifest] {
+    let origins = Set(song.variants.map {
+      originKey(level: $0, server: song.server(for: $0))
+    })
+    return songGroups(manifests).map(\.manifests).filter { group in
+      group.contains {
+        origins.contains(originKey(level: $0.level, server: $0.server))
+      }
+    }.flatMap { $0 }
+  }
+
+  private func catalogSongs(from manifests: [OfflineLevelManifest]) -> [CatalogSong] {
+    let offlineServer = ServerDescriptor(
+      id: "offline",
+      name: "Offline",
+      baseURL: rootURL
+    )
+    return songGroups(manifests).map { key, manifests in
       let ordered = manifests.sorted {
         if $0.level.difficulty.sortOrder == $1.level.difficulty.sortOrder {
           return $0.level.rating < $1.level.rating
@@ -602,15 +637,18 @@ actor OfflineStore {
   }
 
   func remove(song: CatalogSong) throws {
+    // Read all manifests before deleting any; malformed metadata must not
+    // cause shared assets to be mistaken for unreferenced files.
+    let entries = try manifests()
+    // The song's downloads can include charts the server has since retired,
+    // which a song from the online catalog no longer lists.
+    let grouped = manifests(groupedWith: song, in: entries)
     let targets = Set(song.variants.map { level in
       Data("\(song.server(for: level).id):\(level.id)".utf8).sha256Hex
     })
     let origins = Set(song.variants.map {
       originKey(level: $0, server: song.server(for: $0))
-    })
-    // Read all manifests before deleting any; malformed metadata must not
-    // cause shared assets to be mistaken for unreferenced files.
-    let entries = try manifests()
+    } + grouped.map { originKey(level: $0.level, server: $0.server) })
     // Mark even missing charts so a first download cannot resurrect the song.
     for id in targets { deletionVersions[id, default: 0] += 1 }
     for id in origins { deletionVersions[id, default: 0] += 1 }

@@ -1877,6 +1877,79 @@ final class OfflineStoreTests: XCTestCase {
     }, "A retired difficulty is not requested")
   }
 
+  func testRetiredDownloadIsReportedKeptAndDeletedWithItsSong() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://server.example")!)
+    func level(_ name: String, bgm: String = "song") -> SonolusLevelItem {
+      SonolusLevelItem(name: name, source: nil, version: 1, rating: 1,
+        title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+        author: "Fixture", tags: [SonolusTag(title: "#\(name.uppercased())")],
+        cover: ResourceLocator(hash: nil, url: nil),
+        bgm: ResourceLocator(hash: nil, url: "https://assets.example/\(bgm)"),
+        data: ResourceLocator(hash: nil, url: "https://assets.example/data"))
+    }
+    let easy = level("easy"), hard = level("hard"), master = level("master")
+    let unrelated = level("expert", bgm: "other")
+    let details = Data(#"""
+      {"item":{"bgm":{"url":"https://assets.example/data"},
+      "data":{"url":"https://assets.example/data"},
+      "engine":{"version":13,"playData":{"url":"https://assets.example/data"},
+      "configuration":{"url":"https://assets.example/data"}}}}
+      """#.utf8)
+    let full = try JSONEncoder().encode(SonolusLevelList(pageCount: 1,
+      items: [easy, hard, master, unrelated]))
+    let reduced = try JSONEncoder().encode(SonolusLevelList(pageCount: 1,
+      items: [easy, hard, unrelated]))
+    func installServer(list: Data) {
+      StubURLProtocol.handler = { request in
+        switch request.url?.lastPathComponent ?? "" {
+        case "list": return list
+        case "data": return Data("asset".utf8)
+        case master.name where list == reduced:
+          throw URLError(.fileDoesNotExist) // The server's 404.
+        default: return details
+        }
+      }
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let store = OfflineStore(rootURL: root.appendingPathComponent("Offline"),
+      client: SonolusClient(session: session,
+        cache: SonolusResponseCache(rootURL: root.appendingPathComponent("Cache"))))
+    let songs = CatalogBuilder.group(levels: [easy, hard, master, unrelated],
+      server: server)
+    let song = try XCTUnwrap(songs.first { $0.variants.contains(easy) })
+    let other = try XCTUnwrap(songs.first { $0.variants.contains(unrelated) })
+    installServer(list: full)
+    let downloaded = try await store.download(song: song)
+    XCTAssertEqual(downloaded.variants.map(\.id),
+      [easy, hard, master].map(\.id))
+    _ = try await store.download(song: other)
+    let unlistedBefore = try await store.unlistedDownloads(of: downloaded)
+    XCTAssertEqual(unlistedBefore, [], "Every downloaded chart is listed")
+
+    installServer(list: reduced)
+    let updated = try await store.download(song: downloaded, forceReload: true)
+    XCTAssertEqual(updated.variants.map(\.id), [easy, hard].map(\.id))
+    let unlisted = try await store.unlistedDownloads(of: updated)
+    XCTAssertEqual(unlisted.map(\.id), [master.id],
+      "Only the retired chart is reported; the unrelated song isn't")
+    var kept = try await store.manifests().map(\.level.id)
+    XCTAssertEqual(Set(kept), Set([easy, hard, master, unrelated].map(\.id)),
+      "Updating keeps the retired chart's download")
+
+    try await store.remove(song: updated)
+    kept = try await store.manifests().map(\.level.id)
+    XCTAssertEqual(kept, [unrelated.id], "Deleting the server's current song "
+      + "also deletes its retired chart, and only that song")
+  }
+
   func testOfflineDownloadReadsButDoesNotFillResponseCache() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)

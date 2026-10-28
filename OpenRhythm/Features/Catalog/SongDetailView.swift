@@ -9,6 +9,7 @@ struct SongDetailView: View {
   @State private var isDownloading = false
   @State private var isDownloaded = false
   @State private var downloadError: String?
+  @State private var unlistedNotice: String?
   @State private var recentResults = [PlayResult]()
   @State private var unreadableResults = 0
   @State private var historyError: String?
@@ -98,6 +99,13 @@ struct SongDetailView: View {
         }
       }
 
+      if let unlistedNotice {
+        Section {
+          Label(unlistedNotice, systemImage: "info.circle")
+            .foregroundStyle(.secondary)
+        }
+      }
+
       if !recentResults.isEmpty || unreadableResults > 0
         || historyError != nil {
         Section("Recent Results") {
@@ -153,6 +161,7 @@ struct SongDetailView: View {
           do {
             try await OfflineStore.shared.remove(song: song)
             isDownloaded = false
+            unlistedNotice = nil
             if isOffline { dismiss() }
           } catch { downloadError = error.localizedDescription }
         }
@@ -222,6 +231,23 @@ struct SongDetailView: View {
     return "\(base) · Chart \(index + 1)"
   }
 
+  /// Explains that downloaded charts the server no longer lists were kept.
+  private static func notice(forUnlisted levels: [SonolusLevelItem])
+    -> String? {
+    guard !levels.isEmpty else { return nil }
+    var names = [String]()
+    for level in levels {
+      let name = level.difficulty == .unknown
+        ? level.title.displayValue() : level.difficulty.displayName
+      if !names.contains(name) { names.append(name) }
+    }
+    let subject = names.formatted(.list(type: .and))
+    let verb = names.count == 1 ? "is" : "are"
+    let kept = levels.count == 1
+      ? "your download was kept" : "your downloads were kept"
+    return "\(subject) \(verb) no longer on this server; \(kept)."
+  }
+
   private func updateDownloadStatus() async {
     let snapshot = song
     let discovered = discoverySucceeded
@@ -236,6 +262,7 @@ struct SongDetailView: View {
     isDownloading = true
     downloadProgress = "Finding difficulties…"
     downloadError = nil
+    unlistedNotice = nil
     defer { isDownloading = false }
 
     do {
@@ -243,6 +270,9 @@ struct SongDetailView: View {
         forceReload: forceReload) { done, total in
         await MainActor.run { downloadProgress = "Downloading \(done)/\(total)…" }
       }
+      // The notice is advisory; failing to read it doesn't fail the download.
+      unlistedNotice = Self.notice(forUnlisted: (try? await OfflineStore.shared
+        .unlistedDownloads(of: complete)) ?? [])
       // Keep offline artwork and origin metadata when updating from Offline.
       if isOffline {
         song = try await OfflineStore.shared.catalogSongs().first {
