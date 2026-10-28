@@ -30,7 +30,7 @@
 		A00000000000000000000010 /* LevelModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000010 /* LevelModels.swift */; };
 		A00000000000000000000011 /* EngineInterpreter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* EngineInterpreter.swift */; };
 		A00000000000000000000012 /* RuntimeBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* RuntimeBundle.swift */; };
-		A00000000000000000000013 /* RhythmChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* RhythmChart.swift */; };
+		A00000000000000000000013 /* PlaybackTimelines.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* PlaybackTimelines.swift */; };
 		A00000000000000000000014 /* GameplayModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000014 /* GameplayModel.swift */; };
 		A00000000000000000000015 /* GameplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* GameplayView.swift */; };
 		A00000000000000000000016 /* ResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* ResultStore.swift */; };
@@ -54,6 +54,7 @@
 		B00000000000000000000006 /* ResultStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ResultStoreTests.swift */; };
 		B00000000000000000000007 /* EngineHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* EngineHostTests.swift */; };
 		B00000000000000000000008 /* PlaybackClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* PlaybackClockTests.swift */; };
+		B00000000000000000000009 /* EngineFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* EngineFixtureTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -92,7 +93,7 @@
 		A10000000000000000000010 /* LevelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LevelModels.swift; sourceTree = "<group>"; };
 		A10000000000000000000011 /* EngineInterpreter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineInterpreter.swift; sourceTree = "<group>"; };
 		A10000000000000000000012 /* RuntimeBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeBundle.swift; sourceTree = "<group>"; };
-		A10000000000000000000013 /* RhythmChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RhythmChart.swift; sourceTree = "<group>"; };
+		A10000000000000000000013 /* PlaybackTimelines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackTimelines.swift; sourceTree = "<group>"; };
 		A10000000000000000000014 /* GameplayModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayModel.swift; sourceTree = "<group>"; };
 		A10000000000000000000015 /* GameplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayView.swift; sourceTree = "<group>"; };
 		A10000000000000000000016 /* ResultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStore.swift; sourceTree = "<group>"; };
@@ -116,6 +117,7 @@
 		B10000000000000000000006 /* ResultStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStoreTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000007 /* EngineHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHostTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000008 /* PlaybackClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackClockTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000009 /* EngineFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineFixtureTests.swift; sourceTree = "<group>"; };
 		D00000000000000000000001 /* OpenRhythm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenRhythm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D00000000000000000000002 /* OpenRhythmTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OpenRhythmTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -190,7 +192,7 @@
 				A1000000000000000000001C /* EngineMetalRenderer.swift */,
 				A1000000000000000000001D /* UserPreferences.swift */,
 				A10000000000000000000012 /* RuntimeBundle.swift */,
-				A10000000000000000000013 /* RhythmChart.swift */,
+				A10000000000000000000013 /* PlaybackTimelines.swift */,
 				A10000000000000000000016 /* ResultStore.swift */,
 				A1000000000000000000001E /* PlayStatistics.swift */,
 				A10000000000000000000020 /* PlaybackEventClock.swift */,
@@ -234,6 +236,7 @@
 				B10000000000000000000004 /* OfflineStoreTests.swift */,
 				B10000000000000000000005 /* RuntimeDecodingTests.swift */,
 				B10000000000000000000007 /* EngineHostTests.swift */,
+				B10000000000000000000009 /* EngineFixtureTests.swift */,
 				B10000000000000000000006 /* ResultStoreTests.swift */,
 				0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */,
 				0349A436306972F8009BC642 /* EnginePCMKernelTests.m */,
@@ -394,7 +397,7 @@
 				A0000000000000000000001C /* EngineMetalRenderer.swift in Sources */,
 				A0000000000000000000001D /* UserPreferences.swift in Sources */,
 				A00000000000000000000012 /* RuntimeBundle.swift in Sources */,
-				A00000000000000000000013 /* RhythmChart.swift in Sources */,
+				A00000000000000000000013 /* PlaybackTimelines.swift in Sources */,
 				A00000000000000000000014 /* GameplayModel.swift in Sources */,
 				A00000000000000000000015 /* GameplayView.swift in Sources */,
 				A00000000000000000000016 /* ResultStore.swift in Sources */,
@@ -418,6 +421,7 @@
 				B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */,
 				0349A437306972F8009BC642 /* EnginePCMKernelTests.m in Sources */,
 				B00000000000000000000007 /* EngineHostTests.swift in Sources */,
+				B00000000000000000000009 /* EngineFixtureTests.swift in Sources */,
 				B00000000000000000000006 /* ResultStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

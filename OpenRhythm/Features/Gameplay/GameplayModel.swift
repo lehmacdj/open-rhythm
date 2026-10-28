@@ -171,16 +171,12 @@ private final class AudioServicesObservation {
 @Observable
 final class GameplayModel {
   private(set) var phase = GameplayPhase.loading
-  private(set) var chart = RhythmChart(
-    level: LevelData(bgmOffset: 0, entities: [])
-  )
   private(set) var currentTime: TimeInterval = 0
   private(set) var combo = 0
   private(set) var maxCombo = 0
   private(set) var judgements = Dictionary(
     uniqueKeysWithValues: NoteJudgement.allCases.map { ($0, 0) }
   )
-  private(set) var hitNoteIDs = Set<String>()
   private(set) var playbackGeneration = 0
   private(set) var inputGeneration = 0
   private var debugPausedTime: Double?
@@ -205,7 +201,7 @@ final class GameplayModel {
   private var startupPreparationComplete = false
   private var startupAnalysis: Task<Double, Never>?
   private(set) var skippedIntroDuration = 0.0
-  private var preparedInputCount: Int?
+  private var preparedInputCount = 0
   private var engineScore: EngineScoreSnapshot?
   private var engineAccuracy: EngineScoreSnapshot?
   private(set) var engineLife: EngineLife?
@@ -302,7 +298,7 @@ final class GameplayModel {
   }
 
   var noteCount: Int {
-    engineRuntime?.inputCount ?? preparedInputCount ?? chart.judgementCount
+    engineRuntime?.inputCount ?? preparedInputCount
   }
 
   /// Partway through a play this is the score kept, not the score projected:
@@ -339,10 +335,6 @@ final class GameplayModel {
     }
     let mediaTime = player?.currentTime().seconds ?? 0
     return mediaTime.isFinite ? clockMapping.chartTime(mediaTime: mediaTime) : currentTime
-  }
-
-  var activeHoldIDs: Set<String> {
-    Set(activeHolds.values.map(\.id))
   }
 
   /// A requested nonzero rate can still be waiting for media. EOF is
@@ -388,23 +380,17 @@ final class GameplayModel {
           + "rate=\($0.segment.rate), payload=\($0.notificationPayload ?? "none")]"
       }.joined(separator: " ")
   }
-  private var timeObserver: Any?
   private var endObserver: NSObjectProtocol?
   private var statusObserver: NSKeyValueObservation?
-  private var tailTimer: Timer?
   private var tailStart: (mediaTime: TimeInterval, uptime: TimeInterval)?
   private(set) var resultSaveTask: Task<Void, Never>?
   private(set) var resultSaveError: String?
   /// The finished play's result until the store accepts it.
   private var unsavedResult: PlayResult?
-  private var nextMissIndex = 0
   private var resultLevel: SonolusLevelItem?
   private var resultServer: ServerDescriptor?
   private var resultLevelID = ""
   private var resultTitle = ""
-  private var pressedLanes = Set<Int>()
-  private var activeHolds = [Int: RhythmNote]()
-  private var resolvedHoldTailIDs = Set<String>()
 
   func inputTime(at timestamp: TimeInterval) -> TimeInterval {
     if let debugPausedTime { return debugPausedTime }
@@ -475,39 +461,28 @@ final class GameplayModel {
     preparedRuntimeAspect = nil
     preparedRuntimeSafeArea = nil
     do {
-      if bundle.playbackMode == .engine {
-        guard let presentation = bundle.presentation else {
-          throw RuntimeBundleError.missingResource("engine configuration")
-        }
-        let missing = try bundle.engine.unsupportedFunctions()
-        guard missing.isEmpty else {
-          throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
-        }
-        presentationAssets = try EnginePresentationAssets(
-          engine: bundle.engine, presentation: presentation
-        )
-        engineAudio = areAudioServicesAvailable ? try EngineAudioPlayback(
-          engine: bundle.engine, presentation: presentation
-        ) : nil
-        runtimeBundle = bundle
+      guard let presentation = bundle.presentation else {
+        throw RuntimeBundleError.missingResource("engine configuration")
       }
+      let missing = try bundle.engine.unsupportedFunctions()
+      guard missing.isEmpty else {
+        throw EngineInterpreterError.unsupportedFunction(missing.joined(separator: ", "))
+      }
+      presentationAssets = try EnginePresentationAssets(
+        engine: bundle.engine, presentation: presentation
+      )
+      engineAudio = areAudioServicesAvailable ? try EngineAudioPlayback(
+        engine: bundle.engine, presentation: presentation
+      ) : nil
+      runtimeBundle = bundle
     } catch {
       phase = .failed(error.localizedDescription)
       return
     }
-    chart = RhythmChart(level: bundle.level)
-    let timeline = BPMTimeline(level: bundle.level)
-    inputMetadata = bundle.level.entities.map {
-      ($0.data.first { $0.name == "#BEAT" }?.value.map {
-        timeline.time(at: $0)
-      }, $0.archetype)
-    }
-    if presentationAssets != nil {
-      let inputArchetypes = Set(bundle.engine.archetypes.filter(\.hasInput).map(\.name))
-      preparedInputCount = bundle.level.entities.filter {
-        inputArchetypes.contains($0.archetype)
-      }.count
-    }
+    let inputArchetypes = Set(bundle.engine.archetypes.filter(\.hasInput).map(\.name))
+    preparedInputCount = bundle.level.entities.filter {
+      inputArchetypes.contains($0.archetype)
+    }.count
     // Load before setting the key: saving on load would replace stored
     // preferences this build could not decode with defaults.
     let key = level.engineKey(server: server)
@@ -618,11 +593,6 @@ final class GameplayModel {
     engineLife = nil
     engineUI = []
     engineAspectRatio = nil
-    nextMissIndex = 0
-    hitNoteIDs.removeAll()
-    pressedLanes.removeAll()
-    activeHolds.removeAll()
-    resolvedHoldTailIDs.removeAll()
     for judgement in NoteJudgement.allCases {
       judgements[judgement] = 0
     }
@@ -662,28 +632,14 @@ final class GameplayModel {
         }
       }
     }
-    timeObserver = player.addPeriodicTimeObserver(
-      forInterval: CMTime(value: 1, timescale: 60),
-      queue: .main
-    ) { [weak self] time in
-      Task { @MainActor in
-        guard self?.tailStart == nil,
-          self?.presentationAssets == nil,
-          self?.playbackGeneration == generation,
-          self?.isStartingPlayback == false else { return }
-        self?.update(mediaTime: time.seconds)
-      }
-    }
     let audioURL = player.currentItem?.asset as? AVURLAsset
-    let canInspectIntro = presentationAssets != nil
     startupAnalysis = Task.detached {
-      canInspectIntro ? audioURL.map { LeadingAudioSilence.duration(at: $0.url) } ?? 0 : 0
+      audioURL.map { LeadingAudioSilence.duration(at: $0.url) } ?? 0
     }
     Task {
       let limit = await startupAnalysis?.value ?? 0
       guard phase == .playing, playbackGeneration == generation else { return }
       startupLimitMediaTime = limit
-      if presentationAssets == nil { prepareStartupAudio() }
     }
   }
 
@@ -752,7 +708,10 @@ final class GameplayModel {
         let frame = EngineIntroVisualFrame(sprites: EngineRenderer.sprites(
           host: runtime.host, assets: assets, cacheParticleRandomVariables: false),
           aspect: engineAspectRatio ?? 1,
-          background: (0..<8).map { runtime.memory.value(block: 1005, index: $0) },
+          background: (0..<8).map {
+            runtime.memory.value(block: EnginePlayBlock.runtimeBackground,
+              index: $0)
+          },
           ui: (0..<8).map {
             let element = EngineUIElement(memory: runtime.memory, index: $0)
             return element.isVisible ? element.values : []
@@ -796,8 +755,7 @@ final class GameplayModel {
 
   private func startPreparedAudio() {
     guard phase == .playing, !isDebugPaused,
-      isStartingPlayback, audioSeekCompleted,
-      presentationAssets == nil || engineRuntime != nil else { return }
+      isStartingPlayback, audioSeekCompleted, engineRuntime != nil else { return }
     do {
       if let recorder = timingRecorder {
         Self.recordAudioRoute(recorder)
@@ -808,7 +766,7 @@ final class GameplayModel {
       }
       startupStage = "starting engine audio"
       try engineAudio?.start()
-      if engineRuntime != nil { engineHaptics.start() }
+      engineHaptics.start()
       if let timebase = player?.currentItem?.timebase {
         eventClock = PlaybackEventClock(timebase: timebase,
           recordTransitions: timingRecorder != nil)
@@ -819,58 +777,6 @@ final class GameplayModel {
     } catch {
       stop()
       phase = .failed(error.localizedDescription)
-    }
-  }
-
-  func press(lane: Int, at time: TimeInterval? = nil) {
-    guard phase == .playing, !isDebugPaused else { return }
-    guard pressedLanes.insert(lane).inserted else { return }
-    hit(lane: lane, swingsOnly: false,
-      at: (time ?? currentTime) - playInputOffset)
-  }
-
-  func slide(lane: Int, at time: TimeInterval? = nil) {
-    guard phase == .playing, !isDebugPaused else { return }
-    pressedLanes.insert(lane)
-    hit(lane: lane, swingsOnly: true,
-      at: (time ?? currentTime) - playInputOffset)
-  }
-
-  private func hit(lane: Int, swingsOnly: Bool, at time: TimeInterval) {
-    let window = 0.18
-    guard let note = chart.notes
-      .filter({
-        $0.lane == lane
-          && (!swingsOnly || $0.kind == .swing)
-          && !hitNoteIDs.contains($0.id)
-          && abs($0.time - time) <= window
-      })
-      .min(by: {
-        abs($0.time - time) < abs($1.time - time)
-      })
-    else { return }
-
-    hitNoteIDs.insert(note.id)
-    record(difference: time - note.time, note: note)
-    if note.endTime != nil {
-      activeHolds[lane] = note
-    }
-  }
-
-  func release(lane: Int, at time: TimeInterval? = nil) {
-    pressedLanes.remove(lane)
-    guard
-      phase == .playing, !isDebugPaused,
-      let hold = activeHolds.removeValue(forKey: lane),
-      let endTime = hold.endTime,
-      resolvedHoldTailIDs.insert(hold.id).inserted
-    else { return }
-
-    let difference = (time ?? currentTime) - playInputOffset - endTime
-    if abs(difference) <= 0.18 {
-      record(difference: difference, note: hold, tail: true)
-    } else {
-      record(.miss, at: endTime, noteType: "Hold End")
     }
   }
 
@@ -944,20 +850,12 @@ final class GameplayModel {
     eventClock = nil
     engineAudio?.stop()
     engineHaptics.stop()
-    if let timeObserver {
-      player?.removeTimeObserver(timeObserver)
-      self.timeObserver = nil
-    }
     if let endObserver {
       NotificationCenter.default.removeObserver(endObserver)
       self.endObserver = nil
     }
     statusObserver = nil
-    tailTimer?.invalidate()
-    tailTimer = nil
     tailStart = nil
-    pressedLanes.removeAll()
-    activeHolds.removeAll()
     if phase == .playing { phase = .ready }
     if deactivateAudio {
       audioSession.release(owner: audioSessionOwner)
@@ -979,6 +877,8 @@ final class GameplayModel {
     musicHasEnded = true
     finishIfReady()
     guard phase == .playing else { return }
+    // AVPlayer stops its clock at EOF. Continue the chart's remaining notes
+    // and final judgement window using a monotonic clock.
     let mediaTime = player?.currentTime().seconds
       ?? clockMapping.mediaTime(chartTime: currentTime)
     tailStart = (
@@ -988,57 +888,6 @@ final class GameplayModel {
       ),
       uptime: uptime
     )
-    // AVPlayer stops its clock at EOF. Continue the chart's remaining notes
-    // and final judgement window using a monotonic clock.
-    tailTimer = Timer.scheduledTimer(
-      withTimeInterval: 1.0 / 60, repeats: true
-    ) { [weak self] _ in
-      Task { @MainActor in
-        self?.advanceAfterAudioEnd()
-      }
-    }
-  }
-
-  func advanceAfterAudioEnd(
-    uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
-  ) {
-    guard let tailStart, presentationAssets == nil else { return }
-    update(mediaTime: tailStart.mediaTime + max(0, uptime - tailStart.uptime))
-  }
-
-  func update(mediaTime: TimeInterval) {
-    guard phase == .playing, !isDebugPaused, mediaTime.isFinite else { return }
-    currentTime = clockMapping.chartTime(mediaTime: mediaTime)
-    let inputTime = currentTime - playInputOffset
-
-    for lane in pressedLanes {
-      hit(lane: lane, swingsOnly: true, at: inputTime)
-    }
-
-    while nextMissIndex < chart.notes.count,
-      chart.notes[nextMissIndex].time < inputTime - 0.18
-    {
-      let note = chart.notes[nextMissIndex]
-      if !hitNoteIDs.contains(note.id) {
-        hitNoteIDs.insert(note.id)
-        record(.miss, at: note.time, noteType: type(of: note))
-      }
-      nextMissIndex += 1
-    }
-
-    for note in chart.notes {
-      guard
-        let endTime = note.endTime,
-        endTime < inputTime - 0.18,
-        resolvedHoldTailIDs.insert(note.id).inserted
-      else { continue }
-      if activeHolds[note.lane]?.id == note.id {
-        activeHolds.removeValue(forKey: note.lane)
-      }
-      record(.miss, at: endTime, noteType: "Hold End")
-    }
-
-    finishIfReady()
   }
 
   @discardableResult
@@ -1203,8 +1052,9 @@ final class GameplayModel {
 
   private func finishIfReady() {
     guard phase == .playing, !isDebugPaused, musicHasEnded else { return }
+    // Without a runtime nothing has been judged yet.
     let complete = engineRuntime.map { $0.resolvedInputCount == $0.inputCount }
-      ?? (judgements.values.reduce(0, +) == chart.judgementCount)
+      ?? (preparedInputCount == 0)
     guard complete else { return }
     stop()
     phase = .finished
@@ -1245,24 +1095,6 @@ final class GameplayModel {
     } else {
       combo += 1
       maxCombo = max(maxCombo, combo)
-    }
-  }
-
-  private func type(of note: RhythmNote) -> String {
-    if note.endTime != nil { return "Hold Start" }
-    return note.kind == .swing ? "Swing" : "Tap"
-  }
-
-  private func record(difference: TimeInterval, note: RhythmNote,
-    tail: Bool = false) {
-    let time = tail ? note.endTime : note.time
-    let noteType = tail ? "Hold End" : type(of: note)
-    if abs(difference) <= 0.05 {
-      record(.perfect, accuracy: difference, at: time, noteType: noteType)
-    } else if abs(difference) <= 0.10 {
-      record(.great, accuracy: difference, at: time, noteType: noteType)
-    } else {
-      record(.good, accuracy: difference, at: time, noteType: noteType)
     }
   }
 

@@ -166,12 +166,6 @@ struct RuntimeResourceReferences: Sendable {
 }
 
 struct RuntimeBundle: Sendable {
-  enum PlaybackMode: Sendable {
-    case engine
-    // Explicit internal lane-chart mode, never decoded from a server payload.
-    // Missing engine resources must not select a different game implicitly.
-    case basicLanes
-  }
   let engine: EnginePlayData
   let level: LevelData
   let bgmURL: URL
@@ -179,7 +173,6 @@ struct RuntimeBundle: Sendable {
   var presentation: RuntimePresentation? = nil
   var engineROM: Data? = nil
   var preparedAudio: PreparedRuntimeAudio? = nil
-  var playbackMode: PlaybackMode = .engine
 }
 
 /// A playback lease over a private file, separate from the evictable HTTP

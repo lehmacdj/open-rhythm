@@ -1,20 +1,5 @@
 import Foundation
 
-enum RhythmNoteKind: Sendable {
-  case tap
-  case swing
-  case hold
-}
-
-struct RhythmNote: Identifiable, Sendable {
-  let id: String
-  let beat: Double
-  let time: TimeInterval
-  let lane: Int
-  let kind: RhythmNoteKind
-  let endTime: TimeInterval?
-}
-
 struct BPMTimeline: Sendable {
   struct Segment: Sendable {
     let beat: Double
@@ -129,71 +114,8 @@ struct TimeScaleTimeline {
   }
 }
 
-struct RhythmChart: Sendable {
-  let notes: [RhythmNote]
-  let duration: TimeInterval
-
-  var judgementCount: Int {
-    notes.count + notes.filter { $0.endTime != nil }.count
-  }
-
-  init(level: LevelData) {
-    let timeline = BPMTimeline(level: level)
-    let namedEntities = level.entities.reduce(into: [String: LevelEntity]()) {
-      if let name = $1.name { $0[name] = $1 }
-    }
-    let holdPairs: [(String, LevelEntity)] = level.entities.compactMap {
-      entity in
-        guard
-          entity.archetype == "HoldConnector",
-          let head = entity.reference(named: "head"),
-          let tail = entity.reference(named: "tail"),
-          let tailEntity = namedEntities[tail]
-        else { return nil }
-        return (head, tailEntity)
-      }
-    let holdTails = Dictionary(holdPairs, uniquingKeysWith: { _, last in last })
-
-    notes = level.entities.enumerated().compactMap {
-      (index, entity) -> RhythmNote? in
-      guard
-        entity.archetype == "TapNote" || entity.archetype == "SwingNote",
-        let beat = entity.value(named: "#BEAT"),
-        let laneValue = entity.value(named: "lane"),
-        let lane = Int(exactly: laneValue), (-4...4).contains(lane)
-      else { return nil }
-
-      let endBeat = entity.name
-        .flatMap { holdTails[$0] }
-        .flatMap { $0.value(named: "#BEAT") }
-      let kind: RhythmNoteKind = if endBeat != nil {
-        .hold
-      } else if entity.archetype == "SwingNote" {
-        .swing
-      } else {
-        .tap
-      }
-      return RhythmNote(
-        id: entity.name ?? "entity-\(index)",
-        beat: beat,
-        time: timeline.time(at: beat),
-        lane: lane,
-        kind: kind,
-        endTime: endBeat.map(timeline.time)
-      )
-    }
-    .sorted { $0.time < $1.time }
-
-    duration = notes.map { $0.endTime ?? $0.time }.max() ?? 0
-  }
-}
-
 private extension LevelEntity {
   func value(named name: String) -> Double? {
     data.first { $0.name == name }?.value
-  }
-
-  func reference(named name: String) -> String? {
-    data.first { $0.name == name }?.ref
   }
 }

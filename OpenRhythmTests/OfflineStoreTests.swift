@@ -632,7 +632,7 @@ final class OfflineStoreTests: XCTestCase {
       downloadedAt: Date())
     do {
       _ = try await store.runtimeBundle(from: legacy)
-      XCTFail("Previously saved malformed bundles must not select basic lanes")
+      XCTFail("Previously saved malformed bundles must be rejected")
     } catch { check(error) }
     XCTAssertTrue(recorder.urls.allSatisfy { $0.lastPathComponent == "level" },
       "Reject before fetching chart, engine, configuration, or music resources")
@@ -683,7 +683,6 @@ final class OfflineStoreTests: XCTestCase {
     let first = try await loader.load(level: item("easy"), from: server)
     let second = try await loader.load(level: item("hard"), from: server)
     XCTAssertNotNil(first.presentation)
-    XCTAssertEqual(first.playbackMode, .engine)
     XCTAssertFalse(first.isOffline)
     XCTAssertTrue(first.bgmURL.isFileURL)
     XCTAssertEqual(first.preparedAudio?.url, first.bgmURL)
@@ -946,7 +945,6 @@ final class OfflineStoreTests: XCTestCase {
       offlineStore: store)
     let bundle = try await loader.load(level: level, from: server)
     XCTAssertTrue(bundle.isOffline)
-    XCTAssertEqual(bundle.playbackMode, .engine)
     XCTAssertEqual(try Data(contentsOf: bundle.bgmURL), payloads["music.mp3"])
     XCTAssertEqual(bundle.presentation?.resources["configuration"],
       payloads["configuration"])

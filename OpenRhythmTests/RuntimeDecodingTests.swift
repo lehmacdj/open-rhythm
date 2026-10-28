@@ -1862,10 +1862,11 @@ final class RuntimeDecodingTests: XCTestCase {
 
   @MainActor
   func testTimeMetricRejectsUnrepresentableTimes() throws {
-    let model = try gameplayModel()
+    // The chart clock starts at -bgmOffset.
+    let model = try gameplayModel(bgmOffset: -1e20)
     model.start()
     defer { model.stop() }
-    model.update(mediaTime: 1e20)
+    XCTAssertEqual(model.currentTime, 1e20)
     XCTAssertNil(model.engineMetric("time"))
   }
 
@@ -1892,7 +1893,8 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
-  func testHeatmapHUDSelectionUsesTheSharedInputPipelineAndResetsOnRestart() throws {
+  func testHeatmapHUDSelectionUsesTheSharedInputPipelineAndResetsOnRestart()
+    async throws {
     for metrics in [("errorHeatmap", "life"), ("arcade", "errorHeatmap"),
       ("arcade", "life")] {
       let configuration = try JSONSerialization.data(withJSONObject: [
@@ -1900,12 +1902,11 @@ final class RuntimeDecodingTests: XCTestCase {
       ] as [String: Any])
       let model = try gameplayModel(presentation: RuntimePresentation(resources: [
         "configuration": configuration
-      ]))
+      ]), entities: [input(beat: 1, grade: 2, accuracy: 0.02)])
       model.start()
       defer { model.stop() }
-      model.press(lane: 0, at: 1.02)
-      model.release(lane: 0)
-      XCTAssertEqual(model.noteTimings.count, 1)
+      try await judgeSpawnedInputs(model, count: 1)
+      XCTAssertEqual(model.latestJudgement?.text(for: .timing), "Late GREAT")
       let expected = metrics.0 == "errorHeatmap" || metrics.1 == "errorHeatmap" ? 1 : 0
       XCTAssertEqual(model.errorHeatmap.count, expected)
       if expected == 1 {
@@ -1913,6 +1914,7 @@ final class RuntimeDecodingTests: XCTestCase {
         XCTAssertEqual(model.engineMetric("errorHeatmap")?.text, "+20.0 ms")
       }
       model.restart()
+      XCTAssertNil(model.latestJudgement)
       XCTAssertEqual(model.errorHeatmap.count, 0)
       XCTAssertNil(model.errorHeatmap.meanMS)
       XCTAssertEqual(model.errorHeatmap.peak, 0)
@@ -1991,22 +1993,6 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
-  func testFallbackJudgementsRetainSignedAccuracyAndResetOnRestart() throws {
-    let model = try gameplayModel()
-    model.start()
-    defer { model.stop() }
-    model.update(mediaTime: 1.02)
-    model.press(lane: 0)
-    model.release(lane: 0)
-    XCTAssertEqual(model.latestJudgement?.text(for: .timing), "Late GREAT")
-    model.update(mediaTime: 2.82)
-    model.press(lane: 2)
-    XCTAssertEqual(model.latestJudgement?.text(for: .timing), "Early GOOD")
-    model.restart()
-    XCTAssertNil(model.latestJudgement)
-  }
-
-  @MainActor
   func testReadyNoteCountUsesEngineInputDefinitionsBeforeRuntimeStarts() throws {
     let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
       {"skin":{"sprites":[]},"effect":{"clips":[]},
@@ -2031,16 +2017,12 @@ final class RuntimeDecodingTests: XCTestCase {
       "effectData": Data(#"{"clips":[]}"#.utf8),
       "effectAudio": Data([0x50, 0x4b, 0x05, 0x06] + [UInt8](repeating: 0, count: 18))
     ])
-    let model = try gameplayModel(engine: engine, presentation: presentation)
+    let model = try gameplayModel(engine: engine, presentation: presentation,
+      entities: [entity("TapNote", values: [:]), entity("SwingNote", values: [:])])
     XCTAssertEqual(model.phase, .ready)
     XCTAssertNil(model.engineRuntime)
     XCTAssertEqual(model.noteCount, 1,
       "Count engine-defined inputs, not guessed archetype names")
-    let fallback = try gameplayModel(engine: engine)
-    XCTAssertEqual(fallback.phase, .ready)
-    XCTAssertNil(fallback.presentationAssets)
-    XCTAssertEqual(fallback.noteCount, fallback.chart.judgementCount,
-      "The fallback player's count and score denominator must match its chart")
   }
 
   func testBGMOffsetPreservesSuppliedAudioAndMapsChartTime() {
@@ -2439,10 +2421,9 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
-  func testMissingPresentationNeverImplicitlySelectsBasicLanes() throws {
+  func testMissingPresentationFailsInsteadOfEnteringReady() throws {
     for presentation in [nil, RuntimePresentation(resources: [:])] {
-      let model = try gameplayModel(presentation: presentation,
-        playbackMode: .engine)
+      let model = try gameplayModel(presentation: presentation)
       guard case .failed(let message) = model.phase else {
         return XCTFail("A missing configuration must fail, not enter Ready")
       }
@@ -2453,81 +2434,24 @@ final class RuntimeDecodingTests: XCTestCase {
     }
   }
 
-  func testBuildsTimedTapAndHoldNotesAcrossBPMChanges() throws {
-    let level = LevelData(
-      bgmOffset: 0,
-      entities: [
-        entity("#BPM_CHANGE", values: ["#BEAT": 0, "#BPM": 120]),
-        entity("#BPM_CHANGE", values: ["#BEAT": 4, "#BPM": 60]),
-        entity(
-          "TapNote",
-          name: "head",
-          values: ["#BEAT": 2, "lane": -1]
-        ),
-        entity("HoldNote", name: "tail", values: ["#BEAT": 6]),
-        LevelEntity(
-          archetype: "HoldConnector",
-          name: nil,
-          data: [
-            LevelEntityData(name: "head", value: nil, ref: "head"),
-            LevelEntityData(name: "tail", value: nil, ref: "tail")
-          ]
-        ),
-        entity("SwingNote", values: ["#BEAT": 5, "lane": 2])
-      ]
-    )
-
-    let chart = RhythmChart(level: level)
-
-    XCTAssertEqual(chart.notes.count, 2)
-    XCTAssertEqual(chart.notes[0].time, 1)
-    XCTAssertEqual(chart.notes[0].endTime, 4)
-    XCTAssertEqual(chart.notes[0].lane, -1)
-    XCTAssertEqual(chart.notes[1].time, 3)
-    XCTAssertEqual(chart.duration, 4)
-    XCTAssertEqual(chart.judgementCount, 3)
-  }
-
   @MainActor
-  func testGameplayScoresTapsSlidesAndHoldReleaseOnce() throws {
-    let model = try gameplayModel()
-    defer { model.stop() }
+  func testGameplayRecordsEngineJudgmentsAtTheirChartTimes() async throws {
+    let model = try gameplayModel(entities: [
+      entity("#BPM_CHANGE", values: ["#BEAT": 0, "#BPM": 120]),
+      input(beat: 2, grade: 1), input(beat: 4, grade: 1, accuracy: -0.01),
+      input(beat: 6, grade: 1)
+    ])
     model.start()
-
-    model.update(mediaTime: 0.95)
-    model.press(lane: 0)
-    model.press(lane: 0)
-    XCTAssertEqual(model.score, 200_000)
-    model.release(lane: 0)
-
-    model.update(mediaTime: 1.95)
-    model.slide(lane: 1)
-    XCTAssertEqual(model.score, 400_000)
-    model.release(lane: 1)
-
-    model.update(mediaTime: 2.95)
-    model.slide(lane: 2)
-    XCTAssertEqual(model.score, 400_000, "Sliding cannot hit a tap note")
-    model.release(lane: 2)
-    model.press(lane: 2)
-    model.release(lane: 2)
-
-    model.update(mediaTime: 3.95)
-    model.press(lane: 3)
-    XCTAssertEqual(model.activeHoldIDs.count, 1)
-    model.update(mediaTime: 4.95)
-    model.release(lane: 3)
-    model.release(lane: 3)
-
+    defer { model.stop() }
+    try await judgeSpawnedInputs(model, count: 3)
+    XCTAssertEqual(model.noteCount, 3, "Tempo changes are not inputs")
     XCTAssertEqual(model.score, NoteJudgement.maximumScore)
-    XCTAssertEqual(model.maxCombo, 5)
-    XCTAssertEqual(model.judgements[.perfect], 5)
-    XCTAssertEqual(model.judgements[.miss], 0)
-    XCTAssertEqual(model.noteTimings.count, 5)
-    XCTAssertEqual(model.noteTimings.map(\.noteType),
-      ["Tap", "Swing", "Tap", "Hold Start", "Hold End"])
-    XCTAssertEqual(model.noteTimings.map(\.songTime), [1, 2, 3, 4, 5])
-    XCTAssertTrue(model.noteTimings.allSatisfy { abs($0.accuracy ?? 1) < 0.001 })
+    XCTAssertEqual(model.combo, 3)
+    XCTAssertEqual(model.maxCombo, 3)
+    XCTAssertEqual(model.judgements[.perfect], 3)
+    XCTAssertEqual(model.noteTimings.map(\.noteType), ["Input", "Input", "Input"])
+    XCTAssertEqual(model.noteTimings.map(\.songTime), [1, 2, 3])
+    XCTAssertEqual(model.noteTimings.map(\.accuracy), [0, -0.01, 0])
   }
 
   func testInputCalibrationDecodesDefaultsAndClampsInvalidValues() throws {
@@ -2563,74 +2487,29 @@ final class RuntimeDecodingTests: XCTestCase {
   }
 
   @MainActor
-  func testFallbackCalibrationShiftsInputsNotMusicAndSnapshotsEachPlay() throws {
+  func testCalibrationIsSnapshotForEachPlayAndReported() throws {
     let model = try gameplayModel()
     let original = model.settings
     defer { model.stop(); model.settings = original }
-    for offset in [-200.0, 200] {
-      model.settings.inputOffsetMilliseconds = offset
-      model.start()
-      model.settings.inputOffsetMilliseconds = 0 // Applies only next play.
-      XCTAssertEqual(model.playInputOffset, offset / 1000)
-      model.update(mediaTime: 0.95 + offset / 1000)
-      XCTAssertEqual(model.currentTime, 1 + offset / 1000, accuracy: 1e-12)
-      model.press(lane: 0)
-      model.release(lane: 0)
-      model.update(mediaTime: 1.95 + offset / 1000)
-      model.slide(lane: 1)
-      model.release(lane: 1)
-      model.update(mediaTime: 3.95 + offset / 1000)
-      model.press(lane: 3)
-      model.update(mediaTime: 4.95 + offset / 1000)
-      model.release(lane: 3)
-      XCTAssertEqual(model.judgements[.perfect], 4)
-      let hits = model.noteTimings.filter { $0.accuracy != nil }
-      XCTAssertEqual(hits.count, 4)
-      XCTAssertTrue(hits.allSatisfy { abs($0.accuracy ?? 1) < 1e-12 })
-      XCTAssertEqual(model.modifiedOptions.last?.value,
-        String(format: "%+.0f ms", offset))
-      model.stop()
-    }
-    model.settings.inputOffsetMilliseconds = 0
-    model.start()
-    XCTAssertEqual(model.playInputOffset, 0)
-    XCTAssertTrue(model.modifiedOptions.isEmpty)
-  }
-
-  @MainActor
-  func testFallbackVisualAndInputCalibrationComposeWithoutDoubleAdjustment() throws {
-    let model = try gameplayModel()
-    let original = model.settings
-    defer { model.stop(); model.settings = original }
-    for visual in [-120.0, 120] {
-      for input in [-30.0, 30] {
-        model.settings = GameplayPreferences(inputOffsetMilliseconds: input,
+    for visual in [-120.0, 0, 120] {
+      for inputOffset in [-30.0, 0, 30] {
+        model.settings = GameplayPreferences(inputOffsetMilliseconds: inputOffset,
           visualOffsetMilliseconds: visual)
         model.start()
-        let adjustment = (visual + input) / 1000
-        model.update(mediaTime: 0.95 + adjustment)
-        XCTAssertEqual(model.currentTime, 1 + input / 1000, accuracy: 1e-12)
-        model.press(lane: 0)
-        model.release(lane: 0)
-        model.update(mediaTime: 1.95 + adjustment)
-        model.slide(lane: 1)
-        model.release(lane: 1)
-        model.update(mediaTime: 3.95 + adjustment)
-        model.press(lane: 3)
-        model.update(mediaTime: 4.95 + adjustment)
-        model.release(lane: 3)
-        XCTAssertEqual(model.judgements[.perfect], 4)
-        XCTAssertTrue(model.noteTimings.compactMap(\.accuracy)
-          .allSatisfy { abs($0) < 1e-12 })
-        XCTAssertEqual(Set(model.modifiedOptions.map(\.name)),
-          ["Input Timing", "Visual Timing"])
+        model.settings = GameplayPreferences() // Applies only next play.
+        XCTAssertEqual(model.playInputOffset, inputOffset / 1000)
+        XCTAssertEqual(model.playAudioOffset, visual / 1000)
+        // Visual timing delays the chart against the music. Input timing
+        // goes to the engine and does not move the chart clock.
+        XCTAssertEqual(model.currentTime, 0.05 - visual / 1000, accuracy: 1e-12)
+        let modified = [("Input Timing", inputOffset), ("Visual Timing", visual)]
+          .filter { $0.1 != 0 }
+        XCTAssertEqual(model.modifiedOptions.map(\.name), modified.map(\.0))
+        XCTAssertEqual(model.modifiedOptions.map(\.value),
+          modified.map { String(format: "%+.0f ms", $0.1) })
         model.stop()
       }
     }
-    model.settings = GameplayPreferences()
-    model.start()
-    XCTAssertEqual(model.playAudioOffset, 0)
-    XCTAssertTrue(model.modifiedOptions.isEmpty)
   }
 
   @MainActor
@@ -2663,16 +2542,6 @@ final class RuntimeDecodingTests: XCTestCase {
       .appendingPathComponent("score-mode-\(UUID())", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = ResultStore(rootURL: root)
-    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
-      {"skin":{"sprites":[]},"effect":{"clips":[]},
-       "particle":{"effects":[]},"nodes":[],"buckets":[],
-       "archetypes":[
-         {"name":"TapNote","hasInput":false,"imports":[],"exports":[]},
-         {"name":"SwingNote","hasInput":false,"imports":[],"exports":[]},
-         {"name":"HoldNote","hasInput":false,"imports":[],"exports":[]},
-         {"name":"HoldConnector","hasInput":false,"imports":[],"exports":[]}
-       ]}
-      """#.utf8))
     let presentation = RuntimePresentation(resources: [
       "configuration": Data(#"""
         {"options":[{"name":"Score Mode","type":"select","def":0,
@@ -2684,7 +2553,7 @@ final class RuntimeDecodingTests: XCTestCase {
       (nil, nil, 0), (nil, 99, 0), (nil, 0.5, 0)
     ]
     for (index, selection) in cases.enumerated() {
-      let model = try gameplayModel(resultStore: store, engine: engine,
+      let model = try gameplayModel(resultStore: store,
         presentation: presentation)
       let original = model.settings
       defer { model.stop(); model.settings = original }
@@ -2719,18 +2588,18 @@ final class RuntimeDecodingTests: XCTestCase {
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let store = ResultStore(rootURL: root)
-    let model = try gameplayModel(resultStore: store)
+    let misses = (2...5).map { input(beat: Double($0), grade: 0) }
+    let model = try gameplayModel(resultStore: store,
+      entities: [input(beat: 1, grade: 1)] + misses)
     let original = model.settings
     defer { model.stop(); model.settings = original }
     model.settings.recordTimingDiagnostics = true
     model.start()
     let recorder = try XCTUnwrap(model.timingRecorder)
     recorder.record(.runtime, seconds: 0.004)
-    model.update(mediaTime: 0.95)
-    model.press(lane: 0)
-    model.release(lane: 0)
+    try await judgeSpawnedInputs(model, count: 5)
+    XCTAssertEqual(model.phase, .playing, "Wait for the music to end")
     model.playbackEnded(uptime: 100)
-    model.advanceAfterAudioEnd(uptime: 106)
 
     XCTAssertEqual(model.phase, .finished)
     XCTAssertEqual(model.score, 200_000)
@@ -2754,7 +2623,8 @@ final class RuntimeDecodingTests: XCTestCase {
     XCTAssertEqual(savedTimings?.filter {
       $0.judgement == .miss && $0.accuracy == nil
     }.count, 4)
-    model.advanceAfterAudioEnd(uptime: 200)
+    XCTAssertFalse(model.engineFrame(size: CGSize(width: 800, height: 400),
+      touches: []))
     XCTAssertEqual(model.judgements[.miss], 4)
   }
 
@@ -2763,89 +2633,60 @@ final class RuntimeDecodingTests: XCTestCase {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let model = try gameplayModel(resultStore: ResultStore(rootURL: root))
+    let model = try gameplayModel(resultStore: ResultStore(rootURL: root),
+      entities: [input(beat: 1, grade: 1)])
     model.start()
-    model.update(mediaTime: 10)
+    try await judgeSpawnedInputs(model, count: 1)
     XCTAssertEqual(model.phase, .playing)
     XCTAssertNil(model.resultSaveTask)
     model.playbackEnded(uptime: 100)
     XCTAssertEqual(model.phase, .finished)
     await model.resultSaveTask?.value
     model.restart()
-    model.update(mediaTime: 10)
     XCTAssertEqual(model.phase, .playing)
     model.stop()
     XCTAssertEqual(model.phase, .ready)
+    model.playbackEnded(uptime: 200)
+    XCTAssertEqual(model.phase, .ready, "A stopped play is not a result")
+    XCTAssertFalse(model.engineFrame(size: CGSize(width: 800, height: 400),
+      touches: []))
   }
 
   @MainActor
-  func testRestartClearsJudgementsTouchesAndAudioTail() throws {
-    let model = try gameplayModel()
+  func testRestartClearsJudgementsAndAudioTail() async throws {
+    let model = try gameplayModel(entities: [input(beat: 1, grade: 1),
+      entity("Pending", values: ["#BEAT": 2])])
     model.start()
-    model.update(mediaTime: 4.05)
-    model.press(lane: 3)
-    XCTAssertFalse(model.activeHoldIDs.isEmpty)
+    try await judgeSpawnedInputs(model, count: 1)
+    XCTAssertEqual(model.combo, 1)
     model.playbackEnded(uptime: 100)
+    XCTAssertEqual(model.phase, .playing, "An input is still pending")
     let generation = model.playbackGeneration
     model.restart()
     defer { model.stop() }
     XCTAssertEqual(model.phase, .playing)
     XCTAssertGreaterThan(model.playbackGeneration, generation)
+    XCTAssertNil(model.engineRuntime)
     XCTAssertEqual(model.score, 0)
     XCTAssertEqual(model.combo, 0)
     XCTAssertEqual(model.maxCombo, 0)
-    XCTAssertTrue(model.activeHoldIDs.isEmpty)
-    XCTAssertTrue(model.hitNoteIDs.isEmpty)
+    XCTAssertNil(model.latestJudgement)
     XCTAssertTrue(model.noteTimings.isEmpty)
-    XCTAssertEqual(model.playbackTime, 0.05)
-    model.advanceAfterAudioEnd(uptime: 200)
-    XCTAssertEqual(model.phase, .playing, "An old audio tail cannot finish a restart")
-    model.release(lane: 3)
-    XCTAssertEqual(model.judgements[.miss], 0)
-    XCTAssertNil(model.resultSaveTask)
-  }
-
-  @MainActor
-  func testEarlyHoldReleaseAndCancelledPlayback() throws {
-    let model = try gameplayModel()
-    model.start()
-    model.update(mediaTime: 4.05)
-    model.press(lane: 3)
-    model.release(lane: 3)
-    XCTAssertEqual(model.judgements[.miss], 4)
-    model.update(mediaTime: 5.5)
-    XCTAssertEqual(model.judgements[.miss], 4)
-    model.stop()
-    XCTAssertEqual(model.phase, .ready)
-    model.update(mediaTime: 100)
+    XCTAssertEqual(model.playbackTime, 0.05, "The old audio tail clock is gone")
+    model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertEqual(model.judgements.values.reduce(0, +), 0)
     XCTAssertNil(model.resultSaveTask)
   }
 
   @MainActor
   private func gameplayModel(
     resultStore: ResultStore = ResultStore(), engine: EnginePlayData? = nil,
-    presentation: RuntimePresentation? = nil,
-    playbackMode: RuntimeBundle.PlaybackMode? = nil
+    presentation: RuntimePresentation? = RuntimePresentation(resources: [
+      "configuration": Data(#"{"options":[]}"#.utf8)]),
+    bgmOffset: Double = -0.05, entities: [LevelEntity] = []
   ) throws -> GameplayModel {
-    let engine = try engine ?? JSONDecoder().decode(
-      EnginePlayData.self,
-      from: Data(#"""
-        {"skin":{"sprites":[]},"effect":{"clips":[]},
-         "particle":{"effects":[]},"archetypes":[],"nodes":[],
-         "buckets":[]}
-        """#.utf8)
-    )
-    let data = LevelData(bgmOffset: -0.05, entities: [
-      entity("TapNote", values: ["#BEAT": 1, "lane": 0]),
-      entity("SwingNote", values: ["#BEAT": 2, "lane": 1]),
-      entity("TapNote", values: ["#BEAT": 3, "lane": 2]),
-      entity("TapNote", name: "head", values: ["#BEAT": 4, "lane": 3]),
-      entity("HoldNote", name: "tail", values: ["#BEAT": 5]),
-      LevelEntity(archetype: "HoldConnector", name: nil, data: [
-        LevelEntityData(name: "head", value: nil, ref: "head"),
-        LevelEntityData(name: "tail", value: nil, ref: "tail")
-      ])
-    ])
+    let engine = try engine ?? judgingEngine()
     let server = ServerDescriptor(
       id: "example", name: "Example",
       baseURL: URL(string: "https://example.com")!
@@ -2860,14 +2701,68 @@ final class RuntimeDecodingTests: XCTestCase {
     let model = GameplayModel(resultStore: resultStore)
     model.prepare(
       bundle: RuntimeBundle(
-        engine: engine, level: data,
-        bgmURL: URL(fileURLWithPath: "/nonexistent-test-audio.wav"),
-        isOffline: true, presentation: presentation,
-        playbackMode: playbackMode ?? (presentation == nil ? .basicLanes : .engine)
+        engine: engine,
+        level: LevelData(bgmOffset: bgmOffset, entities: entities),
+        bgmURL: try silentMusic(), isOffline: true, presentation: presentation
       ),
       level: level, server: server, title: "Gameplay"
     )
     return model
+  }
+
+  /// "Input" entities judge themselves when they spawn, with their own
+  /// `grade` (1 perfect, 2 great, 3 good, 0 miss) and `accuracy`. "Pending"
+  /// inputs never resolve.
+  private func judgingEngine() throws -> EnginePlayData {
+    try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
+      {"skin":{"sprites":[]},"effect":{"clips":[]},
+       "particle":{"effects":[]},"buckets":[],
+       "archetypes":[
+         {"name":"Input","hasInput":true,"exports":[],
+          "imports":[{"name":"grade","index":0},{"name":"accuracy","index":1}],
+          "initialize":{"index":10}},
+         {"name":"Pending","hasInput":true,"imports":[],"exports":[]}],
+       "nodes":[{"value":4005},{"value":0},{"value":4001},{"value":1},
+         {"func":"Get","args":[2,1]},{"func":"Set","args":[0,1,4]},
+         {"func":"Get","args":[2,3]},{"func":"Set","args":[0,3,6]},
+         {"value":4004},{"func":"Set","args":[8,1,3]},
+         {"func":"Execute","args":[5,7,9]}]}
+      """#.utf8))
+  }
+
+  private func input(beat: Double, grade: Double, accuracy: Double = 0)
+    -> LevelEntity {
+    entity("Input", values: ["#BEAT": beat, "grade": grade, "accuracy": accuracy])
+  }
+
+  /// A real file: the player fails missing music while a test awaits.
+  private func silentMusic() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gameplay-silence-\(UUID()).caf")
+    addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+    let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000,
+      channels: 1))
+    let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+      frameCapacity: 2000))
+    buffer.frameLength = buffer.frameCapacity
+    buffer.floatChannelData![0].initialize(repeating: 0, count: 2000)
+    let file = try AVAudioFile(forWriting: url, settings: format.settings)
+    try file.write(from: buffer)
+    return url
+  }
+
+  /// Startup simulation commits judgments of inputs that resolve on spawn.
+  /// Returns right after that frame, before the startup task can start the
+  /// music, so callers continue from a deterministic state.
+  @MainActor
+  private func judgeSpawnedInputs(_ model: GameplayModel, count: Int)
+    async throws {
+    for _ in 0..<1000 {
+      model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+      if model.noteTimings.count >= count { return }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    XCTFail("Inputs were not judged: \(model.startupDiagnostics)")
   }
 
   private func entity(

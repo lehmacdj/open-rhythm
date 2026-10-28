@@ -34,7 +34,6 @@ final class PlaybackClockTests: XCTestCase {
         try FileManager.default.createDirectory(at: root,
           withIntermediateDirectories: true)
         model = try makeSessionModel(session, directory: root,
-          nativeEngine: true,
           serverURL: URL(string: "https://\(UUID().uuidString).example")!)
         model?.start()
       } else {
@@ -178,6 +177,7 @@ final class PlaybackClockTests: XCTestCase {
     defer { model.stop() }
     model.start()
     for _ in 0..<200 where model.phase == .playing {
+      model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
       try await Task.sleep(for: .milliseconds(5))
     }
     XCTAssertEqual(model.phase, .failed("Audio playback could not start. "
@@ -210,6 +210,10 @@ final class PlaybackClockTests: XCTestCase {
     var model: GameplayModel? = try makeSessionModel(session, directory: directory)
     weak var weakModel = model
     model?.start()
+    for _ in 0..<200 where probe.values.isEmpty {
+      model?.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+      try await Task.sleep(for: .milliseconds(5))
+    }
     await fulfillment(of: [entered], timeout: 2)
     // Preserve ownership as restart does, then abandon that restart. The
     // pending activation holds the model until its stale-generation guard.
@@ -230,7 +234,7 @@ final class PlaybackClockTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: directory) }
     let notifications = NotificationCenter()
     let model = try makeSessionModel(PlaybackAudioSession { _ in },
-      directory: directory, nativeEngine: true, audioNotifications: notifications)
+      directory: directory, audioNotifications: notifications)
     defer { model.stop() }
     model.start()
     let size = CGSize(width: 800, height: 400)
@@ -285,7 +289,9 @@ final class PlaybackClockTests: XCTestCase {
     let released = expectation(description: "Interrupted activation released")
     let gate = DispatchSemaphore(value: 0)
     defer { gate.signal() }
+    let probe = AudioSessionProbe()
     let session = PlaybackAudioSession { active in
+      probe.record(active)
       if active {
         entered.fulfill()
         guard gate.wait(timeout: .now() + 2) == .success else {
@@ -303,6 +309,10 @@ final class PlaybackClockTests: XCTestCase {
       audioNotifications: notifications)
     defer { model.stop() }
     model.start()
+    for _ in 0..<200 where probe.values.isEmpty {
+      model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+      try await Task.sleep(for: .milliseconds(5))
+    }
     await fulfillment(of: [entered], timeout: 2)
     let generation = model.playbackGeneration
     let inputGeneration = model.inputGeneration
@@ -365,7 +375,7 @@ final class PlaybackClockTests: XCTestCase {
     let notifications = NotificationCenter()
     var players = [AVPlayer]()
     let model = try makeSessionModel(PlaybackAudioSession { _ in },
-      directory: directory, nativeEngine: true, audioNotifications: notifications,
+      directory: directory, audioNotifications: notifications,
       makePlayer: { url in
         let player = AVPlayer(url: url)
         players.append(player)
@@ -452,7 +462,7 @@ final class PlaybackClockTests: XCTestCase {
     let notifications = NotificationCenter()
     var playerCount = 0
     let model = try makeSessionModel(session, directory: directory,
-      nativeEngine: true, audioNotifications: notifications,
+      audioNotifications: notifications,
       makePlayer: { url in playerCount += 1; return AVPlayer(url: url) })
     defer { model.stop() }
     let size = CGSize(width: 800, height: 400)
@@ -508,7 +518,7 @@ final class PlaybackClockTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: directory) }
     var capturedPlayer: AVPlayer?
     let model = try makeSessionModel(PlaybackAudioSession { _ in },
-      directory: directory, nativeEngine: true, inputProbe: true,
+      directory: directory, inputProbe: true,
       makePlayer: { url in
         let player = AVPlayer(url: url)
         capturedPlayer = player
@@ -622,7 +632,7 @@ final class PlaybackClockTests: XCTestCase {
       withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let model = try makeSessionModel(PlaybackAudioSession { _ in },
-      directory: directory, nativeEngine: true)
+      directory: directory)
     defer { model.stop() }
     model.start()
     model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
@@ -711,7 +721,7 @@ final class PlaybackClockTests: XCTestCase {
 
   @MainActor
   private func makeSessionModel(_ session: PlaybackAudioSession,
-    directory: URL, nativeEngine: Bool = false,
+    directory: URL,
     audioNotifications: NotificationCenter = .default,
     inputProbe: Bool = false,
     serverURL: URL = URL(string: "https://example.com")!,
@@ -722,11 +732,11 @@ final class PlaybackClockTests: XCTestCase {
     let format = try XCTUnwrap(AVAudioFormat(
       standardFormatWithSampleRate: 48000, channels: 1))
     let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
-      frameCapacity: nativeEngine ? 48000 * 4 : 480))
+      frameCapacity: 48000 * 4))
     buffer.frameLength = buffer.frameCapacity
     for frame in 0..<Int(buffer.frameLength) {
-      buffer.floatChannelData![0][frame] = nativeEngine
-        ? Float(sin(Double(frame) * 2 * .pi * 440 / 48000) * 0.0002) : 0
+      buffer.floatChannelData![0][frame] =
+        Float(sin(Double(frame) * 2 * .pi * 440 / 48000) * 0.0002)
     }
     do {
       let file = try AVAudioFile(forWriting: audio, settings: format.settings)
@@ -758,10 +768,8 @@ final class PlaybackClockTests: XCTestCase {
       level: LevelData(bgmOffset: 0, entities: inputProbe
         ? [LevelEntity(archetype: "Probe", name: nil, data: [])] : []),
       bgmURL: audio,
-      isOffline: true, presentation: nativeEngine
-        ? RuntimePresentation(resources: [
-          "configuration": Data(#"{"options":[]}"#.utf8)]) : nil,
-      playbackMode: nativeEngine ? .engine : .basicLanes), level: level,
+      isOffline: true, presentation: RuntimePresentation(resources: [
+        "configuration": Data(#"{"options":[]}"#.utf8)])), level: level,
       server: ServerDescriptor(id: "session-failure", name: "Fixture",
         baseURL: serverURL), title: "Session failure")
     return model
@@ -811,7 +819,7 @@ final class PlaybackClockTests: XCTestCase {
     let playfield = EnginePlayfieldView(frame:
       CGRect(x: 0, y: 0, width: 300, height: 500))
     let model = try makeSessionModel(PlaybackAudioSession { _ in },
-      directory: directory, nativeEngine: true)
+      directory: directory)
     defer { model.stop() }
     model.settings = GameplayPreferences(recordTimingDiagnostics: true)
     playfield.model = model
@@ -1628,42 +1636,6 @@ final class PlaybackClockTests: XCTestCase {
     try checkAndQueue()
     XCTAssertEqual(CMTimebaseSetSourceTimebase(timebase, source), noErr)
     try checkAndQueue()
-  }
-
-  @MainActor
-  func testFallbackInputUsesEventTimeRatherThanLastObserverSample() throws {
-    let engine = try JSONDecoder().decode(EnginePlayData.self, from: Data(#"""
-      {"skin":{"sprites":[]},"effect":{"clips":[]},
-       "particle":{"effects":[]},"archetypes":[],"nodes":[],"buckets":[]}
-      """#.utf8))
-    let chart = try JSONDecoder().decode(LevelData.self, from: Data(#"""
-      {"bgmOffset":0,"entities":[
-        {"name":"head","archetype":"TapNote","data":[
-          {"name":"#BEAT","value":1},{"name":"lane","value":0}]},
-        {"name":"tail","archetype":"HoldNote","data":[
-          {"name":"#BEAT","value":2}]},
-        {"archetype":"HoldConnector","data":[
-          {"name":"head","ref":"head"},{"name":"tail","ref":"tail"}]}]}
-      """#.utf8))
-    let resource = ResourceLocator(hash: nil, url: nil)
-    let level = SonolusLevelItem(name: "clock", source: nil, version: 1, rating: 1,
-      title: LocalizedText("Clock"), artists: LocalizedText("Fixture"),
-      author: "Fixture", tags: [], cover: resource, bgm: resource, data: resource)
-    let model = GameplayModel()
-    model.prepare(bundle: RuntimeBundle(engine: engine, level: chart,
-      bgmURL: URL(fileURLWithPath: "/nonexistent-clock-fixture.wav"), isOffline: true,
-      playbackMode: .basicLanes),
-      level: level, server: ServerDescriptor(id: "clock", name: "Clock",
-        baseURL: URL(string: "https://example.com")!), title: "Clock")
-    model.start()
-    defer { model.stop() }
-    model.update(mediaTime: 0.99)
-    model.press(lane: 0, at: 1)
-    XCTAssertEqual(model.noteTimings.last?.accuracy, 0)
-    model.update(mediaTime: 1.99)
-    model.release(lane: 0, at: 2)
-    XCTAssertEqual(model.noteTimings.last?.accuracy, 0)
-    XCTAssertEqual(model.noteTimings.count, 2)
   }
 }
 

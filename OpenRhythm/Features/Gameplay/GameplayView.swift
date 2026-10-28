@@ -107,30 +107,15 @@ private struct GameplayScreen: View {
       GeometryReader { geometry in
         ZStack {
           Color.black
-          if model.presentationAssets != nil {
-            EnginePlayfield(model: model).id(model.playbackGeneration)
-            if model.engineUI.count == 8 {
-              engineHUD(size: geometry.size)
-                .allowsHitTesting(false)
-            }
-          } else {
-            TimelineView(.animation) { _ in
-              Canvas { context, size in
-                drawPlayfield(context: &context, size: size)
-              }
-            }
-            laneInput
+          EnginePlayfield(model: model).id(model.playbackGeneration)
+          if model.engineUI.count == 8 {
+            engineHUD(size: geometry.size)
+              .allowsHitTesting(false)
           }
         }
         .frame(width: geometry.size.width, height: geometry.size.height)
       }
       .ignoresSafeArea()
-      if model.presentationAssets == nil {
-        JudgementOverlay(feedback: model.latestJudgement,
-          mode: model.settings.judgementDisplay)
-          .padding(.top, 76)
-          .allowsHitTesting(false)
-      }
       if model.isStartingPlayback && !model.isDebugPaused {
         ProgressView("Starting chart…")
           .padding()
@@ -139,64 +124,31 @@ private struct GameplayScreen: View {
       }
       // Controls inherit the outer safe area; only the playfield expands
       // beneath the notch and home indicator.
-      if model.presentationAssets != nil {
-        HStack {
-          Spacer()
-          Menu {
-            if model.isEngineDebugMode {
-              Button("Pause / Debug Log", systemImage: "pause.fill") {
-                model.pauseForDebug()
-              }
+      HStack {
+        Spacer()
+        Menu {
+          if model.isEngineDebugMode {
+            Button("Pause / Debug Log", systemImage: "pause.fill") {
+              model.pauseForDebug()
             }
-            Button("Restart Song", systemImage: "arrow.counterclockwise") {
-              model.restart()
-            }
-            Button("Exit Song", systemImage: "xmark") {
-              model.stop()
-              dismiss()
-            }
-          } label: {
-            Image(systemName: "ellipsis")
-              .frame(width: 44, height: 44)
-              .background(.black.opacity(0.55), in: Circle())
           }
-          .accessibilityLabel("Song Controls")
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-      } else {
-        HStack {
-          Button {
+          Button("Restart Song", systemImage: "arrow.counterclockwise") {
+            model.restart()
+          }
+          Button("Exit Song", systemImage: "xmark") {
             model.stop()
             dismiss()
-          } label: {
-            Image(systemName: "xmark")
-              .frame(width: 44, height: 44)
-              .background(.black.opacity(0.55), in: Circle())
           }
-          .accessibilityLabel("Exit Song")
-          Spacer()
-          VStack(spacing: 2) {
-            Text("Score \(model.displayedScore)")
-            Text("Combo \(model.combo)")
-          }
-          .allowsHitTesting(false)
-          Spacer()
-          Button {
-            model.restart()
-          } label: {
-            Image(systemName: "arrow.counterclockwise")
-              .frame(width: 44, height: 44)
-              .background(.black.opacity(0.55), in: Circle())
-          }
-          .accessibilityLabel("Restart Song")
+        } label: {
+          Image(systemName: "ellipsis")
+            .frame(width: 44, height: 44)
+            .background(.black.opacity(0.55), in: Circle())
         }
-        .font(.headline.monospacedDigit())
-        .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
+        .accessibilityLabel("Song Controls")
       }
+      .foregroundStyle(.white)
+      .padding(.horizontal, 12)
+      .padding(.top, 8)
       if model.isEngineDebugMode {
         if model.isDebugPaused {
           EngineDebugPausePanel(entries: model.debugLog,
@@ -221,10 +173,6 @@ private struct GameplayScreen: View {
         }
       }
     }
-  }
-
-  private var laneInput: some View {
-    LaneInput(model: model)
   }
 
   private func engineHUD(size: CGSize) -> some View {
@@ -324,73 +272,6 @@ private struct GameplayScreen: View {
           }
         }
       }
-    }
-  }
-
-  private func drawPlayfield(
-    context: inout GraphicsContext,
-    size: CGSize
-  ) {
-    let targetY = size.height * 0.82
-    let laneWidth = size.width / 9
-    let pixelsPerSecond = size.height * 0.32
-
-    for lane in 0...9 {
-      let x = CGFloat(lane) * laneWidth
-      var path = Path()
-      path.move(to: CGPoint(x: x, y: 0))
-      path.addLine(to: CGPoint(x: x, y: size.height))
-      context.stroke(path, with: .color(.white.opacity(0.12)))
-    }
-
-    var target = Path()
-    target.move(to: CGPoint(x: 0, y: targetY))
-    target.addLine(to: CGPoint(x: size.width, y: targetY))
-    context.stroke(target, with: .color(.white), lineWidth: 2)
-
-    for note in model.chart.notes {
-      let isActiveHold = model.activeHoldIDs.contains(note.id)
-      guard !model.hitNoteIDs.contains(note.id) || isActiveHold else {
-        continue
-      }
-      let delta = note.time - model.currentTime
-      guard delta > -0.2 || isActiveHold, delta < 3 else { continue }
-      let x = (CGFloat(note.lane + 4) + 0.5) * laneWidth
-      let y = isActiveHold
-        ? targetY
-        : targetY - CGFloat(delta) * pixelsPerSecond
-      let radius = max(10, laneWidth * 0.32)
-
-      if let endTime = note.endTime {
-        let endY = targetY
-          - CGFloat(endTime - model.currentTime) * pixelsPerSecond
-        var hold = Path()
-        hold.move(to: CGPoint(x: x, y: y))
-        hold.addLine(to: CGPoint(x: x, y: endY))
-        context.stroke(
-          hold,
-          with: .color(.cyan.opacity(0.7)),
-          lineWidth: radius * 0.8
-        )
-      }
-
-      let rect = CGRect(
-        x: x - radius,
-        y: y - radius,
-        width: radius * 2,
-        height: radius * 2
-      )
-      let color: Color = switch note.kind {
-      case .tap: .pink
-      case .swing: .orange
-      case .hold: .cyan
-      }
-      context.fill(Path(ellipseIn: rect), with: .color(color))
-      context.stroke(
-        Path(ellipseIn: rect),
-        with: .color(.white),
-        lineWidth: 2
-      )
     }
   }
 }
@@ -909,7 +790,8 @@ private struct EngineAnchorLayout: Layout {
   ]
   let _ = placements.enumerated().forEach { row, values in
     values.enumerated().forEach { index, value in
-      memory.set(block: 1006, index: row * 10 + index, value: value)
+      memory.set(block: EnginePlayBlock.runtimeUI, index: row * 10 + index,
+        value: value)
     }
   }
   ZStack(alignment: .topLeading) {
@@ -1060,8 +942,9 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
     }
     guard !model.isStartingPlayback || model.isDebugPaused else { return }
     if let memory = model.engineRuntime?.memory {
-      backgroundLayer.update(quad: (0..<8).map { memory.value(block: 1005, index: $0) },
-        size: bounds.size)
+      backgroundLayer.update(quad: (0..<8).map {
+        memory.value(block: EnginePlayBlock.runtimeBackground, index: $0)
+      }, size: bounds.size)
     }
     if let metal, let runtime = model.engineRuntime,
       let assets = model.presentationAssets {
@@ -1187,100 +1070,4 @@ private struct EngineDebugPausePanel: View {
     EngineDebugLogEntry(id: 1, value: "42.0"),
     EngineDebugLogEntry(id: 2, value: "nan")
   ], resume: {}, restart: {}, exit: {})
-}
-
-private struct LaneInput: UIViewRepresentable {
-  let model: GameplayModel
-
-  func makeUIView(context: Context) -> LaneInputView {
-    let view = LaneInputView()
-    view.isMultipleTouchEnabled = true
-    view.backgroundColor = .clear
-    view.model = model
-    return view
-  }
-
-  func updateUIView(_ view: LaneInputView, context: Context) {
-    view.model = model
-  }
-}
-
-private final class LaneInputView: UIView {
-  var model: GameplayModel? {
-    didSet {
-      if oldValue !== model {
-        playbackGeneration = nil
-        lanes.removeAll(keepingCapacity: true)
-        contacts.removeAll(keepingCapacity: true)
-      }
-    }
-  }
-  private var lanes = [ObjectIdentifier: Int]()
-  private var contacts = Set<ObjectIdentifier>()
-  private var playbackGeneration: Int?
-
-  private func prepareInput() -> Bool {
-    guard let model else { return false }
-    if playbackGeneration != model.playbackGeneration {
-      playbackGeneration = model.playbackGeneration
-      lanes.removeAll(keepingCapacity: true)
-      contacts.removeAll(keepingCapacity: true)
-    }
-    return model.phase == .playing && !model.isStartingPlayback
-  }
-
-  private func lane(for touch: UITouch) -> Int? {
-    let point = touch.location(in: self)
-    guard bounds.width > 0, bounds.contains(point) else { return nil }
-    return min(8, Int(point.x / bounds.width * 9)) - 4
-  }
-
-  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-    guard prepareInput() else { return }
-    for touch in touches {
-      contacts.insert(ObjectIdentifier(touch))
-      guard let lane = lane(for: touch) else { continue }
-      let occupied = lanes.values.contains(lane)
-      lanes[ObjectIdentifier(touch)] = lane
-      if !occupied {
-        model?.press(lane: lane, at: model?.inputTime(at: touch.timestamp))
-      }
-    }
-  }
-
-  override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-    guard prepareInput() else { return }
-    for touch in touches {
-      let id = ObjectIdentifier(touch)
-      guard contacts.contains(id) else { continue }
-      let next = lane(for: touch)
-      guard lanes[id] != next else { continue }
-      release(id, at: touch.timestamp)
-      if let next {
-        lanes[id] = next
-        model?.slide(lane: next, at: model?.inputTime(at: touch.timestamp))
-      }
-    }
-  }
-
-  override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-    guard prepareInput() else { return }
-    for touch in touches {
-      contacts.remove(ObjectIdentifier(touch))
-      release(ObjectIdentifier(touch), at: touch.timestamp)
-    }
-  }
-
-  override func touchesCancelled(
-    _ touches: Set<UITouch>, with event: UIEvent?
-  ) {
-    touchesEnded(touches, with: event)
-  }
-
-  private func release(_ id: ObjectIdentifier, at timestamp: TimeInterval) {
-    guard let lane = lanes.removeValue(forKey: id),
-      !lanes.values.contains(lane)
-    else { return }
-    model?.release(lane: lane, at: model?.inputTime(at: timestamp))
-  }
 }
