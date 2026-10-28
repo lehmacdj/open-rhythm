@@ -4,8 +4,7 @@ OpenRhythm is a clean-room iOS client for the public Sonolus server and engine
 specifications. The initial compatibility target is the Love Live! School idol
 festival server at `https://sonolus.milkbun.org/llsif`.
 
-For a concise overview of the shipped app and its remaining limitations, see
-[OpenRhythm capabilities and current status](APP_STATUS.md).
+For a concise overview of the app, its unreleased changes and its remaining limitations, see [OpenRhythm capabilities and current status](APP_STATUS.md).
 
 The project intentionally contains no proprietary Sonolus application code,
 assets, keys, branding, or reverse-engineered implementation details. Standard
@@ -85,38 +84,15 @@ directory, and can also be configured there:
 
 ## Compatibility notes
 
-The app parses version 13 engine resources. Shared runtime support includes
-direct/shifted/pointed memory operations, overlapping copies, bounded control
-flow, all 36 named easing functions, drawing, judging, scheduled/looped audio,
-particles, BPM/time-scale conversion, dynamic spawning, resource availability,
-streams, and exports. Metal renders engine sprite geometry with a software
-fallback. Engine score and life configuration is consumed after preprocessing.
-Server playback requires engine configuration and always executes the engine;
-missing presentation resources never silently select the basic-lane adapter.
-The app bundles no music, charts or artwork; the repository holds only small
-synthetic test charts. The attributed public protocol label table described
-above is included for offline settings display.
+The app parses version 13 engine resources. Shared runtime support includes direct/shifted/pointed memory operations, overlapping copies, bounded control flow, all 36 named easing functions, drawing, judging, scheduled/looped audio, particles, BPM/time-scale conversion, dynamic spawning, resource availability, streams, and exports. Metal renders engine sprite geometry with a software fallback. Engine score and life configuration is consumed after preprocessing. Server playback requires engine configuration and always executes the engine; there is no non-engine fallback player. The app bundles no music, charts or artwork; the repository holds only small synthetic test charts. The attributed public protocol label table described above is included for offline settings display.
 
-Engine regression tests use the built data of two MIT-licensed open-source engines by NonSpicyBurrito, [sonolus-pjsekai-engine](https://github.com/NonSpicyBurrito/sonolus-pjsekai-engine) 1.9.0 and [sonolus-bandori-engine](https://github.com/NonSpicyBurrito/sonolus-bandori-engine) 1.6.4. They are git submodules under `OpenRhythmTests/Fixtures/Engines` (forks that add the build output to each release, with each project's `LICENSE.txt`), are used only by tests and are not part of the app. Run `git submodule update --init` to fetch them; the tests skip otherwise. Their skins, effects, particles and backgrounds are generated placeholders.
+Engine regression tests in the default suite use the built data of two MIT-licensed open-source engines by NonSpicyBurrito, [sonolus-pjsekai-engine](https://github.com/NonSpicyBurrito/sonolus-pjsekai-engine) 1.9.0 and [sonolus-bandori-engine](https://github.com/NonSpicyBurrito/sonolus-bandori-engine) 1.6.4. They are git submodules under `OpenRhythmTests/Fixtures/Engines` (forks that add the build output to each release, with each project's `LICENSE.txt`), are used only by tests and are not part of the app. Run `git submodule update --init` to fetch them; the tests skip otherwise. Their skins, effects, particles and backgrounds are generated placeholders.
 
 Before play, a callback-graph scan reports unsupported functions, including
 those in lazy successful-hit branches and dynamically spawnable archetypes.
 This is a capability check, not proof of semantic conformance or playability.
 
-General third-party engine compatibility is **not yet guaranteed**. Fourteen
-stack functions remain unimplemented pending their observable memory/frame
-contract. Skin render modes, error-heatmap HUD metrics and documented timing
-indicator styles are implemented, but exact native rendering parity is not
-claimed. Unsupported presentation enums fail before gameplay; they are not
-silently replaced with a different score or layout. The exit/restart menu
-remains app-positioned. Editor-only entities without a matching play archetype
-remain non-executing metadata. Public play-memory access restrictions are
-enforced; underdocumented resource defaults and audio-offset conventions still
-need independent evidence. Paint, Print and non-play modes have separate scope.
-Do not infer arbitrary-engine support from sampled engine families. See
-[the conformance checklist](COMPATIBILITY.md) and [request audit](REQUESTS.md).
-Physical-device checks are deferred until that API gate is complete, unless
-the user explicitly requests an earlier check of a particular issue.
+General third-party engine compatibility is **not yet guaranteed**. Fourteen stack functions remain unimplemented pending their observable memory/frame contract. Skin render modes, error-heatmap HUD metrics and documented timing indicator styles are implemented, but exact native rendering parity is not claimed. Unsupported presentation enums fail before gameplay; they are not silently replaced with a different score or layout. The exit/restart menu remains app-positioned. Editor-only entities without a matching play archetype remain non-executing metadata. Public play-memory access restrictions are enforced; underdocumented resource defaults and audio-offset conventions still need independent evidence. Paint, Print and non-play modes have separate scope. Do not infer arbitrary-engine support from sampled engine families. See [the conformance checklist](COMPATIBILITY.md) and [open requests](REQUESTS.md). Physical-device checks are deferred until that API gate is complete, unless the user explicitly requests an earlier check of a particular issue.
 
 Bounded compatibility checks on September 10, 2026 used one catalog page and one
 chart per candidate server. Both Project SEKAI and SIF Custom Charts returned
@@ -157,16 +133,9 @@ once (six shared presentation assets and one song's BGM), with no new catalog
 pages. Cached Hikari native playback at 0.5× and 1.5× also retained monotonic
 clocks and event/playback mapping agreement within 10 microseconds.
 
-The uploaded TestFlight search crash was retrieved from Apple analytics for
-`is.devin.OpenRhythm`: build 1, September 10, `CatalogModel.prefetchNextPages`,
-Swift invalid-range trap. Existing empty/shrinking-page guards address it;
-the audit adds a repeated-search regression. This is not confirmation that a
-new TestFlight build containing these changes has been shipped.
+The uploaded TestFlight search crash was retrieved from Apple analytics for `is.devin.OpenRhythm`: build 1, September 10, `CatalogModel.prefetchNextPages`, Swift invalid-range trap. Existing empty/shrinking-page guards address it; the audit adds a repeated-search regression.
 
-Timing distributions now use continuous density curves with no data bins.
-Known automatic hold checkpoints are excluded only from the distribution,
-not from scores or the scatterplot. Regression cases cover zero alignment,
-judgment-colored mass, narrow isolated modes, and bounded rendering work.
+Timing distributions now use continuous density curves with no data bins. Known automatic hold checkpoints are excluded from the distribution and the summary timing statistics, not from scores, hit rate or the scatterplot. Regression cases cover zero alignment, judgment-colored mass, narrow isolated modes, and bounded rendering work.
 
 Native and fallback inputs map UIKit event timestamps through the audio
 timebase, retaining rate-transition history for queued touches across stalls.
