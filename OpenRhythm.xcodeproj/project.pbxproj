@@ -52,7 +52,17 @@
 		B00000000000000000000004 /* OfflineStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* OfflineStoreTests.swift */; };
 		B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* RuntimeDecodingTests.swift */; };
 		B00000000000000000000006 /* ResultStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ResultStoreTests.swift */; };
-		B00000000000000000000007 /* EngineHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* EngineHostTests.swift */; };
+		B00000000000000000000007 /* EngineHostTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* EngineHostTestSupport.swift */; };
+		B0000000000000000000000A /* EngineInterpreterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* EngineInterpreterTests.swift */; };
+		B0000000000000000000000B /* EngineRuntimeLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000B /* EngineRuntimeLifecycleTests.swift */; };
+		B0000000000000000000000C /* EngineGameplayIntroTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000C /* EngineGameplayIntroTests.swift */; };
+		B0000000000000000000000D /* EngineAudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000D /* EngineAudioTests.swift */; };
+		B0000000000000000000000E /* EngineInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000E /* EngineInputTests.swift */; };
+		B0000000000000000000000F /* EngineHapticTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000F /* EngineHapticTests.swift */; };
+		B00000000000000000000010 /* EngineScoringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* EngineScoringTests.swift */; };
+		B00000000000000000000011 /* EngineParticleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* EngineParticleTests.swift */; };
+		B00000000000000000000012 /* EngineRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* EngineRenderingTests.swift */; };
+		B00000000000000000000013 /* EngineArchiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* EngineArchiveTests.swift */; };
 		B00000000000000000000008 /* PlaybackClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* PlaybackClockTests.swift */; };
 		B00000000000000000000009 /* EngineFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* EngineFixtureTests.swift */; };
 /* End PBXBuildFile section */
@@ -115,7 +125,17 @@
 		B10000000000000000000004 /* OfflineStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStoreTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* RuntimeDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDecodingTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000006 /* ResultStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStoreTests.swift; sourceTree = "<group>"; };
-		B10000000000000000000007 /* EngineHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHostTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000007 /* EngineHostTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHostTestSupport.swift; sourceTree = "<group>"; };
+		B1000000000000000000000A /* EngineInterpreterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineInterpreterTests.swift; sourceTree = "<group>"; };
+		B1000000000000000000000B /* EngineRuntimeLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineRuntimeLifecycleTests.swift; sourceTree = "<group>"; };
+		B1000000000000000000000C /* EngineGameplayIntroTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineGameplayIntroTests.swift; sourceTree = "<group>"; };
+		B1000000000000000000000D /* EngineAudioTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineAudioTests.swift; sourceTree = "<group>"; };
+		B1000000000000000000000E /* EngineInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineInputTests.swift; sourceTree = "<group>"; };
+		B1000000000000000000000F /* EngineHapticTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHapticTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000010 /* EngineScoringTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineScoringTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000011 /* EngineParticleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineParticleTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* EngineRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineRenderingTests.swift; sourceTree = "<group>"; };
+		B10000000000000000000013 /* EngineArchiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineArchiveTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000008 /* PlaybackClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackClockTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000009 /* EngineFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineFixtureTests.swift; sourceTree = "<group>"; };
 		D00000000000000000000001 /* OpenRhythm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenRhythm.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -235,7 +255,17 @@
 				B10000000000000000000008 /* PlaybackClockTests.swift */,
 				B10000000000000000000004 /* OfflineStoreTests.swift */,
 				B10000000000000000000005 /* RuntimeDecodingTests.swift */,
-				B10000000000000000000007 /* EngineHostTests.swift */,
+				B10000000000000000000007 /* EngineHostTestSupport.swift */,
+				B1000000000000000000000A /* EngineInterpreterTests.swift */,
+				B1000000000000000000000B /* EngineRuntimeLifecycleTests.swift */,
+				B1000000000000000000000C /* EngineGameplayIntroTests.swift */,
+				B1000000000000000000000D /* EngineAudioTests.swift */,
+				B1000000000000000000000E /* EngineInputTests.swift */,
+				B1000000000000000000000F /* EngineHapticTests.swift */,
+				B10000000000000000000010 /* EngineScoringTests.swift */,
+				B10000000000000000000011 /* EngineParticleTests.swift */,
+				B10000000000000000000012 /* EngineRenderingTests.swift */,
+				B10000000000000000000013 /* EngineArchiveTests.swift */,
 				B10000000000000000000009 /* EngineFixtureTests.swift */,
 				B10000000000000000000006 /* ResultStoreTests.swift */,
 				0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */,
@@ -420,7 +450,17 @@
 				B00000000000000000000004 /* OfflineStoreTests.swift in Sources */,
 				B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */,
 				0349A437306972F8009BC642 /* EnginePCMKernelTests.m in Sources */,
-				B00000000000000000000007 /* EngineHostTests.swift in Sources */,
+				B00000000000000000000007 /* EngineHostTestSupport.swift in Sources */,
+				B0000000000000000000000A /* EngineInterpreterTests.swift in Sources */,
+				B0000000000000000000000B /* EngineRuntimeLifecycleTests.swift in Sources */,
+				B0000000000000000000000C /* EngineGameplayIntroTests.swift in Sources */,
+				B0000000000000000000000D /* EngineAudioTests.swift in Sources */,
+				B0000000000000000000000E /* EngineInputTests.swift in Sources */,
+				B0000000000000000000000F /* EngineHapticTests.swift in Sources */,
+				B00000000000000000000010 /* EngineScoringTests.swift in Sources */,
+				B00000000000000000000011 /* EngineParticleTests.swift in Sources */,
+				B00000000000000000000012 /* EngineRenderingTests.swift in Sources */,
+				B00000000000000000000013 /* EngineArchiveTests.swift in Sources */,
 				B00000000000000000000009 /* EngineFixtureTests.swift in Sources */,
 				B00000000000000000000006 /* ResultStoreTests.swift in Sources */,
 			);
