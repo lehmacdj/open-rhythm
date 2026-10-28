@@ -36,6 +36,9 @@ struct OfflineLevelManifest: Codable, Hashable, Identifiable, Sendable {
 struct OfflineManifestIssue: Identifiable, Sendable, LocalizedError {
   let fileName: String
   let diagnostic: String
+  /// The record was read but isn't a valid manifest. A read failure may be
+  /// transient, so only damaged records are offered for removal.
+  var isDamaged = false
   var id: String { fileName }
   var errorDescription: String? {
     "Couldn’t read download record \(fileName). \(diagnostic)"
@@ -338,9 +341,11 @@ actor OfflineStore {
         manifests.append(try JSONDecoder.offline.decode(OfflineLevelManifest.self,
           from: readStoredData(file)))
       } catch {
+        let isDamaged = error is DecodingError
         let error = error as NSError
         let issue = OfflineManifestIssue(fileName: file.lastPathComponent,
-          diagnostic: "\(error.localizedDescription) (\(error.domain), \(error.code))")
+          diagnostic: "\(error.localizedDescription) (\(error.domain), \(error.code))",
+          isDamaged: isDamaged)
         guard allowPartial else { throw issue }
         issues.append(issue)
       }
@@ -617,6 +622,25 @@ actor OfflineStore {
     }
   }
 
+  /// Deletes one damaged download record so that deletion and storage cleanup,
+  /// which need every record, can proceed. Files it alone referenced are
+  /// collected once the remaining records are readable.
+  func removeDamagedRecord(named fileName: String) throws {
+    // The name comes from a listing of this directory; accept nothing else.
+    guard fileName.hasSuffix(".json"), !fileName.contains("/") else { return }
+    let url = manifestsURL.appendingPathComponent(fileName)
+    guard fileManager.fileExists(atPath: url.path) else { return }
+    // A record repaired since it was listed is kept. A read error propagates:
+    // it may be transient, so it never justifies deletion.
+    let data = try readStoredData(url)
+    guard (try? JSONDecoder.offline.decode(OfflineLevelManifest.self,
+      from: data)) == nil else { return }
+    try fileManager.removeItem(at: url)
+    cleanupRequested = true
+    // Other damaged records still block cleanup; it is retried later.
+    if activeDownloads == 0 { try? collectUnusedResources() }
+  }
+
   private func finishDownload() {
     activeDownloads -= 1
     if activeDownloads == 0, cleanupRequested {
@@ -717,8 +741,11 @@ actor OfflineStore {
     ) { group in
       for locator in locators {
         group.addTask { [client] in
+          // Objects keeps these bytes; a response-cache copy would double
+          // their storage and evict online responses.
           let data = try await client.resource(at: locator.url,
-            expectedSHA1: locator.hash, forceReload: forceReload)
+            expectedSHA1: locator.hash, forceReload: forceReload,
+            storesInCache: false)
           if let expected = locator.hash,
             data.sha1Hex != expected {
             throw SonolusClientError.resourceChecksumMismatch(expected)

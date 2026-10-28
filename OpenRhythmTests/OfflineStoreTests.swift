@@ -988,6 +988,81 @@ final class OfflineStoreTests: XCTestCase {
     XCTAssertEqual(try Data(contentsOf: unknownURL), unknownData)
   }
 
+  @MainActor
+  func testRemovingADamagedRecordUnblocksDeletionAndCleanup() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("damaged-offline-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let directory = root.appendingPathComponent("Manifests")
+    let objects = root.appendingPathComponent("Objects")
+    for url in [directory, objects] {
+      try FileManager.default.createDirectory(at: url,
+        withIntermediateDirectories: true)
+    }
+    let empty = ResourceLocator(hash: nil, url: nil)
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://example.com")!)
+    let level = SonolusLevelItem(name: "chart", source: nil, version: 1,
+      rating: 1, title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+      author: "Fixture", tags: [], cover: empty, bgm: empty, data: empty)
+    let keptData = Data("Referenced by the valid record".utf8)
+    let keptURL = objects.appendingPathComponent(keptData.sha256Hex)
+    try keptData.write(to: keptURL)
+    let manifest = OfflineLevelManifest(
+      id: Data("\(server.id):\(level.id)".utf8).sha256Hex,
+      server: server, level: level, itemData: Data("{}".utf8),
+      resources: [OfflineResource(remoteURL: server.baseURL,
+        objectName: keptData.sha256Hex, expectedSHA1: nil)],
+      downloadedAt: Date())
+    let validName = "\(manifest.id).json"
+    try JSONEncoder().encode(manifest)
+      .write(to: directory.appendingPathComponent(validName))
+    let brokenURL = directory.appendingPathComponent("damaged.json")
+    try Data("{incomplete metadata".utf8).write(to: brokenURL)
+    let orphanData = Data("Referenced only by the damaged record".utf8)
+    let orphanURL = objects.appendingPathComponent(orphanData.sha256Hex)
+    try orphanData.write(to: orphanURL)
+
+    // A record that can't be read now may be readable later: keep it.
+    let failing = OfflineStore(rootURL: root, readStoredData: { url in
+      guard url.lastPathComponent != "damaged.json" else {
+        throw CocoaError(.fileReadNoPermission)
+      }
+      return try Data(contentsOf: url)
+    })
+    let unreadable = try await failing.catalogSnapshot().issues
+    XCTAssertEqual(unreadable.map(\.isDamaged), [false])
+    do {
+      try await failing.removeDamagedRecord(named: "damaged.json")
+      XCTFail("A read failure must not delete the record")
+    } catch { }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: brokenURL.path))
+
+    let store = OfflineStore(rootURL: root)
+    let model = OfflineCatalogModel(offlineStore: store,
+      resultStore: ResultStore(rootURL: root.appendingPathComponent("Results")))
+    await model.refresh(playedSongs: false)
+    XCTAssertEqual(model.issues.map(\.fileName), ["damaged.json"])
+    XCTAssertEqual(model.issues.map(\.isDamaged), [true])
+    // A readable record is never removed through this path.
+    try await store.removeDamagedRecord(named: validName)
+    try await store.removeDamagedRecord(named: "../Objects/x.json")
+    XCTAssertTrue(FileManager.default.fileExists(
+      atPath: directory.appendingPathComponent(validName).path))
+
+    try await model.removeDamagedRecord(model.issues[0])
+    XCTAssertTrue(model.issues.isEmpty)
+    XCTAssertEqual(model.visibleSongs.count, 1)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: brokenURL.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: orphanURL.path),
+      "Storage only the damaged record held is reclaimed")
+    XCTAssertEqual(try Data(contentsOf: keptURL), keptData)
+    try await store.remove(song: XCTUnwrap(model.songs.first))
+    let remaining = try await store.manifests()
+    XCTAssertTrue(remaining.isEmpty)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: keptURL.path))
+  }
+
   func testOfflineCatalogDistinguishesEmptyAllDamagedAndEnumerationFailure()
     async throws {
     let root = FileManager.default.temporaryDirectory
@@ -1665,6 +1740,132 @@ final class OfflineStoreTests: XCTestCase {
     XCTAssertEqual(refreshed.variants.map(\.id), [fresh.id],
       "A retired first chart must not select its stale audio group")
     XCTAssertEqual(refreshed.variants.first?.bgm.url, "/new-hash")
+  }
+
+  func testUpdateDropsADifficultyTheServerRetired() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://server.example")!)
+    let levels = (0..<2).map { index in
+      SonolusLevelItem(name: "level-\(index)", source: nil, version: 1,
+        rating: Double(index + 1), title: LocalizedText("Song"),
+        artists: LocalizedText("Artist"), author: "Fixture", tags: [],
+        cover: ResourceLocator(hash: nil, url: nil),
+        bgm: ResourceLocator(hash: nil, url: "https://assets.example/data"),
+        data: ResourceLocator(hash: nil, url: "https://assets.example/data"))
+    }
+    let details = Data(#"""
+      {"item":{"bgm":{"url":"https://assets.example/data"},
+      "data":{"url":"https://assets.example/data"},
+      "engine":{"version":13,"playData":{"url":"https://assets.example/data"},
+      "configuration":{"url":"https://assets.example/data"}}}}
+      """#.utf8)
+    let full = try JSONEncoder().encode(
+      SonolusLevelList(pageCount: 1, items: levels))
+    let reduced = try JSONEncoder().encode(
+      SonolusLevelList(pageCount: 1, items: [levels[1]]))
+    let recorder = RequestRecorder()
+    func installServer(list: Data) {
+      StubURLProtocol.handler = { request in
+        recorder.append(request.url!)
+        switch request.url?.lastPathComponent ?? "" {
+        case "list": return list
+        case "data": return Data("asset".utf8)
+        case levels[0].name where list == reduced:
+          throw URLError(.fileDoesNotExist) // The server's 404.
+        default: return details
+        }
+      }
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let store = OfflineStore(rootURL: root.appendingPathComponent("Offline"),
+      client: SonolusClient(session: session,
+        cache: SonolusResponseCache(rootURL: root.appendingPathComponent("Cache"))))
+    let song = CatalogBuilder.group(levels: levels, server: server)[0]
+    installServer(list: full)
+    let downloaded = try await store.download(song: song)
+    XCTAssertEqual(downloaded.variants.map(\.id), levels.map(\.id))
+
+    installServer(list: reduced)
+    let before = recorder.urls.count
+    let updated = try await store.download(song: downloaded, forceReload: true)
+    XCTAssertEqual(updated.variants.map(\.id), [levels[1].id],
+      "The server's current difficulty list replaces the downloaded one")
+    XCTAssertFalse(recorder.urls[before...].contains {
+      $0.lastPathComponent == levels[0].name
+    }, "A retired difficulty is not requested")
+  }
+
+  func testOfflineDownloadReadsButDoesNotFillResponseCache() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let server = ServerDescriptor(id: "fixture", name: "Fixture",
+      baseURL: URL(string: "https://server.example")!)
+    let level = SonolusLevelItem(name: "chart", source: nil, version: 1,
+      rating: 1, title: LocalizedText("Song"), artists: LocalizedText("Artist"),
+      author: "Fixture", tags: [], cover: ResourceLocator(hash: nil, url: nil),
+      bgm: ResourceLocator(hash: nil, url: "https://assets.example/bgm"),
+      data: ResourceLocator(hash: nil, url: "https://assets.example/chart"))
+    // The engine is hashed ("valid data"); the other resources are not.
+    let details = Data(#"""
+      {"item":{"bgm":{"url":"https://assets.example/bgm"},
+      "data":{"url":"https://assets.example/chart"},
+      "engine":{"version":13,"playData":{"url":"https://assets.example/engine",
+      "hash":"043c442d55264f4fb778fc32b387254d6dc40f92"},
+      "configuration":{"url":"https://assets.example/configuration"}}}}
+      """#.utf8)
+    func bytes(_ name: String) -> Data {
+      name == "engine" ? Data("valid data".utf8) : Data("asset \(name)".utf8)
+    }
+    let recorder = RequestRecorder()
+    StubURLProtocol.handler = { request in
+      recorder.append(request.url!)
+      return request.url?.host == "assets.example"
+        ? bytes(request.url!.lastPathComponent) : details
+    }
+    defer { StubURLProtocol.handler = nil }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [StubURLProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let cacheURL = root.appendingPathComponent("Cache")
+    let client = SonolusClient(session: session,
+      cache: SonolusResponseCache(rootURL: cacheURL))
+    let store = OfflineStore(rootURL: root.appendingPathComponent("Offline"),
+      client: client)
+    func cached() throws -> [URL: (data: Data, modified: Date?)] {
+      let files = try FileManager.default.contentsOfDirectory(at: cacheURL,
+        includingPropertiesForKeys: [.contentModificationDateKey])
+      return try Dictionary(uniqueKeysWithValues: files.map { file in
+        (file, (try Data(contentsOf: file), try file.resourceValues(
+          forKeys: [.contentModificationDateKey]).contentModificationDate))
+      })
+    }
+    // Online playback cached the music earlier.
+    _ = try await client.resource(at: URL(string: "https://assets.example/bgm")!)
+    let before = try cached()
+
+    let manifest = try await store.download(level: level, from: server)
+    XCTAssertEqual(manifest.resources.count, 4)
+    XCTAssertEqual(recorder.urls.filter { $0.lastPathComponent == "bgm" }.count,
+      1, "A download reuses a cached response")
+    let after = try cached()
+    for name in ["chart", "engine", "configuration"] {
+      XCTAssertFalse(after.values.contains { $0.data == bytes(name) },
+        "Downloads keep \(name) in Objects, not the response cache")
+    }
+    for (file, entry) in before {
+      XCTAssertEqual(after[file]?.data, entry.data)
+      XCTAssertEqual(after[file]?.modified, entry.modified,
+        "A cache hit doesn't refresh its freshness clock")
+    }
   }
 
   func testSongDownloadDiscoversAllDifficultiesAndReusesSharedResources() async throws {

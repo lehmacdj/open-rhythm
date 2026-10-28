@@ -39,13 +39,12 @@ actor SonolusClient {
     locale: Locale = .current,
     forceReload: Bool = false
   ) async throws -> SonolusLevelList {
-    let language = locale.language.languageCode?.identifier ?? "en"
     var components = URLComponents(
       url: server.baseURL.appendingPathComponent("sonolus/levels/list"),
       resolvingAgainstBaseURL: false
     )
     var queryItems = [
-      URLQueryItem(name: "localization", value: language),
+      URLQueryItem(name: "localization", value: locale.sonolusLocalization),
       URLQueryItem(name: "page", value: String(page))
     ]
     if !query.isEmpty {
@@ -72,7 +71,6 @@ actor SonolusClient {
     locale: Locale = .current,
     forceReload: Bool = false
   ) async throws -> Data {
-    let language = locale.language.languageCode?.identifier ?? "en"
     var components = URLComponents(
       url: server.baseURL
         .appendingPathComponent("sonolus/levels")
@@ -80,7 +78,7 @@ actor SonolusClient {
       resolvingAgainstBaseURL: false
     )
     components?.queryItems = [
-      URLQueryItem(name: "localization", value: language)
+      URLQueryItem(name: "localization", value: locale.sonolusLocalization)
     ]
     guard let url = components?.url else {
       throw SonolusClientError.invalidURL
@@ -88,10 +86,12 @@ actor SonolusClient {
     return try await requestData(from: url, forceReload: forceReload)
   }
 
+  /// `storesInCache: false` still reads the response cache but never writes
+  /// it, for bytes that another store (Downloads) will keep.
   func resource(at url: URL?, expectedSHA1: String? = nil,
-    forceReload: Bool = false) async throws -> Data {
+    forceReload: Bool = false, storesInCache: Bool = true) async throws -> Data {
     try await requestData(from: url, accept: "*/*", forceReload: forceReload,
-      expectedSHA1: expectedSHA1)
+      expectedSHA1: expectedSHA1, storesInCache: storesInCache)
   }
 
   func serverTitle(at baseURL: URL) async throws -> String {
@@ -107,8 +107,6 @@ actor SonolusClient {
     guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw SonolusClientError.invalidResponse
     }
-    var variants = Dictionary(song.variants.map { ($0.id, $0) },
-      uniquingKeysWith: { first, _ in first })
     let firstPage = try await levels(on: server, page: 0, query: query,
       forceReload: forceReload)
     // Do not accidentally crawl a whole server if it ignores keyword search.
@@ -140,16 +138,21 @@ actor SonolusClient {
       }
     }
     // Music URLs often contain a content hash and change when audio is
-    // replaced. A stable chart identity locates the song's current key.
-    let current = items.first { $0.id == first.id }
-      ?? items.first { variants[$0.id] != nil } ?? first
-    let matching = CatalogBuilder.groupedLevels(items, server: server)
-      .first { $0.contains { $0.id == current.id } } ?? []
-    guard !matching.isEmpty else {
+    // replaced. A stable chart identity locates the song's current key. The
+    // known charts only locate that group: the server's group alone defines
+    // the difficulties, so a retired or renamed chart is dropped.
+    let known = Set(song.variants.map(\.id))
+    guard let current = items.first(where: { $0.id == first.id })
+      ?? items.first(where: { known.contains($0.id) }),
+      let matching = CatalogBuilder.groupedLevels(items, server: server)
+        .first(where: { $0.contains { $0.id == current.id } })
+    else {
       throw RuntimeBundleError.missingResource("the song's difficulty list")
     }
-    for level in matching { variants[level.id] = level }
-    return CatalogBuilder.group(levels: Array(variants.values), server: server)
+    // Shifting pages can repeat a chart; keep its newest copy.
+    let levels = Dictionary(matching.map { ($0.id, $0) },
+      uniquingKeysWith: { _, newest in newest })
+    return CatalogBuilder.group(levels: Array(levels.values), server: server)
       .first { $0.variants.contains { $0.id == current.id } } ?? song
   }
 
@@ -157,17 +160,20 @@ actor SonolusClient {
     from url: URL?,
     accept: String = "application/json",
     forceReload: Bool = false,
-    expectedSHA1: String? = nil
+    expectedSHA1: String? = nil,
+    storesInCache: Bool = true
   ) async throws -> Data {
     try await timestampedData(from: url, accept: accept,
-      forceReload: forceReload, expectedSHA1: expectedSHA1).data
+      forceReload: forceReload, expectedSHA1: expectedSHA1,
+      storesInCache: storesInCache).data
   }
 
   private func timestampedData(
     from url: URL?,
     accept: String = "application/json",
     forceReload: Bool = false,
-    expectedSHA1: String? = nil
+    expectedSHA1: String? = nil,
+    storesInCache: Bool = true
   ) async throws -> (data: Data, fetchedAt: Date) {
     let hash = try expectedSHA1.map(ContentAddress.normalizedSHA1)
     let fetch: @Sendable () async throws -> Data = { [session] in
@@ -200,8 +206,8 @@ actor SonolusClient {
       return (data, Date())
     }
     return try await cache.timestampedData(
-      at: url, maximumAge: 600,
-      forceReload: forceReload, expectedSHA1: hash, fetch: fetch
+      at: url, maximumAge: 600, forceReload: forceReload,
+      expectedSHA1: hash, storesResponse: storesInCache, fetch: fetch
     )
   }
 }
@@ -239,10 +245,10 @@ actor SonolusResponseCache {
 
   /// Also returns when the data was fetched: the modification date of a fresh
   /// cache file, or the completion time of a network request even if storing
-  /// its response fails.
+  /// its response fails. `storesResponse: false` reads but never writes.
   func timestampedData(
     at url: URL?, maximumAge: TimeInterval, forceReload: Bool = false,
-    expectedSHA1: String? = nil,
+    expectedSHA1: String? = nil, storesResponse: Bool = true,
     fetch: @escaping @Sendable () async throws -> Data
   ) async throws -> Fetched {
     let hash = try expectedSHA1.map(ContentAddress.normalizedSHA1)
@@ -250,6 +256,7 @@ actor SonolusResponseCache {
     guard let key = hash ?? urlKey else { throw SonolusClientError.invalidURL }
     // Content identity coalesces aliases, but never joins a different hash
     // or an unverified URL request that happens to use the same address.
+    // A joined request keeps the storing choice of the caller that began it.
     let task: Task<Fetched, Error>
     if let existing = inFlight[key]?.task {
       task = existing
@@ -261,7 +268,7 @@ actor SonolusResponseCache {
         for candidate in [key, urlKey].compactMap({ $0 }) {
           if let data = try? Data(contentsOf: rootURL.appendingPathComponent(candidate)),
             data.sha1Hex == hash {
-            if candidate != key { store(data, at: file) }
+            if candidate != key, storesResponse { store(data, at: file) }
             return (data, Date())
           }
         }
@@ -278,7 +285,7 @@ actor SonolusResponseCache {
         if let hash, data.sha1Hex != hash {
           throw SonolusClientError.resourceChecksumMismatch(hash)
         }
-        self.store(data, at: file)
+        if storesResponse { self.store(data, at: file) }
         return (data, Date())
       }
       inFlight[key] = Fetch(task: task)

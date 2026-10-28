@@ -64,6 +64,17 @@ final class OfflineCatalogModel {
       errorMessage = error.localizedDescription
     }
   }
+
+  /// Reloads the list whether or not removal succeeds.
+  func removeDamagedRecord(_ issue: OfflineManifestIssue) async throws {
+    do {
+      try await offlineStore.removeDamagedRecord(named: issue.fileName)
+    } catch {
+      await refresh(playedSongs: false)
+      throw error
+    }
+    await refresh(playedSongs: false)
+  }
 }
 
 struct OfflineCatalogView: View {
@@ -82,13 +93,22 @@ struct OfflineCatalogView: View {
             systemImage: "exclamationmark.triangle")
           Text("Unreadable records are omitted from this list. Existing files "
             + "have been kept; downloading an affected chart again can repair "
-            + "its record.")
+            + "its record. Deleting downloads and freeing their storage wait "
+            + "until every record can be read or damaged ones are removed.")
             .font(.callout)
           DisclosureGroup("Details (\(model.issues.count))") {
             ForEach(model.issues) { issue in
-              Text(issue.localizedDescription)
-                .font(.caption)
-                .textSelection(.enabled)
+              VStack(alignment: .leading, spacing: 8) {
+                Text(issue.localizedDescription)
+                  .font(.caption)
+                  .textSelection(.enabled)
+                if issue.isDamaged {
+                  Button("Remove Damaged Record", systemImage: "trash",
+                    role: .destructive) { removeDamagedRecord(issue) }
+                    .buttonStyle(.borderless)
+                    .disabled(deleting.contains(issue.id))
+                }
+              }
             }
           }
         }
@@ -166,6 +186,20 @@ struct OfflineCatalogView: View {
         // A filesystem failure can follow a partial deletion. Reload the
         // surviving difficulties instead of leaving stale rows on screen.
         await model.refresh(playedSongs: false)
+      }
+    }
+  }
+
+  private func removeDamagedRecord(_ issue: OfflineManifestIssue) {
+    guard deleting.insert(issue.id).inserted else { return }
+    Task {
+      defer { deleting.remove(issue.id) }
+      do {
+        try await model.removeDamagedRecord(issue)
+      } catch {
+        let error = error as NSError
+        deletionError = "Couldn’t remove \(issue.fileName). "
+          + "\(error.localizedDescription) (\(error.domain), \(error.code))"
       }
     }
   }
