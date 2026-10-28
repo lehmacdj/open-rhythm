@@ -2,10 +2,32 @@ import SwiftUI
 import UIKit
 import Metal
 
+/// Creates the screen's model once it is shown. A `@State` default value
+/// would be evaluated whenever a parent rebuilds this struct, including the
+/// eagerly built NavigationLink destination, allocating models nobody uses.
 struct GameplayView: View {
   let song: CatalogSong
   let level: SonolusLevelItem
-  @State private var model = GameplayModel()
+  @State private var model: GameplayModel?
+
+  var body: some View {
+    Group {
+      if let model {
+        GameplayScreen(song: song, level: level, model: model)
+      } else {
+        ProgressView("Preparing chart…")
+          .onAppear { model = GameplayModel() }
+      }
+    }
+    .navigationTitle(song.title.displayValue())
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+private struct GameplayScreen: View {
+  let song: CatalogSong
+  let level: SonolusLevelItem
+  @Bindable var model: GameplayModel
   @State private var showsSettings = false
   @Environment(\.dismiss) private var dismiss
   @Environment(\.scenePhase) private var scenePhase
@@ -29,8 +51,6 @@ struct GameplayView: View {
         )
       }
     }
-    .navigationTitle(song.title.displayValue())
-    .navigationBarTitleDisplayMode(.inline)
     .toolbar(model.phase == .playing ? .hidden : .visible, for: .navigationBar)
     .statusBarHidden(model.phase == .playing)
     .persistentSystemOverlays(model.phase == .playing ? .hidden : .automatic)
@@ -51,7 +71,11 @@ struct GameplayView: View {
     }
     .onDisappear { model.stop() }
     .onChange(of: scenePhase) { _, phase in
-      if phase != .active { model.stop() }
+      if phase != .active {
+        model.abandonPlay(notice: "Playback stopped because OpenRhythm "
+          + "left the foreground. Tap Start to play again.")
+        model.stop()
+      }
     }
   }
 
@@ -295,6 +319,9 @@ struct GameplayView: View {
       if let error = model.resultSaveError {
         Section("Couldn’t Save Result") {
           Text(error)
+          Button("Retry Save", systemImage: "arrow.clockwise") {
+            model.retryResultSave()
+          }
         }
       }
     }

@@ -615,11 +615,107 @@ final class PlaybackClockTests: XCTestCase {
   }
 
   @MainActor
+  func testScreenSizeChangeStopsPlayWithNotice() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("screen-size-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let model = try makeSessionModel(PlaybackAudioSession { _ in },
+      directory: directory, nativeEngine: true)
+    defer { model.stop() }
+    model.start()
+    model.engineFrame(size: CGSize(width: 800, height: 400), touches: [])
+    XCTAssertNotNil(model.engineRuntime)
+    XCTAssertEqual(model.phase, .playing)
+    XCTAssertNil(model.playbackNotice)
+    model.engineFrame(size: CGSize(width: 400, height: 800), touches: [])
+    XCTAssertEqual(model.phase, .ready)
+    XCTAssertNotNil(model.playbackNotice, "Rotation must not silently end a play")
+    XCTAssertNil(model.resultSaveTask)
+    model.abandonPlay(notice: "Ignored")
+    XCTAssertNotEqual(model.playbackNotice, "Ignored",
+      "Only an active play is abandoned")
+  }
+
+  @MainActor
+  func testFailedResultSaveKeepsResultForRetryAndRestartClearsError()
+    async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("result-retry-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    // A regular file where the store expects a directory makes writes fail.
+    let root = directory.appendingPathComponent("store")
+    try Data().write(to: root)
+    let store = ResultStore(rootURL: root)
+    let model = try makeSessionModel(PlaybackAudioSession { _ in },
+      directory: directory, resultStore: store)
+    defer { model.stop() }
+    model.start()
+    model.playbackEnded(uptime: 100)
+    XCTAssertEqual(model.phase, .finished)
+    await model.resultSaveTask?.value
+    XCTAssertNotNil(model.resultSaveError)
+
+    model.restart()
+    XCTAssertNil(model.resultSaveError, "A new play starts without a stale error")
+    XCTAssertNil(model.resultSaveTask)
+    model.playbackEnded(uptime: 100)
+    await model.resultSaveTask?.value
+    XCTAssertNotNil(model.resultSaveError)
+
+    try FileManager.default.removeItem(at: root)
+    model.retryResultSave()
+    await model.resultSaveTask?.value
+    XCTAssertNil(model.resultSaveError)
+    let results = try await store.allResults()
+    XCTAssertEqual(results.count, 1)
+    XCTAssertEqual(results.first?.levelID,
+      "https://example.com\u{0}session-failure")
+  }
+
+  @MainActor
+  func testLoadingGameplayPreferencesNeverOverwritesStoredData() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("preference-load-\(UUID())")
+    try FileManager.default.createDirectory(at: directory,
+      withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let serverURL = URL(string: "https://preferences-\(UUID()).example")!
+    // The fixture level names no engine, so it uses the server's key.
+    let key = "OpenRhythm.preferences.v1:gameplay:server:\(serverURL)"
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    let unreadable = Data("not json".utf8)
+    let partlyUnknown = Data(#"""
+      {"skinRenderMode":"future","judgementDisplay":"off",
+       "inputOffsetMilliseconds":-42}
+      """#.utf8)
+    for stored in [unreadable, partlyUnknown] {
+      UserDefaults.standard.set(stored, forKey: key)
+      let model = try makeSessionModel(PlaybackAudioSession { _ in },
+        directory: directory, serverURL: serverURL)
+      XCTAssertEqual(model.phase, .ready)
+      XCTAssertEqual(UserDefaults.standard.data(forKey: key), stored,
+        "Loading must not replace stored preferences")
+      if stored == partlyUnknown {
+        XCTAssertEqual(model.settings.inputOffsetMilliseconds, -42)
+        XCTAssertEqual(model.settings.judgementDisplay, .off)
+        XCTAssertEqual(model.settings.skinRenderMode, .standard)
+      } else {
+        XCTAssertEqual(model.settings, GameplayPreferences())
+      }
+    }
+  }
+
+  @MainActor
   private func makeSessionModel(_ session: PlaybackAudioSession,
     directory: URL, nativeEngine: Bool = false,
     audioNotifications: NotificationCenter = .default,
     inputProbe: Bool = false,
     serverURL: URL = URL(string: "https://example.com")!,
+    resultStore: ResultStore = .shared,
     makePlayer: @escaping (URL) -> AVPlayer = { AVPlayer(url: $0) }
   ) throws -> GameplayModel {
     let audio = directory.appendingPathComponent("tone.caf")
@@ -656,7 +752,7 @@ final class PlaybackClockTests: XCTestCase {
       version: 1, rating: 1, title: LocalizedText("Session failure"),
       artists: LocalizedText("Generated"), author: "Fixture", tags: [],
       cover: resource, bgm: resource, data: resource)
-    let model = GameplayModel(audioSession: session,
+    let model = GameplayModel(resultStore: resultStore, audioSession: session,
       audioNotifications: audioNotifications, makePlayer: makePlayer)
     model.prepare(bundle: RuntimeBundle(engine: engine,
       level: LevelData(bgmOffset: 0, entities: inputProbe
@@ -1226,7 +1322,15 @@ final class PlaybackClockTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path))
     XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
     XCTAssertThrowsError(try PreparedRuntimeAudio(data: Data(), sourceURL: source,
-      temporaryDirectory: directory))
+      temporaryDirectory: directory)) {
+      XCTAssertEqual($0.localizedDescription, "The music file is empty.")
+    }
+    let oversized = 128 * 1024 * 1024 + 1
+    XCTAssertThrowsError(try PreparedRuntimeAudio(data: Data(count: oversized),
+      sourceURL: source, temporaryDirectory: directory)) {
+      XCTAssertEqual($0.localizedDescription,
+        "The music file is larger than 128 MiB (\(oversized) bytes).")
+    }
   }
 
   func testPlaybackSpeedScalesTempoAndClocksWithoutScalingJudgmentErrors() throws {
@@ -1393,6 +1497,32 @@ final class PlaybackClockTests: XCTestCase {
     XCTAssertEqual(history.mediaTime(at: 99), 10)
     XCTAssertEqual(history.mediaTime(at: 100), 10)
     XCTAssertEqual(history.mediaTime(at: 101), 20)
+  }
+
+  func testDelayedStopObservationUsesExactStopHostTime() throws {
+    var history = PlaybackClockHistory()
+    history.observe(.init(hostTime: 100, mediaTime: 10, rate: 2), at: 100)
+    history.observe(.init(hostTime: 100, mediaTime: 10, rate: 2), at: 101)
+    // Stopped at media 13 (host 101.5) but observed only at host 102.
+    let stopped = PlaybackClockHistory.Segment(hostTime: 0, mediaTime: 13,
+      rate: 0)
+    XCTAssertEqual(history.stopHostTime(of: stopped), 101.5)
+    let stop = history.observe(stopped, at: 102,
+      transitionHostTime: history.stopHostTime(of: stopped))
+    XCTAssertEqual(stop?.appliedHostTime, 101.5)
+    XCTAssertEqual(history.mediaTime(at: 101.25), 12.5)
+    XCTAssertEqual(history.mediaTime(at: 101.75), 13)
+    // A stop dated before the previous observation keeps the bracket end.
+    var late = PlaybackClockHistory()
+    late.observe(.init(hostTime: 100, mediaTime: 10, rate: 1), at: 100)
+    late.observe(.init(hostTime: 100, mediaTime: 10, rate: 1), at: 105)
+    let early = PlaybackClockHistory.Segment(hostTime: 0, mediaTime: 12,
+      rate: 0)
+    let fallback = late.observe(early, at: 106,
+      transitionHostTime: late.stopHostTime(of: early))
+    XCTAssertEqual(fallback?.appliedHostTime, 106)
+    XCTAssertNil(late.stopHostTime(of: .init(hostTime: 0, mediaTime: 1,
+      rate: 1)))
   }
 
   func testEventClockUsesCoreMediaRateAndAnchorRatherThanDeliveryAge() throws {

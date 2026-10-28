@@ -143,20 +143,9 @@ struct PlayStatistics {
     let density: Double
     var id: String { "\(index)-\(judgement.rawValue)" }
   }
-  struct Bin: Identifiable {
-    let index: Int
-    let judgement: NoteJudgement
-    let count: Int
-    let base: Int
-    let lowerMS: Double
-    let upperMS: Double
-    var id: String { "\(index)-\(judgement.rawValue)" }
-  }
 
   let samples: [NoteTiming]
   let timingsMS: [Double]
-  let bins: [Bin]
-  let binWidthMS: Double
   let timingLimitMS: Double
   let density: [DensityPoint]
   let distributionCount: Int
@@ -176,25 +165,8 @@ struct PlayStatistics {
     }
     timingsMS = timed.map { $0.accuracy! * 1000 }.sorted()
     let maximum = timingsMS.map(abs).max() ?? 0
-    binWidthMS = max(5, ceil(maximum / 100) * 5)
-    timingLimitMS = max(25, ceil(maximum / binWidthMS) * binWidthMS)
-    var counts = [Int: [NoteJudgement: Int]]()
-    for sample in timed {
-      let index = Int(floor(sample.accuracy! * 1000 / binWidthMS))
-      counts[index, default: [:]][sample.judgement, default: 0] += 1
-    }
-    var bins = [Bin]()
-    for index in counts.keys.sorted() {
-      var base = 0
-      for judgement in NoteJudgement.allCases {
-        guard let count = counts[index]?[judgement] else { continue }
-        bins.append(Bin(index: index, judgement: judgement, count: count, base: base,
-          lowerMS: Double(index) * binWidthMS,
-          upperMS: Double(index + 1) * binWidthMS))
-        base += count
-      }
-    }
-    self.bins = bins
+    let step = max(5, ceil(maximum / 100) * 5)
+    timingLimitMS = max(25, ceil(maximum / step) * step)
 
     let distribution = timed.filter { !$0.isIntermediateHold }
     excludedHoldTicks = timed.count - distribution.count

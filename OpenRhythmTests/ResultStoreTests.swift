@@ -455,7 +455,7 @@ final class ResultStoreTests: XCTestCase {
       [ServerDescriptor.defaults[0].baseURL, ServerDescriptor.suggested[0].baseURL])
   }
 
-  func testTimingStatisticsFilterAndHistogramPreserveJudgements() {
+  func testTimingStatisticsFilterByNoteTypeAndOmitMissTimings() {
     let samples = [
       NoteTiming(id: 0, songTime: 1, noteType: "Tap", judgement: .perfect,
         accuracy: -0.01),
@@ -474,17 +474,16 @@ final class ResultStoreTests: XCTestCase {
     XCTAssertEqual(all.medianMS, -10)
     XCTAssertEqual(all.meanAbsoluteMS ?? 0, 160.0 / 3, accuracy: 0.001)
     XCTAssertEqual(all.standardDeviationMS ?? 0, sqrt(3800), accuracy: 0.001)
-    XCTAssertEqual(all.bins.reduce(0) { $0 + $1.count }, 3)
-    XCTAssertFalse(all.bins.contains { $0.judgement == .miss })
+    XCTAssertEqual(all.timingsMS, [-100, -10, 50])
     let taps = PlayStatistics(samples: samples, noteType: "Tap")
     XCTAssertEqual(taps.samples.count, 3)
     XCTAssertEqual(taps.meanMS, 20)
     XCTAssertEqual(taps.hitRate ?? 0, 2.0 / 3, accuracy: 0.001)
-    XCTAssertEqual(taps.bins.map(\.judgement), [.perfect, .great])
+    XCTAssertEqual(taps.timingsMS, [-10, 50])
     let empty = PlayStatistics(samples: samples, noteType: "Unknown")
     XCTAssertNil(empty.meanMS)
     XCTAssertNil(empty.hitRate)
-    XCTAssertTrue(empty.bins.isEmpty)
+    XCTAssertTrue(empty.timingsMS.isEmpty)
     XCTAssertGreaterThan(empty.timingLimitMS, 0)
   }
 
@@ -499,7 +498,6 @@ final class ResultStoreTests: XCTestCase {
     ])
     XCTAssertEqual(stats.samples.count, 3)
     XCTAssertTrue(stats.timingsMS.isEmpty)
-    XCTAssertTrue(stats.bins.isEmpty)
     XCTAssertEqual(stats.misses, 1)
     XCTAssertNil(stats.standardDeviationMS)
   }

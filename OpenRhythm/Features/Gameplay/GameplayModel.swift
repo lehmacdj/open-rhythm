@@ -395,6 +395,8 @@ final class GameplayModel {
   private var tailStart: (mediaTime: TimeInterval, uptime: TimeInterval)?
   private(set) var resultSaveTask: Task<Void, Never>?
   private(set) var resultSaveError: String?
+  /// The finished play's result until the store accepts it.
+  private var unsavedResult: PlayResult?
   private var nextMissIndex = 0
   private var resultLevel: SonolusLevelItem?
   private var resultServer: ServerDescriptor?
@@ -506,8 +508,11 @@ final class GameplayModel {
         inputArchetypes.contains($0.archetype)
       }.count
     }
-    preferenceKey = level.engineKey(server: server)
-    settings = UserPreferences.shared.gameplay(for: preferenceKey)
+    // Load before setting the key: saving on load would replace stored
+    // preferences this build could not decode with defaults.
+    let key = level.engineKey(server: server)
+    settings = UserPreferences.shared.gameplay(for: key)
+    preferenceKey = key
     bgmOffset = bundle.level.bgmOffset
     resultLevel = level
     resultServer = server
@@ -558,6 +563,9 @@ final class GameplayModel {
     }
     guard let player else { return }
     playbackNotice = nil
+    unsavedResult = nil
+    resultSaveTask = nil
+    resultSaveError = nil
     presentationAssets?.configureRenderMode(preferred: settings.skinRenderMode)
     let speed = presentationAssets?.configuration.playbackSpeed(preferences: settings) ?? 1
     guard speed.isFinite, (0.05...4).contains(speed) else {
@@ -626,11 +634,9 @@ final class GameplayModel {
     interruptionObserver = AudioInterruptionObservation(
       center: audioNotifications
     ) { [weak self] in
-      guard let self, self.phase == .playing,
-        self.playbackGeneration == generation else { return }
-      self.stop()
-      self.playbackNotice = "Audio playback was interrupted. "
-        + "Tap Start to play the chart again."
+      guard let self, self.playbackGeneration == generation else { return }
+      self.abandonPlay(notice: "Audio playback was interrupted. "
+        + "Tap Start to play the chart again.")
     }
     if let item = player.currentItem {
       endObserver = NotificationCenter.default.addObserver(
@@ -958,6 +964,14 @@ final class GameplayModel {
     }
   }
 
+  /// Stop an attempt that cannot continue and tell the player why. Like any
+  /// stop before the end, the attempt is not a result.
+  func abandonPlay(notice: String) {
+    guard phase == .playing else { return }
+    stop()
+    playbackNotice = notice
+  }
+
   func playbackEnded(
     uptime: TimeInterval = ProcessInfo.processInfo.systemUptime
   ) {
@@ -1037,7 +1051,9 @@ final class GameplayModel {
     do {
       let aspect = Double(size.width / size.height)
       if let engineAspectRatio, abs(engineAspectRatio - aspect) > 0.001 {
-        stop()
+        // The runtime's screen geometry is fixed for a play.
+        abandonPlay(notice: "Playback stopped because the screen size "
+          + "changed. Tap Start to play again.")
         return false
       }
       if engineRuntime == nil {
@@ -1290,11 +1306,27 @@ final class GameplayModel {
       playbackTiming: playbackTiming,
       engineBuckets: resultBuckets
     )
+    save(result)
+  }
+
+  func retryResultSave() {
+    guard resultSaveError != nil, let unsavedResult else { return }
+    save(unsavedResult)
+  }
+
+  private func save(_ result: PlayResult) {
+    unsavedResult = result
+    resultSaveError = nil
     resultSaveTask = Task {
       do {
         try await resultStore.record(result)
+        if unsavedResult?.id == result.id { unsavedResult = nil }
       } catch {
-        resultSaveError = error.localizedDescription
+        // A restarted play discards this result; do not report on it.
+        guard unsavedResult?.id == result.id else { return }
+        let error = error as NSError
+        resultSaveError = "\(error.localizedDescription) "
+          + "(\(error.domain), \(error.code))"
       }
     }
   }
