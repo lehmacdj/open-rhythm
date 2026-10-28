@@ -69,6 +69,7 @@ struct ContentView: View {
 struct PlayHistoryView: View {
   @State private var results = [PlayResult]()
   @State private var errorMessage: String?
+  @State private var unreadableCount = 0
   private let store: ResultStore?
 
   init(results: [PlayResult] = [], store: ResultStore? = .shared) {
@@ -82,8 +83,13 @@ struct PlayHistoryView: View {
         ContentUnavailableView("Couldn’t Load History",
           systemImage: "exclamationmark.triangle",
           description: Text(errorMessage))
-      } else if results.isEmpty {
+      } else if results.isEmpty && unreadableCount == 0 {
         ContentUnavailableView("No Plays Yet", systemImage: "clock")
+      }
+      if unreadableCount > 0 {
+        Label("^[\(unreadableCount) play history entry](inflect: true) couldn’t be read. Saved history is kept unchanged.",
+          systemImage: "exclamationmark.triangle")
+          .foregroundStyle(.secondary)
       }
       ForEach(results) { result in
         NavigationLink {
@@ -107,7 +113,9 @@ struct PlayHistoryView: View {
   private func refresh() async {
     guard let store else { return }
     do {
-      results = try await store.allResults()
+      let history = try await store.history()
+      results = history.results
+      unreadableCount = history.unreadableCount
       errorMessage = nil
     } catch { errorMessage = error.localizedDescription }
   }

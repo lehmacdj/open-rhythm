@@ -75,8 +75,27 @@ struct PlayResult: Codable, Identifiable, Sendable {
   }
 }
 
+/// Saved plays, newest first. Index entries this version can't decode are
+/// counted instead of hiding the rest of the history.
+struct PlayHistory: Sendable {
+  var results: [PlayResult]
+  var unreadableCount: Int
+}
+
 actor ResultStore {
   static let shared = ResultStore()
+
+  /// Unreadable entries keep their exact JSON, so rewriting the index never
+  /// discards history that a newer or repaired version could read.
+  private enum IndexEntry {
+    case result(PlayResult)
+    case unreadable(Data, levelID: String?)
+
+    var result: PlayResult? {
+      if case .result(let result) = self { return result }
+      return nil
+    }
+  }
 
   private let fileManager: FileManager
   private let fileURL: URL
@@ -100,7 +119,7 @@ actor ResultStore {
   }
 
   func record(_ result: PlayResult) throws {
-    var values = try allResults()
+    var entries = try indexEntries()
     var summary = result
     let payload = try result.noteTimings.map {
       try JSONEncoder().encode(ResultDetails(samples: $0,
@@ -112,12 +131,12 @@ actor ResultStore {
       summary.hasTimingData = true
       summary.timingID = UUID()
     }
-    let removed = values.filter { $0.id == result.id }
-    values.removeAll { $0.id == result.id }
-    values.insert(summary, at: 0)
+    let removed = entries.compactMap(\.result).filter { $0.id == result.id }
+    entries.removeAll { $0.result?.id == result.id }
+    entries.insert(.result(summary), at: 0)
     // New plays must not evict historical results or their timing payloads.
     // Only a replacement of the same result ID supersedes an old payload.
-    let indexData = try JSONEncoder().encode(values)
+    let indexData = try Self.encodeIndex(entries)
     try fileManager.createDirectory(
       at: fileURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
@@ -137,7 +156,8 @@ actor ResultStore {
       throw error
     }
     // Remove payloads only after the replacement index is safely persisted.
-    let retained = Set(values.filter { $0.hasTimingData == true }
+    let retained = Set(entries.compactMap(\.result)
+      .filter { $0.hasTimingData == true }
       .map { $0.timingID ?? $0.id })
     for old in removed where old.hasTimingData == true {
       let id = old.timingID ?? old.id
@@ -171,20 +191,114 @@ actor ResultStore {
   }
 
   func results(forAnyLevelID levelIDs: Set<String>) throws -> [PlayResult] {
-    try allResults()
-      .filter { levelIDs.contains($0.levelID) }
-      .sorted { $0.playedAt > $1.playedAt }
+    try history(forAnyLevelID: levelIDs).results
   }
 
   func allResults() throws -> [PlayResult] {
-    guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
-    return try JSONDecoder().decode(
-      [PlayResult].self,
-      from: Data(contentsOf: fileURL)
-    ).sorted {
+    try history().results
+  }
+
+  /// Without level IDs, returns every play. An unreadable entry counts toward
+  /// the given levels unless it names a different one: it might be theirs.
+  func history(forAnyLevelID levelIDs: Set<String>? = nil) throws
+    -> PlayHistory {
+    var results = [PlayResult]()
+    var unreadableCount = 0
+    for entry in try indexEntries() {
+      switch entry {
+      case .result(let result):
+        if levelIDs?.contains(result.levelID) ?? true {
+          results.append(result)
+        }
+      case .unreadable(_, let levelID):
+        if let levelIDs, let levelID, !levelIDs.contains(levelID) { continue }
+        unreadableCount += 1
+      }
+    }
+    results.sort {
       $0.playedAt == $1.playedAt
         ? $0.id.uuidString < $1.id.uuidString : $0.playedAt > $1.playedAt
     }
+    return PlayHistory(results: results, unreadableCount: unreadableCount)
+  }
+
+  private func indexEntries() throws -> [IndexEntry] {
+    guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
+    let data = try Data(contentsOf: fileURL)
+    // Only a JSON array can be split into entries; rewriting anything else
+    // would discard it. UTF-16 and UTF-32 JSON always contain zero bytes.
+    guard !data.contains(0),
+      try JSONSerialization.jsonObject(with: data) is [Any] else {
+      throw CocoaError(.fileReadCorruptFile,
+        userInfo: [NSURLErrorKey: fileURL])
+    }
+    let decoder = JSONDecoder()
+    return Self.arrayElements(of: data).map { element in
+      if let result = try? decoder.decode(PlayResult.self, from: element) {
+        return .result(result)
+      }
+      let object = try? JSONSerialization.jsonObject(with: element,
+        options: .fragmentsAllowed)
+      return .unreadable(element,
+        levelID: (object as? [String: Any])?["levelID"] as? String)
+    }
+  }
+
+  /// The exact bytes of each element of a valid UTF-8 JSON array.
+  private static func arrayElements(of data: Data) -> [Data] {
+    let bytes = [UInt8](data)
+    let whitespace: Set<UInt8> = [0x20, 0x09, 0x0A, 0x0D]
+    var elements = [Data]()
+    func append(_ range: Range<Int>) {
+      var slice = bytes[range]
+      while let first = slice.first, whitespace.contains(first) {
+        slice = slice.dropFirst()
+      }
+      while let last = slice.last, whitespace.contains(last) {
+        slice = slice.dropLast()
+      }
+      if !slice.isEmpty { elements.append(Data(slice)) }
+    }
+    var depth = 0
+    var inString = false
+    var escaped = false
+    var start = 0
+    for (index, byte) in bytes.enumerated() {
+      if inString {
+        if escaped { escaped = false }
+        else if byte == UInt8(ascii: "\\") { escaped = true }
+        else if byte == UInt8(ascii: "\"") { inString = false }
+        continue
+      }
+      switch byte {
+      case UInt8(ascii: "\""): inString = true
+      case UInt8(ascii: "["), UInt8(ascii: "{"):
+        depth += 1
+        if depth == 1 { start = index + 1 }
+      case UInt8(ascii: "]"), UInt8(ascii: "}"):
+        if depth == 1 { append(start..<index) }
+        depth -= 1
+      case UInt8(ascii: ",") where depth == 1:
+        append(start..<index)
+        start = index + 1
+      default: break
+      }
+    }
+    return elements
+  }
+
+  private static func encodeIndex(_ entries: [IndexEntry]) throws -> Data {
+    let encoder = JSONEncoder()
+    var data = Data("[".utf8)
+    for (index, entry) in entries.enumerated() {
+      if index > 0 { data.append(UInt8(ascii: ",")) }
+      switch entry {
+      case .result(let result): data.append(try encoder.encode(result))
+      case .unreadable(let raw, _): data.append(raw)
+      }
+    }
+    data.append(UInt8(ascii: "]"))
+    return data
   }
 
   func playedSongs() throws -> [CatalogSong] {

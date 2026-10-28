@@ -145,11 +145,15 @@ struct PlayStatistics {
   }
 
   let samples: [NoteTiming]
+  /// Sorted timing errors behind the distribution and summary statistics.
+  /// Misses and automatic intermediate hold ticks are excluded.
   let timingsMS: [Double]
+  /// The scatterplot's range, which includes hold ticks.
   let timingLimitMS: Double
   let density: [DensityPoint]
-  let distributionCount: Int
   let excludedHoldTicks: Int
+  /// Non-miss samples without a usable timing error.
+  let untimedHits: Int
   let bandwidthMS: Double
   let distributionLimitMS: Double
 
@@ -163,15 +167,16 @@ struct PlayStatistics {
         $0.isFinite && abs($0) <= 3_600
       } == true
     }
-    timingsMS = timed.map { $0.accuracy! * 1000 }.sorted()
-    let maximum = timingsMS.map(abs).max() ?? 0
+    untimedHits = self.samples.filter { $0.judgement != .miss }.count
+      - timed.count
+    let maximum = timed.map { abs($0.accuracy! * 1000) }.max() ?? 0
     let step = max(5, ceil(maximum / 100) * 5)
     timingLimitMS = max(25, ceil(maximum / step) * step)
 
     let distribution = timed.filter { !$0.isIntermediateHold }
     excludedHoldTicks = timed.count - distribution.count
-    distributionCount = distribution.count
     let values = distribution.map { $0.accuracy! * 1000 }.sorted()
+    timingsMS = values
     // A narrow compact kernel keeps the histogram-like structure of actual
     // inputs instead of smoothing across a whole judgment window. Widen only
     // for very broad ranges to bound the sampled geometry, not with note count
@@ -248,6 +253,7 @@ struct PlayStatistics {
   }
 
   var misses: Int { samples.filter { $0.judgement == .miss }.count }
+  var distributionCount: Int { timingsMS.count }
   /// Symmetric, readable ticks with room for edge labels inside the plot card.
   var distributionTicksMS: [Double] {
     let target = distributionLimitMS / 4

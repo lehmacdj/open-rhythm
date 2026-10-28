@@ -499,7 +499,102 @@ final class ResultStoreTests: XCTestCase {
     XCTAssertEqual(stats.samples.count, 3)
     XCTAssertTrue(stats.timingsMS.isEmpty)
     XCTAssertEqual(stats.misses, 1)
+    XCTAssertEqual(stats.untimedHits, 2)
     XCTAssertNil(stats.standardDeviationMS)
+  }
+
+  func testTimingStatisticsExcludeHoldTicksLikeTheDistribution() {
+    let ticks = (0..<3).map {
+      NoteTiming(id: $0, songTime: Double($0), noteType: "NormalTickNote",
+        judgement: .perfect, accuracy: $0 == 0 ? 0.1 : 0)
+    }
+    let stats = PlayStatistics(samples: ticks + [
+      NoteTiming(id: 3, songTime: 4, noteType: "TapNote", judgement: .perfect,
+        accuracy: -0.01),
+      NoteTiming(id: 4, songTime: 5, noteType: "TapNote", judgement: .great,
+        accuracy: 0.03)
+    ])
+    XCTAssertEqual(stats.timingsMS, [-10, 30])
+    XCTAssertEqual(stats.distributionCount, 2)
+    XCTAssertEqual(stats.excludedHoldTicks, 3)
+    XCTAssertEqual(stats.early, 1)
+    XCTAssertEqual(stats.exact, 0)
+    XCTAssertEqual(stats.late, 1)
+    XCTAssertEqual(stats.meanMS ?? 0, 10, accuracy: 1e-9)
+    XCTAssertEqual(stats.medianMS ?? 0, 10, accuracy: 1e-9)
+    XCTAssertEqual(stats.meanAbsoluteMS ?? 0, 20, accuracy: 1e-9)
+    XCTAssertEqual(stats.standardDeviationMS ?? 0, 20, accuracy: 1e-9)
+    XCTAssertEqual(stats.untimedHits, 0)
+    // Ticks remain in the scatterplot, its range, and the hit rate.
+    XCTAssertEqual(stats.samples.count, 5)
+    XCTAssertEqual(stats.hitRate, 1)
+    XCTAssertGreaterThanOrEqual(stats.timingLimitMS, 100)
+  }
+
+  func testUnreadableHistoryEntriesAreKeptVerbatimAndDoNotBlockSaves()
+    async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root,
+      withIntermediateDirectories: true)
+    let indexURL = root.appendingPathComponent("Results.json")
+    let older = result(levelID: "chart", perfect: 4,
+      playedAt: Date(timeIntervalSince1970: 100))
+    let newer = result(levelID: "elsewhere", perfect: 5,
+      playedAt: Date(timeIntervalSince1970: 200))
+    // A future format for this chart, and an entry naming no level at all.
+    let future = #"{"id":"not-a-uuid","levelID":"chart","x":[1,"a,]}\""]}"#
+    let stray = #""stray \"entry\" ]""#
+    let encoder = JSONEncoder()
+    let index = "[\n  " + [String(decoding: try encoder.encode(older),
+      as: UTF8.self), future, stray, String(decoding: try encoder.encode(newer),
+      as: UTF8.self)].joined(separator: ",\n  ") + "\n]"
+    try Data(index.utf8).write(to: indexURL)
+
+    let store = ResultStore(rootURL: root)
+    let all = try await store.history()
+    XCTAssertEqual(all.results.map(\.id), [newer.id, older.id])
+    XCTAssertEqual(all.unreadableCount, 2)
+    let chart = try await store.history(forAnyLevelID: ["chart"])
+    XCTAssertEqual(chart.results.map(\.id), [older.id])
+    XCTAssertEqual(chart.unreadableCount, 2)
+    let elsewhere = try await store.history(forAnyLevelID: ["elsewhere"])
+    XCTAssertEqual(elsewhere.unreadableCount, 1, "Only the unattributed entry")
+
+    let latest = result(levelID: "chart", perfect: 6,
+      playedAt: Date(timeIntervalSince1970: 300))
+    try await store.record(latest)
+    let saved = try Data(contentsOf: indexURL)
+    XCTAssertNotNil(saved.range(of: Data(future.utf8)))
+    XCTAssertNotNil(saved.range(of: Data(stray.utf8)))
+    let reopened = try await ResultStore(rootURL: root).history()
+    XCTAssertEqual(reopened.results.map(\.id),
+      [latest.id, newer.id, older.id])
+    XCTAssertEqual(reopened.unreadableCount, 2)
+  }
+
+  func testHistoryThatIsNotAJSONArrayIsNeverOverwritten() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root,
+      withIntermediateDirectories: true)
+    let indexURL = root.appendingPathComponent("Results.json")
+    let store = ResultStore(rootURL: root)
+    for contents in [#"[{"id": truncated"#, #"{"results":[]}"#] {
+      let original = Data(contents.utf8)
+      try original.write(to: indexURL)
+      do {
+        try await store.record(result(levelID: "chart", perfect: 1))
+        XCTFail("Saving over \(contents) must fail")
+      } catch {}
+      XCTAssertEqual(try Data(contentsOf: indexURL), original)
+      do {
+        _ = try await store.allResults()
+        XCTFail("Reading \(contents) must fail")
+      } catch {}
+    }
   }
 
   func testStoresAndFiltersResultsByLevel() async throws {

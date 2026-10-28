@@ -10,6 +10,8 @@ struct SongDetailView: View {
   @State private var isDownloaded = false
   @State private var downloadError: String?
   @State private var recentResults = [PlayResult]()
+  @State private var unreadableResults = 0
+  @State private var historyError: String?
   @State private var downloadProgress = ""
   @State private var isLoadingVariants = false
   @State private var discoverySucceeded = false
@@ -96,8 +98,19 @@ struct SongDetailView: View {
         }
       }
 
-      if !recentResults.isEmpty {
+      if !recentResults.isEmpty || unreadableResults > 0
+        || historyError != nil {
         Section("Recent Results") {
+          if let historyError {
+            Label("Couldn’t load play history. \(historyError)",
+              systemImage: "exclamationmark.triangle")
+              .foregroundStyle(.secondary)
+          }
+          if unreadableResults > 0 {
+            Label("^[\(unreadableResults) play history entry](inflect: true) couldn’t be read and may include plays of this chart. Saved history is kept unchanged.",
+              systemImage: "exclamationmark.triangle")
+              .foregroundStyle(.secondary)
+          }
           ForEach(recentResults) { result in
             NavigationLink {
               ResultDetailView(result: result)
@@ -171,14 +184,22 @@ struct SongDetailView: View {
       if !isOffline {
         await updateDownloadStatus()
       }
-      let results = (try? await ResultStore.shared.results(
-        forAnyLevelID: [
+      var history = PlayHistory(results: [], unreadableCount: 0)
+      var loadError: String?
+      do {
+        history = try await ResultStore.shared.history(forAnyLevelID: [
           selectedLevel.resultKey(server: server),
           selectedLevel.id
-        ]
-      )) ?? []
+        ])
+      } catch {
+        let error = error as NSError
+        loadError = "\(error.localizedDescription) "
+          + "(\(error.domain), \(error.code))"
+      }
       guard !Task.isCancelled, selectedLevelID == selection else { return }
-      recentResults = results
+      recentResults = history.results
+      unreadableResults = history.unreadableCount
+      historyError = loadError
     }
   }
 

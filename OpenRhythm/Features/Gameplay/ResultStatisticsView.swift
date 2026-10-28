@@ -66,7 +66,7 @@ struct ResultStatisticsSections: View {
       }
       Section("Early / Late Distribution") {
         TimingHistogram(stats: stats)
-        Text("Continuous timing density; no bins. Misses and \(stats.excludedHoldTicks) intermediate hold ticks are excluded. Smoothing width: \(stats.bandwidthMS.formatted(.number.precision(.fractionLength(1)))) ms.")
+        Text("Continuous timing density; no bins. Misses and \(stats.excludedHoldTicks) intermediate hold ticks are excluded here and from the timing statistics below, but count toward notes and hit rate. Smoothing width: \(stats.bandwidthMS.formatted(.number.precision(.fractionLength(1)))) ms.")
           .font(.caption).foregroundStyle(.secondary)
       }
       Section("Timing Statistics") {
@@ -85,9 +85,8 @@ struct ResultStatisticsSections: View {
           value: milliseconds(stats.standardDeviationMS))
         Text("Signed timings are negative for early hits. Lower absolute error and spread indicate more accurate, consistent timing.")
           .font(.caption).foregroundStyle(.secondary)
-        let missing = stats.samples.count - stats.misses - stats.timingsMS.count
-        if missing > 0 {
-          Text("Timing was unavailable for \(missing) hits.")
+        if stats.untimedHits > 0 {
+          Text("Timing was unavailable for \(stats.untimedHits) hits.")
             .font(.caption).foregroundStyle(.secondary)
         }
       }
