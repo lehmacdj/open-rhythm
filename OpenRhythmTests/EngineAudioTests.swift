@@ -942,7 +942,7 @@ final class EngineAudioTests: EngineHostTestCase {
   }
 
   @MainActor
-  func testExhaustedEffectVoicesDropSoundsWithoutEndingPlay() throws {
+  func testExhaustedEffectVoicesDeferFutureSoundsWithoutEndingPlay() throws {
     var voices = [MockEffectVoice]()
     let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
       let voice = MockEffectVoice()
@@ -953,17 +953,57 @@ final class EngineAudioTests: EngineHostTestCase {
       time: 0, minimumDistance: 0), count: 300), at: 0)
     XCTAssertEqual(audio.allocatedVoiceCount, 256)
     XCTAssertEqual(voices.flatMap(\.delays).count, 256)
-    try audio.update([], at: 0,
-      loopCommands: [.start(id: 1, clipID: 1, time: 0)])
-    XCTAssertFalse(voices.flatMap(\.looping).contains(true),
-      "A loop that finds no voice is dropped")
+    // A due hit without a voice is dropped; a future hit and a loop wait.
+    try audio.update([
+      EngineAudioCommand(clipID: 1, time: 0, minimumDistance: 0),
+      EngineAudioCommand(clipID: 1, time: 0.5, minimumDistance: 0)
+    ], at: 0, loopCommands: [.start(id: 1, clipID: 1, time: 0)])
+    XCTAssertEqual(voices.flatMap(\.delays).count, 256)
+    XCTAssertFalse(voices.flatMap(\.looping).contains(true))
+    // Two voices free up: the loop and the future hit take them.
+    voices[0].isPlaying = false
+    voices[1].isPlaying = false
+    try audio.update([], at: 0.25)
+    XCTAssertEqual(voices[0].delays.count + voices[1].delays.count, 4)
+    XCTAssertEqual(Set(voices[0...1].map { $0.looping[1] }), [false, true])
+    XCTAssertEqual(Set(voices[0...1].map { $0.delays[1] }), [0, 0.25],
+      "The loop starts now and the hit keeps its scheduled time")
     // Finished voices are reused for later hits.
     for voice in voices { voice.isPlaying = false }
     try audio.update([EngineAudioCommand(clipID: 1, time: 1,
       minimumDistance: 0)], at: 1)
-    XCTAssertEqual(voices.flatMap(\.delays).count, 257)
+    XCTAssertEqual(voices.flatMap(\.delays).count, 259)
     XCTAssertEqual(audio.allocatedVoiceCount, 256)
     audio.stop()
+  }
+
+  @MainActor
+  func testEmptyEffectClipIsOmittedInsteadOfFailingPreparation() throws {
+    let format = try XCTUnwrap(AVAudioFormat(
+      standardFormatWithSampleRate: 8000, channels: 1))
+    func clip(frames: AVAudioFrameCount) throws -> Data {
+      let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("effect-\(UUID()).caf")
+      defer { try? FileManager.default.removeItem(at: url) }
+      // The file is finalized once it goes out of scope.
+      try {
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        guard frames > 0 else { return }
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format,
+          frameCapacity: frames))
+        buffer.frameLength = frames
+        buffer.floatChannelData![0].initialize(repeating: 0,
+          count: Int(frames))
+        try file.write(from: buffer)
+      }()
+      return try Data(contentsOf: url)
+    }
+    let audio = try EngineAudioPlayback(clips: [
+      1: clip(frames: 0), 2: clip(frames: 800)
+    ])
+    XCTAssertEqual(audio.clipIDs, [2],
+      "The host ignores plays of a clip with nothing to play")
+    XCTAssertEqual(audio.allocatedVoiceCount, 8)
   }
 
   @MainActor

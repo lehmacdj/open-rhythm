@@ -709,8 +709,9 @@ final class EngineInterpreter {
       guard a.allSatisfy(\.isFinite) else {
         throw EngineInterpreterError.invalidArguments(function)
       }
-      // Neither function has an error case. Random interpolates, so reversed
-      // bounds are fine; an empty integer range yields its lower bound.
+      // Only non-finite bounds, or integer bounds beyond Int, are errors.
+      // Random interpolates, so reversed bounds are fine; an empty integer
+      // range yields its lower bound.
       if operation == .random {
         let fraction = Double.random(in: 0...1)
         return fraction * a[1] + (1 - fraction) * a[0]

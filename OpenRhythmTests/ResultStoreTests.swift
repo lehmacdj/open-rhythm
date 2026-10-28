@@ -574,6 +574,32 @@ final class ResultStoreTests: XCTestCase {
     XCTAssertEqual(reopened.unreadableCount, 2)
   }
 
+  func testFieldsFromANewerVersionSurviveLaterSaves() async throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root,
+      withIntermediateDirectories: true)
+    let indexURL = root.appendingPathComponent("Results.json")
+    let older = result(levelID: "chart", perfect: 4)
+    var object = try XCTUnwrap(JSONSerialization.jsonObject(
+      with: JSONEncoder().encode(older)) as? [String: Any])
+    object["futureField"] = ["kept": true]
+    let entry = try JSONSerialization.data(withJSONObject: object)
+    try (Data("[".utf8) + entry + Data("]".utf8)).write(to: indexURL)
+
+    let store = ResultStore(rootURL: root)
+    let loaded = try await store.allResults()
+    XCTAssertEqual(loaded.map(\.id), [older.id],
+      "An unknown field does not make the entry unreadable")
+    try await store.record(result(levelID: "chart", perfect: 5))
+    let saved = try Data(contentsOf: indexURL)
+    XCTAssertNotNil(saved.range(of: entry),
+      "An entry this version doesn't replace keeps its exact bytes")
+    let reloaded = try await store.allResults()
+    XCTAssertEqual(reloaded.count, 2)
+  }
+
   func testHistoryThatIsNotAJSONArrayIsNeverOverwritten() async throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)

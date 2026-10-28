@@ -496,10 +496,12 @@ private final class NativeEffectBank {
       let url = directory.appendingPathComponent("\(id).audio")
       try data.write(to: url)
       let file = try AVAudioFile(forReading: url)
-      guard file.length > 0, file.length <= 8_000_000,
+      guard file.length <= 8_000_000,
         (1...2).contains(file.processingFormat.channelCount) else {
         throw EngineInterpreterError.invalidArguments("effect audio format")
       }
+      // An empty clip has nothing to play: omit it so its plays are ignored.
+      guard file.length > 0 else { continue }
       decodedBytes += UInt64(file.length)
         * UInt64(file.processingFormat.channelCount) * 4
       guard decodedBytes <= 128 * 1024 * 1024 else {
@@ -510,14 +512,14 @@ private final class NativeEffectBank {
         throw EngineInterpreterError.resourcePreparationFailed("an effect audio buffer")
       }
       try file.read(into: buffer)
-      // A header can promise frames that fail to decode. A zero-length voice
-      // has nothing to play and must never reach the render loop.
-      guard buffer.frameLength > 0 else {
-        throw EngineInterpreterError.invalidArguments("effect audio format")
-      }
+      // A header can promise frames that fail to decode. Omit such a clip too.
+      guard buffer.frameLength > 0 else { continue }
       buffers[id] = buffer
     }
   }
+
+  /// Clips with audio to play; empty clips are omitted.
+  var clipIDs: Set<EngineResourceID> { Set(buffers.keys) }
 
   func voice(for id: EngineResourceID) throws -> any EngineEffectVoice {
     guard let buffer = buffers[id] else {
@@ -605,7 +607,8 @@ final class EngineAudioPlayback {
 
   convenience init(clips: [EngineResourceID: Data]) throws {
     let bank = try NativeEffectBank(clips: clips)
-    try self.init(clips: clips, makeVoice: { id, _ in try bank.voice(for: id) })
+    try self.init(clips: clips.filter { bank.clipIDs.contains($0.key) },
+      makeVoice: { id, _ in try bank.voice(for: id) })
     nativeBank = bank
   }
 
@@ -732,7 +735,9 @@ final class EngineAudioPlayback {
       if players[event.id] == nil, command.time <= time + 0.5,
         let bytes = clips[command.clipID] {
         // Losing one hit sound to voice exhaustion must not end the play.
+        // A future hit retries once a voice frees; a due one is dropped.
         guard let voice = try reserveVoice(command.clipID, bytes) else {
+          if command.time > time { retained.append(event) }
           continue
         }
         voice.play(after: max(0, command.time - (try readTime())), looped: false)
@@ -795,11 +800,8 @@ final class EngineAudioPlayback {
       }
       guard loop.voice == nil, loop.start <= now + 0.5,
         let bytes = clips[loop.clipID] else { continue }
-      // Drop a loop that finds no voice rather than ending the play.
-      guard let voice = try reserveVoice(loop.clipID, bytes) else {
-        loops[id] = nil
-        continue
-      }
+      // A loop that finds no voice retries on later frames until it ends.
+      guard let voice = try reserveVoice(loop.clipID, bytes) else { continue }
       let startTime = try currentTime()
       guard loop.end > startTime else {
         available[loop.clipID, default: []].append(voice)

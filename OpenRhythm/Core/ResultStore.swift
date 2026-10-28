@@ -85,16 +85,14 @@ struct PlayHistory: Sendable {
 actor ResultStore {
   static let shared = ResultStore()
 
-  /// Unreadable entries keep their exact JSON, so rewriting the index never
-  /// discards history that a newer or repaired version could read.
-  private enum IndexEntry {
-    case result(PlayResult)
-    case unreadable(Data, levelID: String?)
-
-    var result: PlayResult? {
-      if case .result(let result) = self { return result }
-      return nil
-    }
+  /// Every entry keeps its exact JSON, and only an added or replaced entry is
+  /// encoded afresh. Rewriting the index thus never discards entries, or
+  /// fields of entries, that a newer or repaired version could read.
+  private struct IndexEntry {
+    let raw: Data
+    /// Nil when this version can't decode the entry.
+    let result: PlayResult?
+    let levelID: String?
   }
 
   private let fileManager: FileManager
@@ -133,10 +131,11 @@ actor ResultStore {
     }
     let removed = entries.compactMap(\.result).filter { $0.id == result.id }
     entries.removeAll { $0.result?.id == result.id }
-    entries.insert(.result(summary), at: 0)
+    entries.insert(IndexEntry(raw: try JSONEncoder().encode(summary),
+      result: summary, levelID: summary.levelID), at: 0)
     // New plays must not evict historical results or their timing payloads.
     // Only a replacement of the same result ID supersedes an old payload.
-    let indexData = try Self.encodeIndex(entries)
+    let indexData = Self.encodeIndex(entries)
     try fileManager.createDirectory(
       at: fileURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
@@ -205,13 +204,13 @@ actor ResultStore {
     var results = [PlayResult]()
     var unreadableCount = 0
     for entry in try indexEntries() {
-      switch entry {
-      case .result(let result):
+      if let result = entry.result {
         if levelIDs?.contains(result.levelID) ?? true {
           results.append(result)
         }
-      case .unreadable(_, let levelID):
-        if let levelIDs, let levelID, !levelIDs.contains(levelID) { continue }
+      } else {
+        if let levelIDs, let levelID = entry.levelID,
+          !levelIDs.contains(levelID) { continue }
         unreadableCount += 1
       }
     }
@@ -235,11 +234,12 @@ actor ResultStore {
     let decoder = JSONDecoder()
     return Self.arrayElements(of: data).map { element in
       if let result = try? decoder.decode(PlayResult.self, from: element) {
-        return .result(result)
+        return IndexEntry(raw: element, result: result,
+          levelID: result.levelID)
       }
       let object = try? JSONSerialization.jsonObject(with: element,
         options: .fragmentsAllowed)
-      return .unreadable(element,
+      return IndexEntry(raw: element, result: nil,
         levelID: (object as? [String: Any])?["levelID"] as? String)
     }
   }
@@ -287,15 +287,11 @@ actor ResultStore {
     return elements
   }
 
-  private static func encodeIndex(_ entries: [IndexEntry]) throws -> Data {
-    let encoder = JSONEncoder()
+  private static func encodeIndex(_ entries: [IndexEntry]) -> Data {
     var data = Data("[".utf8)
     for (index, entry) in entries.enumerated() {
       if index > 0 { data.append(UInt8(ascii: ",")) }
-      switch entry {
-      case .result(let result): data.append(try encoder.encode(result))
-      case .unreadable(let raw, _): data.append(raw)
-      }
+      data.append(entry.raw)
     }
     data.append(UInt8(ascii: "]"))
     return data

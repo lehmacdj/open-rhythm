@@ -495,12 +495,21 @@ final class CatalogTests: XCTestCase {
       }
       return Data("done".utf8)
     }
+    func waitForStarts(_ count: Int) async throws {
+      for _ in 0..<1000 where await probe.counts.started < count {
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      let started = await probe.counts.started
+      XCTAssertEqual(started, count, "The fetch did not start in time")
+    }
     let shared = URL(string: "https://example.test/shared")!
-    let first = Task { try await cache.data(at: shared, maximumAge: 600,
-      fetch: fetch) }
     let second = Task { try await cache.data(at: shared, maximumAge: 600,
       fetch: fetch) }
-    try await Task.sleep(for: .milliseconds(100))
+    // A waiter registers before its fetch can start. With the surviving
+    // waiter registered, the other may be cancelled before or after joining.
+    try await waitForStarts(1)
+    let first = Task { try await cache.data(at: shared, maximumAge: 600,
+      fetch: fetch) }
     first.cancel()
     let value = try await second.value
     XCTAssertEqual(value, Data("done".utf8),
@@ -513,7 +522,7 @@ final class CatalogTests: XCTestCase {
     let only = Task { try await cache.data(
       at: URL(string: "https://example.test/only")!, maximumAge: 600,
       fetch: fetch) }
-    try await Task.sleep(for: .milliseconds(100))
+    try await waitForStarts(2)
     only.cancel()
     do {
       _ = try await only.value
