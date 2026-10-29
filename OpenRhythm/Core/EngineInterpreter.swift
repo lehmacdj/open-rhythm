@@ -9,6 +9,7 @@ enum EngineInterpreterError: LocalizedError {
   case resourcePreparationFailed(String)
   case invalidMemoryAccess(block: Int, callback: String, write: Bool)
   case invalidFunctionCallback(function: String, callback: String)
+  case invalidEntityLength(field: String, value: Double)
 
   var errorDescription: String? {
     switch self {
@@ -29,6 +30,12 @@ enum EngineInterpreterError: LocalizedError {
         + "during \(callback)."
     case .invalidFunctionCallback(let function, let callback):
       "The engine cannot call \(function) during \(callback)."
+    case .invalidEntityLength(let field, let value):
+      // Show the declared number as written, e.g. -1 rather than -1.0.
+      "The engine's \(field) must be a whole number from 0 to "
+        + "\(EngineEntityLayout.maximumLength), but it is "
+        + (abs(value) < 1e15 && value == value.rounded()
+          ? String(Int(value)) : String(value)) + "."
     }
   }
 }
@@ -95,6 +102,8 @@ final class EngineMemory {
   // Indexed by public block ID: ~80 KB, shared by preparation snapshots.
   // Avoid another hash lookup in every interpreted memory read/write.
   private var lengths: [Int]?
+  // Fixed per run; strides of the Entity Data and Shared Memory views.
+  private(set) var entityLayout = EngineEntityLayout.standard
   private var temporary: EngineTemporaryMemory?
 
   // Retain the sparse path for paired conformance/performance probes.
@@ -104,11 +113,18 @@ final class EngineMemory {
 
   /// Install the play-mode layout after loading ROM and before preprocessing.
   /// Standalone memory tests can omit a layout; production runtimes cannot.
+  /// The entity layout comes from engine data; omitted, it is pre-1.1.5's.
   func configurePlayBlocks(entityCount: Int, optionCount: Int,
-    bucketCount: Int, archetypeCount: Int) throws {
+    bucketCount: Int, archetypeCount: Int,
+    entityLayout: EngineEntityLayout = .standard) throws {
+    let dataCount = entityCount.multipliedReportingOverflow(
+      by: entityLayout.data)
+    let sharedCount = entityCount.multipliedReportingOverflow(
+      by: entityLayout.sharedMemory)
     guard [entityCount, optionCount, bucketCount, archetypeCount].allSatisfy({
       $0 >= 0 && $0 <= Int.max / 32
-    }) else { throw EngineInterpreterError.invalidArguments("memory layout") }
+    }), entityLayout.isValid, !dataCount.overflow, !sharedCount.overflow
+    else { throw EngineInterpreterError.invalidArguments("memory layout") }
     let declared = [
       Block.runtimeEnvironment: 9, Block.runtimeUpdate: 5,
       Block.runtimeTouchArray: 0, Block.runtimeSkinTransform: 16,
@@ -117,11 +133,13 @@ final class EngineMemory {
       Block.levelMemory: 4096, Block.levelData: 4096,
       Block.levelOption: optionCount, Block.levelBucket: bucketCount * 6,
       Block.levelScore: 12, Block.levelLife: 8, Block.engineROM: rom.count,
-      Block.entityMemory: 64, Block.entityData: 32,
-      Block.entitySharedMemory: 32, Block.entityInfo: 3,
-      Block.entityDespawn: 1, Block.entityInput: 5, Block.entityScore: 1,
-      Block.entityLife: 4, Block.entityDataArray: entityCount * 32,
-      Block.entitySharedMemoryArray: entityCount * 32,
+      Block.entityMemory: entityLayout.memory,
+      Block.entityData: entityLayout.data,
+      Block.entitySharedMemory: entityLayout.sharedMemory,
+      Block.entityInfo: 3, Block.entityDespawn: 1, Block.entityInput: 5,
+      Block.entityScore: 1, Block.entityLife: 4,
+      Block.entityDataArray: dataCount.partialValue,
+      Block.entitySharedMemoryArray: sharedCount.partialValue,
       Block.entityInfoArray: entityCount * 3,
       Block.entityScoreArray: entityCount,
       Block.entityLifeArray: entityCount * 4,
@@ -131,6 +149,7 @@ final class EngineMemory {
     var table = [Int](repeating: 0, count: Block.temporaryMemory + 1)
     for (block, count) in declared { table[block] = count }
     lengths = table
+    self.entityLayout = entityLayout
   }
 
   func setTouchCount(_ count: Int) throws {
@@ -202,13 +221,15 @@ final class EngineMemory {
   /// A copy-on-write snapshot of preparation, including engine-owned data.
   /// The returned closure belongs to the runtime, not to this memory object.
   func makeRestorePoint() -> () -> Void {
-    { [rom, blocks, entityBlocks, entityKey, entityIndex, lengths, temporary] in
+    { [rom, blocks, entityBlocks, entityKey, entityIndex, lengths,
+      entityLayout, temporary] in
       self.rom = rom
       self.blocks = blocks
       self.entityBlocks = entityBlocks
       self.entityKey = entityKey
       self.entityIndex = entityIndex
       self.lengths = lengths
+      self.entityLayout = entityLayout
       self.temporary = temporary
     }
   }
@@ -245,9 +266,11 @@ final class EngineMemory {
     guard let entityIndex else { return nil }
     let size: Int, array: Int
     switch block {
-    case Block.entityData: (size, array) = (32, Block.entityDataArray)
+    case Block.entityData:
+      (size, array) = (entityLayout.data, Block.entityDataArray)
     case Block.entitySharedMemory:
-      (size, array) = (32, Block.entitySharedMemoryArray)
+      (size, array) = (entityLayout.sharedMemory,
+        Block.entitySharedMemoryArray)
     case Block.entityInfo: (size, array) = (3, Block.entityInfoArray)
     case Block.entityScore: (size, array) = (1, Block.entityScoreArray)
     case Block.entityLife: (size, array) = (4, Block.entityLifeArray)

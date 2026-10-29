@@ -349,7 +349,8 @@ final class EnginePlayRuntime {
     try memory.loadROM(rom)
     try memory.configurePlayBlocks(entityCount: level.entities.count,
       optionCount: options.count, bucketCount: engine.buckets.count,
-      archetypeCount: engine.archetypes.count)
+      archetypeCount: engine.archetypes.count,
+      entityLayout: engine.entityLayout)
     host = CommandEngineRuntimeHost(
       memory: memory, level: level, skinSpriteIDs: skinSpriteIDs,
       effectClipIDs: effectClipIDs, particleEffectIDs: particleEffectIDs,
@@ -425,8 +426,10 @@ final class EnginePlayRuntime {
         value: Double(archetypeID)
       )
       for field in engine.archetypes[archetypeID].imports {
-        guard (0..<32).contains(field.index) else {
-          throw EngineInterpreterError.invalidArguments("entity import index")
+        guard (0..<engine.entityLayout.data).contains(field.index) else {
+          throw EngineInterpreterError.invalidArguments(
+            "entity import index \(field.index) (Entity Data length "
+              + "\(engine.entityLayout.data))")
         }
         let datum = source.data.first { $0.name == field.name }
         let value: Double

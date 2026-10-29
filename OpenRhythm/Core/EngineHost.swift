@@ -503,7 +503,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
         : (key / 2 - before.key / 2) / (after.key / 2 - before.key / 2)
       return before.value * (1 - fraction) + after.value * fraction
     case "Spawn":
-      guard (1...65).contains(a.count), a.allSatisfy(\.isFinite) else {
+      // Data fills Entity Memory; more values than it holds are rejected.
+      guard (1...memory.entityLayout.memory + 1).contains(a.count),
+        a.allSatisfy(\.isFinite) else {
         throw EngineInterpreterError.invalidArguments(function)
       }
       let id = try identifier(a[0], function: function)

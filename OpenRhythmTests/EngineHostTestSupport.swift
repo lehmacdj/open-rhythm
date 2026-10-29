@@ -69,13 +69,13 @@ final class RuntimeNodeBuilder {
   }
 
   func engine(archetypes: [[String: Any]], sprites: [[String: Any]] = [],
-    buckets: [[String: Any]] = [])
+    buckets: [[String: Any]] = [], fields: [String: Any] = [:])
     throws -> EnginePlayData {
-    let data = try JSONSerialization.data(withJSONObject: [
+    let data = try JSONSerialization.data(withJSONObject: fields.merging([
       "skin": ["sprites": sprites], "effect": ["clips": []],
       "particle": ["effects": []], "buckets": buckets,
       "nodes": nodes, "archetypes": archetypes
-    ])
+    ]) { _, required in required })
     return try JSONDecoder().decode(EnginePlayData.self, from: data)
   }
 }

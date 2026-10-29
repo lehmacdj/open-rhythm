@@ -1493,6 +1493,180 @@ final class RuntimeDecodingTests: XCTestCase {
     }
   }
 
+  func testAbsentEntityLengthsKeepTheStandardLayout() throws {
+    // Engines written before Sonolus 1.1.5 omit the fields entirely.
+    let absent = try RuntimeNodeBuilder().engine(archetypes: [])
+    XCTAssertEqual(absent.entityLayout, .standard)
+    XCTAssertEqual(EngineEntityLayout.standard,
+      EngineEntityLayout(memory: 64, data: 32, sharedMemory: 32))
+    let explicit = try RuntimeNodeBuilder().engine(archetypes: [], fields: [
+      "entityMemoryLength": 64, "entityDataLength": 32.0,
+      "entitySharedMemoryLength": 32])
+    XCTAssertEqual(explicit.entityLayout, .standard)
+    let null = try RuntimeNodeBuilder().engine(archetypes: [], fields: [
+      "entityMemoryLength": NSNull(), "entityDataLength": NSNull(),
+      "entitySharedMemoryLength": NSNull()])
+    XCTAssertEqual(null.entityLayout, .standard)
+    let runtime = try EnginePlayRuntime(engine: absent,
+      level: LevelData(bgmOffset: 0, entities: []), options: [],
+      aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+      particleEffectIDs: [])
+    XCTAssertEqual(runtime.memory.entityLayout, .standard)
+  }
+
+  func testEntityLengthsAreValidatedWithTheirDeclaredValue() throws {
+    let fields = ["entityMemoryLength", "entityDataLength",
+      "entitySharedMemoryLength"]
+    for field in fields {
+      for raw in [-1, 32.5, 1_048_577, 1e300, -0.5] as [Double] {
+        XCTAssertThrowsError(try RuntimeNodeBuilder().engine(archetypes: [],
+          fields: [field: raw])) { error in
+          guard case EngineInterpreterError.invalidEntityLength(
+            let name, let value) = error else {
+            return XCTFail("\(field) \(raw): \(error)")
+          }
+          XCTAssertEqual(name, field)
+          XCTAssertEqual(value, raw)
+        }
+      }
+      XCTAssertThrowsError(try RuntimeNodeBuilder().engine(archetypes: [],
+        fields: [field: "8"])) { XCTAssertTrue($0 is DecodingError) }
+      for accepted in [0, EngineEntityLayout.maximumLength] {
+        let engine = try RuntimeNodeBuilder().engine(archetypes: [],
+          fields: [field: accepted])
+        XCTAssertEqual([engine.entityLayout.memory, engine.entityLayout.data,
+          engine.entityLayout.sharedMemory][fields.firstIndex(of: field)!],
+          accepted)
+      }
+    }
+    XCTAssertEqual(EngineInterpreterError.invalidEntityLength(
+      field: "entityDataLength", value: -1).localizedDescription,
+      "The engine's entityDataLength must be a whole number from 0 to "
+        + "1048576, but it is -1.")
+    XCTAssertEqual(EngineInterpreterError.invalidEntityLength(
+      field: "entityMemoryLength", value: 32.5).localizedDescription,
+      "The engine's entityMemoryLength must be a whole number from 0 to "
+        + "1048576, but it is 32.5.")
+    // Memory re-checks a layout that did not come through decoding.
+    let memory = EngineMemory()
+    for layout in [EngineEntityLayout(memory: -1, data: 32, sharedMemory: 32),
+      EngineEntityLayout(memory: 64, data: 1 << 21, sharedMemory: 32)] {
+      XCTAssertThrowsError(try memory.configurePlayBlocks(entityCount: 1,
+        optionCount: 0, bucketCount: 0, archetypeCount: 0,
+        entityLayout: layout))
+    }
+    let widest = EngineEntityLayout(memory: 1 << 20, data: 1 << 20,
+      sharedMemory: 1 << 20)
+    XCTAssertNoThrow(try memory.configurePlayBlocks(entityCount: 100_000,
+      optionCount: 0, bucketCount: 0, archetypeCount: 0, entityLayout: widest))
+    XCTAssertThrowsError(try memory.configurePlayBlocks(
+      entityCount: Int.max / 32, optionCount: 0, bucketCount: 0,
+      archetypeCount: 0, entityLayout: widest), "Array length overflows")
+  }
+
+  func testCustomEntityLengthsSizeViewsAndArrayStrides() throws {
+    let layout = EngineEntityLayout(memory: 8, data: 4, sharedMemory: 2)
+    for optimized in [false, true] {
+      let memory = EngineMemory()
+      try memory.configurePlayBlocks(entityCount: 3, optionCount: 0,
+        bucketCount: 0, archetypeCount: 1, entityLayout: layout)
+      XCTAssertEqual(memory.entityLayout, layout)
+      for (block, count) in [4000: 8, 4001: 4, 4002: 2, 4101: 12, 4102: 6] {
+        memory.selectEntity(key: 2, index: 2)
+        memory.set(block: block, index: count - 1, value: 37)
+        memory.set(block: block, index: count, value: 99)
+        XCTAssertEqual(memory.value(block: block, index: count - 1), 37)
+        XCTAssertEqual(memory.value(block: block, index: count), 0, "\(block)")
+      }
+      // Entity 1's view starts at its own stride in each array.
+      memory.selectEntity(key: 1, index: 1)
+      memory.callback = .preprocess
+      func get(_ block: Double, _ index: Double) throws -> Double {
+        let nodes = [EngineDataNode(value: block), EngineDataNode(value: index),
+          EngineDataNode(function: "Get", arguments: [0, 1])]
+        return try EngineInterpreter(nodes: nodes, memory: memory,
+          optimizeLiteralAddresses: optimized).execute(nodeAt: 2)
+      }
+      memory.set(block: 4101, index: 4, value: 5)
+      memory.set(block: 4101, index: 8, value: 6)
+      memory.set(block: 4102, index: 2, value: 7)
+      memory.set(block: 4102, index: 4, value: 8)
+      XCTAssertEqual(try get(4001, 0), 5)
+      XCTAssertEqual(try get(4001, 4), 0, "Must not alias entity 2")
+      XCTAssertEqual(try get(4002, 0), 7)
+      XCTAssertEqual(try get(4002, 2), 0, "Must not alias entity 2")
+      XCTAssertEqual(try get(4101, 8), 6)
+      XCTAssertEqual(try get(4102, 4), 8)
+      memory.set(block: 4000, index: 7, value: 1)
+      XCTAssertEqual(try get(4000, 7), 1)
+      XCTAssertEqual(try get(4000, 8), 0)
+      // Out-of-range writes keep their value and permission semantics.
+      let nodes = ([4002, 2, 9] as [Double]).map { EngineDataNode(value: $0) }
+        + [EngineDataNode(function: "Set", arguments: [0, 1, 2])]
+      let set = EngineInterpreter(nodes: nodes, memory: memory,
+        optimizeLiteralAddresses: optimized)
+      XCTAssertEqual(try set.execute(nodeAt: 3), 9)
+      XCTAssertEqual(memory.value(block: 4102, index: 4), 8)
+      memory.callback = .updateParallel
+      XCTAssertThrowsError(try set.execute(nodeAt: 3))
+      // The layout belongs to the prepared state that restart restores.
+      let restore = memory.makeRestorePoint()
+      try memory.configurePlayBlocks(entityCount: 3, optionCount: 0,
+        bucketCount: 0, archetypeCount: 1)
+      XCTAssertEqual(memory.entityLayout, .standard)
+      restore()
+      XCTAssertEqual(memory.entityLayout, layout)
+    }
+  }
+
+  func testCustomEntityLengthsReachLevelImportsAndSpawn() throws {
+    let b = RuntimeNodeBuilder()
+    let fields: [String: Any] = ["entityMemoryLength": 3,
+      "entityDataLength": 4, "entitySharedMemoryLength": 2]
+    func probe(importIndex: Int) -> [[String: Any]] {
+      [["name": "Probe", "hasInput": false, "exports": [],
+        "imports": [["name": "value", "index": importIndex]]]]
+    }
+    let level = LevelData(bgmOffset: 0, entities: [7.0, 9.0].map {
+      LevelEntity(archetype: "Probe", name: nil,
+        data: [LevelEntityData(name: "value", value: $0, ref: nil)])
+    })
+    func runtime(_ engine: EnginePlayData) throws -> EnginePlayRuntime {
+      try EnginePlayRuntime(engine: engine, level: level, options: [],
+        aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
+        particleEffectIDs: [])
+    }
+    let prepared = try runtime(b.engine(archetypes: probe(importIndex: 3),
+      fields: fields))
+    let memory = prepared.memory
+    XCTAssertEqual(memory.value(block: 4101, index: 3), 7)
+    XCTAssertEqual(memory.value(block: 4101, index: 7), 9)
+    memory.selectEntity(key: 0, index: 0)
+    XCTAssertEqual(memory.value(block: 4001, index: 3), 7)
+    XCTAssertEqual(memory.value(block: 4001, index: 7), 0)
+    memory.selectEntity(key: 1, index: 1)
+    XCTAssertEqual(memory.value(block: 4001, index: 3), 9)
+    XCTAssertThrowsError(try runtime(b.engine(
+      archetypes: probe(importIndex: 4), fields: fields))) {
+      XCTAssertTrue($0.localizedDescription.contains(
+        "entity import index 4 (Entity Data length 4)"), "\($0)")
+    }
+    // The standard layout keeps accepting imports through index 31 only.
+    XCTAssertNoThrow(try runtime(b.engine(archetypes: probe(importIndex: 31))))
+    XCTAssertThrowsError(
+      try runtime(b.engine(archetypes: probe(importIndex: 32))))
+    // Spawn data fills Entity Memory; it may not exceed its length.
+    XCTAssertEqual(try prepared.host.call(function: "Spawn",
+      arguments: [0, 1, 2, 3]), 0)
+    XCTAssertThrowsError(try prepared.host.call(function: "Spawn",
+      arguments: [0, 1, 2, 3, 4]))
+    let standard = try runtime(b.engine(archetypes: probe(importIndex: 0)))
+    XCTAssertNoThrow(try standard.host.call(function: "Spawn",
+      arguments: [0] + Array(repeating: 1, count: 64)))
+    XCTAssertThrowsError(try standard.host.call(function: "Spawn",
+      arguments: [0] + Array(repeating: 1, count: 65)))
+  }
+
   func testEveryMemoryMutationRespectsCallbackAccess() throws {
     let bases = ["Set", "SetAdd", "SetSubtract", "SetMultiply", "SetDivide",
       "SetPower", "SetMod", "SetRem", "IncrementPre", "IncrementPost",

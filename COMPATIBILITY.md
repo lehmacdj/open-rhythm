@@ -31,6 +31,7 @@ Public references: [server specifications](https://wiki.sonolus.com/server-specs
 - `AddLifeScheduled` is limited to preprocessing. A review of all 39 implemented host-function pages and nine lifecycle pages at [wiki revision e5317da](https://github.com/Sonolus/wiki/tree/e5317da7228fd83346baa0e036c5784061ac3918/src/en/engine-specs) found no other documented callback exclusion; none is inferred.
 - Control flow: integer switches and `JumpLoop` match exact branch labels; loops are bounded by per-callback operation limits. All named easing functions are implemented.
 - Streams accept any finite numeric ID, including negative and fractional IDs. Skin, effect and particle IDs may be fractional.
+- Entity block lengths: the optional Sonolus 1.1.5 play-data fields `entityMemoryLength`, `entityDataLength` and `entitySharedMemoryLength` size Entity Memory, Entity Data and Entity Shared Memory and their array strides; absent fields keep 64, 32 and 32. Lengths must be whole numbers from 0 to 1,048,576 (an app limit). `Spawn` with more values than Entity Memory holds is rejected (app policy). Native handling of out-of-range values is unverified. Watch and preview lengths are not used because those modes are not implemented.
 - `Random` accepts reversed bounds; `RandomInteger` with an empty range returns its lower bound.
 - `DebugLog` and `DebugPause` work behind a per-engine Engine Debug Mode setting, off by default.
 - Playback speed is limited to 0.05–4×; music rate, BPM and time-scale lookups change together, and judgment windows stay in real seconds.

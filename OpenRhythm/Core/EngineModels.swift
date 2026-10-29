@@ -165,6 +165,55 @@ struct EngineResultBucket: Codable, Equatable, Sendable {
   var imageError: String? = nil
 }
 
+/// Lengths of the per-entity blocks. Sonolus 1.1.5 made them optional engine
+/// data fields; absent fields keep the fixed lengths of earlier clients.
+struct EngineEntityLayout: Equatable, Sendable {
+  static let standard = EngineEntityLayout(memory: 64, data: 32,
+    sharedMemory: 32)
+  /// An app safety limit, not a protocol bound (none is published). Storage is
+  /// sparse; this only keeps entity-count products far from overflow.
+  static let maximumLength = 1 << 20
+
+  /// Entity Memory.
+  var memory: Int
+  /// Entity Data, and each entity's stride in Entity Data Array.
+  var data: Int
+  /// Entity Shared Memory, and each entity's stride in its array.
+  var sharedMemory: Int
+
+  var isValid: Bool {
+    [memory, data, sharedMemory].allSatisfy {
+      (0...Self.maximumLength).contains($0)
+    }
+  }
+}
+
+extension EngineEntityLayout: Decodable {
+  private enum CodingKeys: String, CodingKey {
+    case memory = "entityMemoryLength"
+    case data = "entityDataLength"
+    case sharedMemory = "entitySharedMemoryLength"
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    func length(_ key: CodingKeys, default value: Int) throws -> Int {
+      guard let raw = try container.decodeIfPresent(Double.self, forKey: key)
+      else { return value }
+      guard let length = Int(exactly: raw),
+        (0...Self.maximumLength).contains(length) else {
+        throw EngineInterpreterError.invalidEntityLength(
+          field: key.stringValue, value: raw)
+      }
+      return length
+    }
+    let standard = Self.standard
+    self.init(memory: try length(.memory, default: standard.memory),
+      data: try length(.data, default: standard.data),
+      sharedMemory: try length(.sharedMemory, default: standard.sharedMemory))
+  }
+}
+
 struct EnginePlayData: Decodable, Sendable {
   let skin: EngineSkinDefinition
   let effect: EngineEffectDefinition
@@ -172,6 +221,25 @@ struct EnginePlayData: Decodable, Sendable {
   let archetypes: [EngineArchetype]
   let nodes: [EngineDataNode]
   let buckets: [EngineBucket]
+  let entityLayout: EngineEntityLayout
+
+  private enum CodingKeys: String, CodingKey {
+    case skin, effect, particle, archetypes, nodes, buckets
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    skin = try container.decode(EngineSkinDefinition.self, forKey: .skin)
+    effect = try container.decode(EngineEffectDefinition.self, forKey: .effect)
+    particle = try container.decode(EngineParticleDefinition.self,
+      forKey: .particle)
+    archetypes = try container.decode([EngineArchetype].self,
+      forKey: .archetypes)
+    nodes = try container.decode([EngineDataNode].self, forKey: .nodes)
+    buckets = try container.decode([EngineBucket].self, forKey: .buckets)
+    // The length fields sit beside the others in the same object.
+    entityLayout = try EngineEntityLayout(from: decoder)
+  }
 
   /// Ambiguous aliases must not turn a custom effect into stage decoration.
   var introStageSpriteIDs: Set<EngineResourceID> {
