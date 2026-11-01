@@ -361,10 +361,14 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       let edge = EngineCurve.Edge(rawValue: String(function.dropFirst(10)))
       let paired = edge == .bottomTop || edge == .leftRight
       let required = edge == nil ? 11 : paired ? 16 : 14
-      guard (required...(required + 3)).contains(a.count),
-        a.allSatisfy(\.isFinite) else {
+      guard (required...(required + 3)).contains(a.count) else {
         throw EngineInterpreterError.invalidArguments(function)
       }
+      // The Draw contract returns 0 for any values, and engines do compute
+      // degenerate geometry: the cgss engine's flick connectors divide by a
+      // zero length while both ends share a spawn point. Draw nothing for a
+      // non-finite argument instead of ending play.
+      guard a.allSatisfy(\.isFinite) else { return 0 }
       let curve: EngineCurve?
       if let edge {
         let segments = try identifier(a[11], function: function)

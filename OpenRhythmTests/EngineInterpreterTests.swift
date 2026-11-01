@@ -626,6 +626,34 @@ final class EngineInterpreterTests: EngineHostTestCase {
     XCTAssertTrue(host.takeSpawnCommands().isEmpty)
   }
 
+  func testNonFiniteDrawArgumentsDrawNothingWithoutEndingPlay() throws {
+    let host = makeHost()
+    let quad: [Double] = [-1, -1, -1, 1, 1, 1, 1, -1]
+    let calls: [(String, [Double])] = [
+      ("Draw", [7] + quad + [0, 1]),
+      ("Draw", [7] + quad + [0, 1, 0, 0, 0]),
+      ("DrawCurvedB", [7] + quad + [0, 1, 4, 0, 0]),
+      ("DrawCurvedLR", [7] + quad + [0, 1, 4, 0, 0, 0, 0])
+    ]
+    for invalid in [Double.nan, .infinity, -.infinity] {
+      for (function, arguments) in calls {
+        for index in arguments.indices {
+          var changed = arguments
+          changed[index] = invalid
+          XCTAssertEqual(try host.call(function: function, arguments: changed),
+            0, "\(function) argument \(index) = \(invalid)")
+        }
+      }
+    }
+    XCTAssertTrue(host.draws.isEmpty)
+    for (function, arguments) in calls {
+      _ = try host.call(function: function, arguments: arguments)
+    }
+    XCTAssertEqual(host.draws.count, calls.count, "Finite variants still draw")
+    XCTAssertThrowsError(try host.call(function: "Draw",
+      arguments: [7] + quad + [.nan]), "The argument count is still checked")
+  }
+
   func testEntityMemoryViewsAndInterpreterLimits() throws {
     let memory = EngineMemory()
     memory.selectEntity(key: 0, index: 0)
