@@ -38,6 +38,31 @@ final class CachedEngineIntegrationTests: XCTestCase {
     try await checkChart(engineFolder: "nanaon", chart: "nanaon/level.gz")
   }
 
+  // The community `cgss` engine (Cinderella Girls Starlight Stage). Its
+  // fixtures are optional within an installed fixture root, so devices set up
+  // before it was added keep passing.
+  func testCGSSDebutLifecycleAndRestart() async throws {
+    try await checkCGSSChart("debut.gz")
+  }
+
+  func testCGSSMasterPlusLifecycleAndRestart() async throws {
+    try await checkCGSSChart("masterp.gz")
+  }
+
+  func testCGSSWitchLifecycleAndRestart() async throws {
+    try await checkCGSSChart("witch.gz")
+  }
+
+  private func checkCGSSChart(_ chart: String) async throws {
+    let folder = try XCTUnwrap(FileManager.default.urls(
+      for: .cachesDirectory, in: .userDomainMask).first)
+      .appendingPathComponent("OpenRhythmIntegrationFixtures/cgss")
+    guard FileManager.default.fileExists(atPath: folder.path) else {
+      throw XCTSkip("Optional cached CGSS fixtures are not installed.")
+    }
+    try await checkChart(engineFolder: "cgss", chart: "cgss/\(chart)")
+  }
+
   func testNanaonStageTouchesWriteSignedStreamAcrossRestart() throws {
     let root = try XCTUnwrap(FileManager.default.urls(
       for: .cachesDirectory, in: .userDomainMask).first)
@@ -359,6 +384,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
     var lastTime = startTime
     var successfulInputs = 0
     var successfulTypes = [String: Int]()
+    var gradeCounts = [Int: Int]()
     var touchPool = EngineTouchPool<Int>()
     var stationaryContactFrames = 0
     var stationarySuccessfulTypes = [String: Int]()
@@ -430,6 +456,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
         }
       }
       for input in runtime.judgments {
+        gradeCounts[input.grade, default: 0] += 1
         if input.grade > 0 {
           successfulInputs += 1
           if level.entities.indices.contains(input.entityIndex) {
@@ -500,6 +527,7 @@ final class CachedEngineIntegrationTests: XCTestCase {
       + "through frame \(opening.last!.index). "
       + "\(successfulInputs) successful inputs; repeated contacts: \(repeatedContacts). "
       + "Lifecycle loop excludes physical touches, music and GPU submission.")
+    print("GRADES \(chart): \(gradeCounts.sorted { $0.key < $1.key })")
     print("Pooled contacts: \(pooledContacts); "
       + "\(stationaryContactFrames) stationary frames.")
     if repeatedContacts { print("SUCCESSFUL INPUT TYPES: \(successfulTypes)") }
