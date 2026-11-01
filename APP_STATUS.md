@@ -135,6 +135,7 @@ Made October 27–28, 2026; not yet in a TestFlight build.
 - Catalog: each server remembers its chosen engine, so searching or refreshing no longer switches away from it; the first page shows Loading instead of briefly showing No Results; Reset Server List recovers from an unreadable server list.
 - Downloads: Update Download follows the server's current difficulties, so one retired chart no longer makes every update fail; Remove Damaged Record clears unreadable offline records; offline downloads no longer fill the response cache.
 - Network: a shared request is cancelled once nothing is waiting for it; a fetch whose caching fails is still timestamped, which avoids repeated forced refreshes.
+- Add Server suggests a third compatibility candidate, THE iDOLM@STER Cinderella Girls Starlight Stage (`https://cgss.sonolus.gorenganhunter.my.id`, community `cgss` engine); not yet verified in the app.
 - Server text uses Sonolus locale codes (`zhs`, `zht`) and falls back to the first language provided.
 - Results and history: a failed save keeps the result and offers Retry Save; one undecodable history entry no longer blanks history or blocks saves; summary timing statistics now leave out automatic hold ticks, like the distribution.
 - Gameplay: rotating or leaving the app mid-song explains why play stopped; one unreadable gameplay setting no longer resets the others, and loading settings never overwrites the saved ones.

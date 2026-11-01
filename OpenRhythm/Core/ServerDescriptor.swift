@@ -19,7 +19,9 @@ struct ServerDescriptor: Codable, Hashable, Identifiable, Sendable {
     ServerDescriptor(id: "sekai", name: "Project SEKAI",
       baseURL: URL(string: "https://sonolus.sekai.best")!),
     ServerDescriptor(id: "sif-custom", name: "SIF Custom Charts",
-      baseURL: URL(string: "https://sonolus.milkbun.org/sif")!)
+      baseURL: URL(string: "https://sonolus.milkbun.org/sif")!),
+    ServerDescriptor(id: "cgss", name: "Cinderella Girls Starlight Stage",
+      baseURL: URL(string: "https://cgss.sonolus.gorenganhunter.my.id")!)
   ]
 
   static func normalizedURL(_ text: String) throws -> URL {
