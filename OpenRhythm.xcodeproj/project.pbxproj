@@ -35,6 +35,7 @@
 		A00000000000000000000015 /* GameplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* GameplayView.swift */; };
 		A00000000000000000000016 /* ResultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000016 /* ResultStore.swift */; };
 		A00000000000000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Assets.xcassets */; };
+		A000000000000000000000F1 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000F1 /* PrivacyInfo.xcprivacy */; };
 		A00000000000000000000018 /* EngineHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* EngineHost.swift */; };
 		A00000000000000000000019 /* EnginePlayRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* EnginePlayRuntime.swift */; };
 		A0000000000000000000001A /* EnginePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* EnginePresentation.swift */; };
@@ -108,6 +109,7 @@
 		A10000000000000000000015 /* GameplayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayView.swift; sourceTree = "<group>"; };
 		A10000000000000000000016 /* ResultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStore.swift; sourceTree = "<group>"; };
 		A10000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A100000000000000000000F1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A10000000000000000000018 /* EngineHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHost.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* EnginePlayRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePlayRuntime.swift; sourceTree = "<group>"; };
 		A1000000000000000000001A /* EnginePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePresentation.swift; sourceTree = "<group>"; };
@@ -178,6 +180,7 @@
 				F10000000000000000000004 /* Core */,
 				F10000000000000000000005 /* Features */,
 				A10000000000000000000017 /* Assets.xcassets */,
+				A100000000000000000000F1 /* PrivacyInfo.xcprivacy */,
 			);
 			path = OpenRhythm;
 			sourceTree = "<group>";
@@ -383,6 +386,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000000000000000000017 /* Assets.xcassets in Resources */,
+				A000000000000000000000F1 /* PrivacyInfo.xcprivacy in Resources */,
 				0349A439306CC323009BC642 /* EngineStandardText.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
