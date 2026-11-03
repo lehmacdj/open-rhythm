@@ -1,5 +1,20 @@
 import Foundation
 
+enum PreviewLoadError: LocalizedError {
+  case offlinePreviewUnavailable(underlying: Error)
+
+  var errorDescription: String? {
+    switch self {
+    case .offlinePreviewUnavailable(let error):
+      let error = error as NSError
+      return "This download was made before chart previews and its preview "
+        + "data couldn’t be fetched. Connect to the internet, or update the "
+        + "download to preview it offline. \(error.localizedDescription) "
+        + "(\(error.domain), \(error.code))"
+    }
+  }
+}
+
 enum RuntimeBundleError: LocalizedError {
   case malformedLevelDetails
   case missingResource(String)
@@ -62,6 +77,7 @@ private struct RuntimeEngineItem: Decodable {
   let source: String?
   let version: Int
   let playData: ResourceLocator
+  let previewData: ResourceLocator?
   let configuration: ResourceLocator?
   let rom: ResourceLocator?
   let skin: RuntimePresentationItem?
@@ -81,6 +97,8 @@ struct RuntimeResourceReferences: Sendable {
   let levelData: RuntimeResourceReference
   let bgm: RuntimeResourceReference
   let engineROM: RuntimeResourceReference?
+  /// Optional here: a server may omit it, and preview then explains that.
+  let previewData: RuntimeResourceReference?
   let presentation: [String: RuntimeResourceReference]
   var engineDataURL: URL? { engineData.url }
   var levelDataURL: URL? { levelData.url }
@@ -128,6 +146,9 @@ struct RuntimeResourceReferences: Sendable {
     bgm = try resource(item.bgm, "music", base: levelBaseURL)
     engineROM = try item.engine.rom.map {
       try resource($0, "engine ROM", base: engineBaseURL)
+    }
+    previewData = try item.engine.previewData.map {
+      try resource($0, "engine preview data", base: engineBaseURL)
     }
     var urls = [String: RuntimeResourceReference]()
     urls["configuration"] = try resource(item.engine.configuration,
@@ -204,6 +225,15 @@ final class PreparedRuntimeAudio: Sendable {
   deinit {
     try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
   }
+}
+
+/// What a chart preview needs: no play data, music, effects or particles.
+struct PreviewBundle: Sendable {
+  let engine: EnginePreviewData
+  let level: LevelData
+  /// The engine configuration and the selected skin's data and texture.
+  let presentation: RuntimePresentation
+  var engineROM: Data? = nil
 }
 
 struct RuntimePresentation: Sendable {
@@ -283,6 +313,61 @@ actor RuntimeBundleLoader {
       presentation: presentation,
       engineROM: romData, preparedAudio: audio
     )
+  }
+
+  /// Loads a chart preview. Downloaded songs use their stored resources;
+  /// downloads made before previews existed fetch the preview data online.
+  func loadPreview(
+    level: SonolusLevelItem,
+    from server: ServerDescriptor
+  ) async throws -> PreviewBundle {
+    try Task.checkCancellation()
+    let references: RuntimeResourceReferences
+    let manifest = try await offlineStore.manifest(level: level, from: server)
+    if let manifest {
+      references = try RuntimeResourceReferences(itemData: manifest.itemData,
+        serverBaseURL: manifest.server.baseURL)
+    } else {
+      references = try RuntimeResourceReferences(
+        detailsData: try await client.levelDetails(for: level, on: server),
+        serverBaseURL: server.baseURL)
+    }
+    try validate(version: references.engineVersion)
+    guard let previewReference = references.previewData else {
+      throw EnginePreviewError.noPreviewData
+    }
+    func load(_ reference: RuntimeResourceReference) async throws -> Data {
+      if let manifest, let stored = try await offlineStore.storedResource(
+        reference, in: manifest) {
+        return stored
+      }
+      return try await resource(reference)
+    }
+    let previewData: Data
+    do { previewData = try await load(previewReference) } catch {
+      guard manifest != nil, !(error is CancellationError) else { throw error }
+      throw PreviewLoadError.offlinePreviewUnavailable(underlying: error)
+    }
+    let levelData = try await load(references.levelData)
+    var romData: Data?
+    if let rom = references.engineROM { romData = try await load(rom) }
+    var resources = [String: Data]()
+    for name in ["configuration", "skinData", "skinTexture"] {
+      if let reference = references.presentation[name] {
+        resources[name] = try await load(reference)
+      }
+    }
+    let engine = try CompressedJSONDecoder.decode(
+      EnginePreviewData.self, from: previewData)
+    let missing = try engine.unsupportedFunctions()
+    guard missing.isEmpty else {
+      throw EngineInterpreterError.unsupportedFunction(
+        missing.joined(separator: ", "))
+    }
+    return try PreviewBundle(engine: engine,
+      level: CompressedJSONDecoder.decode(LevelData.self, from: levelData),
+      presentation: RuntimePresentation(resources: resources),
+      engineROM: romData)
   }
 
   private func validate(version: Int) throws {

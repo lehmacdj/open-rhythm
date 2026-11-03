@@ -441,7 +441,8 @@ final class EngineInterpreterTests: EngineHostTestCase {
   }
 
   func testRuntimeEstablishesAndClearsEveryMemoryCallbackContext() throws {
-    for phase in EngineMemory.Callback.allCases {
+    // Play callbacks; render belongs to preview.
+    for phase in EngineMemory.Callback.allCases where phase != .render {
       let b = RuntimeNodeBuilder()
       let write = b.call("Set", [b.value(2001), b.value(0), b.value(1)])
       let despawn = b.call("Set", [b.value(4004), b.value(0), b.value(1)])

@@ -199,12 +199,14 @@ actor OfflineStore {
         references.engineVersion
       )
     }
-    // Archive the same selected play resources used by online playback. A
-    // recursive walk of the entire item also requires overridden defaults,
-    // non-play engine modes and unrelated thumbnails to remain available.
+    // Archive the same selected play resources used by online playback, plus
+    // preview data for offline chart previews. A recursive walk of the entire
+    // item also requires overridden defaults, watch and tutorial modes and
+    // unrelated thumbnails to remain available.
     var locators = Set([references.engineData, references.levelData,
       references.bgm] + Array(references.presentation.values))
     if let rom = references.engineROM { locators.insert(rom) }
+    if let preview = references.previewData { locators.insert(preview) }
     if let cover = item["cover"] {
       guard let cover = cover as? [String: Any] else {
         throw OfflineStoreError.malformedLevelDetails
@@ -613,6 +615,19 @@ actor OfflineStore {
         ?? matchingURL.first
     else { return nil }
     return objectsURL.appendingPathComponent(resource.objectName)
+  }
+
+  /// A resource stored with this download, or nil if it has none (such as
+  /// preview data in a download made before previews). Hashes are checked.
+  func storedResource(_ reference: RuntimeResourceReference,
+    in manifest: OfflineLevelManifest) throws -> Data? {
+    guard let url = localURL(for: reference, in: manifest) else { return nil }
+    let data = try readStoredData(url)
+    if let hash = reference.hash, data.sha1Hex != hash {
+      throw OfflineStoreError.checksumMismatch(
+        reference.url?.absoluteString ?? "SHA-1 \(hash)")
+    }
+    return data
   }
 
   func cachedResource(expectedSHA1: String) throws -> Data? {

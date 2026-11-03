@@ -225,7 +225,8 @@ final class OfflineStoreTests: XCTestCase {
     }
   }
 
-  func testDownloadUsesSelectedPlayResourcesAndLevelArtworkOnly() async throws {
+  func testDownloadUsesSelectedPlayAndPreviewResourcesAndLevelArtworkOnly()
+    async throws {
     for useDefault in [false, true] {
       let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("selected-resources-\(UUID())")
@@ -242,12 +243,13 @@ final class OfflineStoreTests: XCTestCase {
         "engine": Data(#"{"skin":{"sprites":[]},"effect":{"clips":[]},"particle":{"effects":[]},"nodes":[],"buckets":[],"archetypes":[]}"#.utf8),
         "configuration": Data(#"{"options":[]}"#.utf8),
         "music": Data("music".utf8), "rom": Data([1, 2, 3]),
+        "preview": Data(#"{"skin":{"sprites":[]},"archetypes":[],"nodes":[]}"#.utf8),
         "cover": Data("cover".utf8)]
       var engine: [String: Any] = ["version": 13, "name": "selected-engine",
         "source": "https://engine.example/",
         "playData": ["url": "engine"], "configuration": ["url": "configuration"],
         "rom": ["url": "rom"], "watchData": ["url": "unselected-watch"],
-        "previewData": ["url": "unselected-preview"],
+        "previewData": ["url": "preview"],
         "tutorialData": ["url": "unselected-tutorial"],
         "thumbnail": ["url": "unselected-thumbnail"]]
       var item = try XCTUnwrap(JSONSerialization.jsonObject(
@@ -285,7 +287,7 @@ final class OfflineStoreTests: XCTestCase {
           throw URLError(.resourceUnavailable)
         }
         let expectedHost = ["music", "chart", "cover"].contains(url.lastPathComponent)
-          ? "level.example" : ["engine", "configuration", "rom"]
+          ? "level.example" : ["engine", "configuration", "rom", "preview"]
             .contains(url.lastPathComponent) ? "engine.example" : "selected.example"
         XCTAssertEqual(url.host, expectedHost)
         return bytes
@@ -313,6 +315,13 @@ final class OfflineStoreTests: XCTestCase {
       XCTAssertEqual(offline.presentation?.resources, online.presentation?.resources)
       XCTAssertEqual(offline.engineROM, online.engineROM)
       XCTAssertEqual(try Data(contentsOf: offline.bgmURL), payloads["music"])
+      let preview = try await RuntimeBundleLoader(client: client,
+        offlineStore: store).loadPreview(level: level, from: server)
+      XCTAssertEqual(preview.presentation.resources, [
+        "configuration": payloads["configuration"]!,
+        "skinData": payloads["skin-data"]!,
+        "skinTexture": payloads["skin-texture"]!])
+      XCTAssertEqual(preview.engineROM, payloads["rom"])
       let songs = try await store.catalogSnapshot().songs
       let cover = try XCTUnwrap(songs.first?.coverURL)
       XCTAssertEqual(try Data(contentsOf: cover), payloads["cover"])

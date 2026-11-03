@@ -89,10 +89,27 @@ final class EngineMetalRenderer {
     size: CGSize, timing: PlaybackFrameTiming? = nil,
     drawable suppliedDrawable: CAMetalDrawable? = nil
   ) throws {
-    guard size.width > 0, size.height > 0 else { return }
+    try submit(size: size, timing: timing, drawable: suppliedDrawable) {
+      EngineRenderer.sprites(host: host, assets: assets)
+    }
+  }
+
+  /// Draws already prepared sprites, such as a scrolled chart preview.
+  /// Returns false when no frame slot or drawable was free; draw again later.
+  @discardableResult
+  func draw(_ sprites: [EngineRenderSprite], size: CGSize) throws -> Bool {
+    try submit(size: size, timing: nil, drawable: nil) { sprites }
+  }
+
+  @discardableResult
+  private func submit(size: CGSize, timing: PlaybackFrameTiming?,
+    drawable suppliedDrawable: CAMetalDrawable?,
+    sprites makeSprites: () -> [EngineRenderSprite]
+  ) throws -> Bool {
+    guard size.width > 0, size.height > 0 else { return false }
     guard inFlight.wait(timeout: .now()) == .success else {
       timing?.recorder.increment(.queueFull)
-      return
+      return false
     }
     let drawableStart = timing.map { _ in CACurrentMediaTime() }
     // A Metal display-link update already owns the drawable for this refresh.
@@ -102,7 +119,7 @@ final class EngineMetalRenderer {
     else {
       timing?.recorder.increment(.noDrawable)
       inFlight.signal()
-      return
+      return false
     }
     if let drawableStart {
       timing?.recorder.record(.drawableWait,
@@ -110,7 +127,7 @@ final class EngineMetalRenderer {
     }
     do {
       let spriteStart = timing.map { _ in CACurrentMediaTime() }
-      let sprites = EngineRenderer.sprites(host: host, assets: assets)
+      let sprites = makeSprites()
       if let spriteStart {
         timing?.recorder.record(.sprites,
           seconds: CACurrentMediaTime() - spriteStart)
@@ -146,6 +163,7 @@ final class EngineMetalRenderer {
     timing?.recorder.increment(.submitted)
     buffer.present(drawable)
     buffer.commit()
+    return true
   }
 
   nonisolated func didCompleteFrame(status: MTLCommandBufferStatus,

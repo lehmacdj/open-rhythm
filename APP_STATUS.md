@@ -16,6 +16,7 @@ guarantee that every third-party engine works.
 - Search by title or artist with a 300 ms debounce. Offline search also indexes
   downloaded localized and transliterated names.
 - Group chart variants by song and choose a difficulty. Each server remembers its chosen engine. Sort preferences and the two-handle difficulty range are saved per engine; search text is not. Opening a filtered song selects its lowest matching difficulty.
+- Preview a chart without playing it: Preview Chart on a song's screen opens the selected difficulty drawn by its engine's own preview mode, which can be scrolled backwards and forwards by dragging or flicking, or with a position slider. It works for online and downloaded songs and has no audio.
 - Browse a combined offline library, a chronological Play History, and a
   deduplicated Played Songs list. Played Songs retains the server/chart
   information needed to load a song again; it is not a substitute for a
@@ -120,8 +121,8 @@ Shared runtime support includes lifecycle callbacks, documented play-memory acce
 
 No other identified, reproduced defect is currently awaiting a fix. Exact
 native-client rendering parity, unrestricted resource/codec support, and
-arbitrary-engine compatibility are not promised. Tutorial, watch, and preview
-modes, chart editing, and online score submission are outside the current
+arbitrary-engine compatibility are not promised. Tutorial and watch modes,
+chart editing, and online score submission are outside the current
 play-focused scope.
 
 No songs, chart assets, or proprietary Sonolus application code are bundled.
@@ -145,6 +146,7 @@ Made October 27–28, 2026; not yet in a TestFlight build.
 - Visuals: particle effects use better-mixed random seeds, so repeated effects look less alike; the software renderer's work budget scales with screen size; the Metal layer no longer animates when resized.
 - Audio: when OpenRhythm releases audio, other apps' audio can resume; a delayed stop of the music clock is dated at the moment it stopped, which affects input timing around stalls.
 - Error messages for copy arguments, gzip failures and empty or oversized music are readable and keep the raw codes.
+- Chart previews: Preview Chart on a song's screen runs the engine's preview mode (its `previewData`), so the chart looks as the engine draws it, with its own time, measure and BPM labels. Drag or flick to scroll in either direction; a slider placed where the engine lays out its progress bar jumps to any point. Rotating re-lays out the chart and keeps the position. Online songs fetch only the preview resources (no music); downloads now include the preview data, and songs downloaded earlier fetch it when online (update the download to preview offline). An engine without preview data shows a message saying so. The LLSIF, Project SEKAI (`next-sekai`) and CGSS engines' previews render and scroll across whole charts in headless tests; the in-app view was checked in simulator screenshots, and scrolling feel on a phone is unverified.
 - Removed the unused lane-based gameplay path. The two open-source engines above now run in the default test suite.
 
 For implementation details and evidence, see [README.md](README.md), the [open requests](REQUESTS.md), and the [compatibility checklist](COMPATIBILITY.md#remaining-acceptance-checklist). Older evidence is in [docs/archive](docs/archive/).

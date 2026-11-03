@@ -5,7 +5,8 @@ import AVFoundation
 
 final class EngineScoringTests: EngineHostTestCase {
   func testScheduledLifeRejectsEveryNonPreprocessingCallback() throws {
-    for callback in EngineMemory.Callback.allCases {
+    // Play callbacks; render belongs to preview.
+    for callback in EngineMemory.Callback.allCases where callback != .render {
       let builder = RuntimeNodeBuilder()
       let add = builder.call("AddLifeScheduled", [
         builder.value(-10), builder.value(2)])

@@ -37,6 +37,9 @@
 		A00000000000000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000017 /* Assets.xcassets */; };
 		A000000000000000000000F1 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000F1 /* PrivacyInfo.xcprivacy */; };
 		A00000000000000000000018 /* EngineHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* EngineHost.swift */; };
+		9E7A00000000000000000001 /* EnginePreviewRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7A10000000000000000001 /* EnginePreviewRuntime.swift */; };
+		9E7A00000000000000000002 /* ChartPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7A10000000000000000002 /* ChartPreviewView.swift */; };
+		9E7A00000000000000000003 /* EnginePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7A10000000000000000003 /* EnginePreviewTests.swift */; };
 		A00000000000000000000019 /* EnginePlayRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000019 /* EnginePlayRuntime.swift */; };
 		A0000000000000000000001A /* EnginePresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001A /* EnginePresentation.swift */; };
 		A0000000000000000000001B /* EngineAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000001B /* EngineAudio.swift */; };
@@ -112,6 +115,9 @@
 		A10000000000000000000017 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A100000000000000000000F1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A10000000000000000000018 /* EngineHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHost.swift; sourceTree = "<group>"; };
+		9E7A10000000000000000001 /* EnginePreviewRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePreviewRuntime.swift; sourceTree = "<group>"; };
+		9E7A10000000000000000002 /* ChartPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChartPreviewView.swift; sourceTree = "<group>"; };
+		9E7A10000000000000000003 /* EnginePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePreviewTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000019 /* EnginePlayRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePlayRuntime.swift; sourceTree = "<group>"; };
 		A1000000000000000000001A /* EnginePresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePresentation.swift; sourceTree = "<group>"; };
 		A1000000000000000000001B /* EngineAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineAudio.swift; sourceTree = "<group>"; };
@@ -211,6 +217,7 @@
 				A10000000000000000000010 /* LevelModels.swift */,
 				A10000000000000000000011 /* EngineInterpreter.swift */,
 				A10000000000000000000018 /* EngineHost.swift */,
+				9E7A10000000000000000001 /* EnginePreviewRuntime.swift */,
 				A10000000000000000000019 /* EnginePlayRuntime.swift */,
 				A1000000000000000000001A /* EnginePresentation.swift */,
 				A1000000000000000000001B /* EngineAudio.swift */,
@@ -237,6 +244,7 @@
 			children = (
 				F10000000000000000000006 /* Catalog */,
 				F1000000000000000000000A /* Gameplay */,
+				9E7A20000000000000000001 /* Preview */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -273,6 +281,7 @@
 				B10000000000000000000012 /* EngineRenderingTests.swift */,
 				B10000000000000000000013 /* EngineArchiveTests.swift */,
 				B10000000000000000000009 /* EngineFixtureTests.swift */,
+				9E7A10000000000000000003 /* EnginePreviewTests.swift */,
 				B10000000000000000000006 /* ResultStoreTests.swift */,
 				0349A43030663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift */,
 				0349A436306972F8009BC642 /* EnginePCMKernelTests.m */,
@@ -305,6 +314,14 @@
 				A1000000000000000000001F /* ResultStatisticsView.swift */,
 			);
 			path = Gameplay;
+			sourceTree = "<group>";
+		};
+		9E7A20000000000000000001 /* Preview */ = {
+			isa = PBXGroup;
+			children = (
+				9E7A10000000000000000002 /* ChartPreviewView.swift */,
+			);
+			path = Preview;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -428,6 +445,8 @@
 				A00000000000000000000010 /* LevelModels.swift in Sources */,
 				A00000000000000000000011 /* EngineInterpreter.swift in Sources */,
 				A00000000000000000000018 /* EngineHost.swift in Sources */,
+				9E7A00000000000000000001 /* EnginePreviewRuntime.swift in Sources */,
+				9E7A00000000000000000002 /* ChartPreviewView.swift in Sources */,
 				A00000000000000000000019 /* EnginePlayRuntime.swift in Sources */,
 				A0000000000000000000001A /* EnginePresentation.swift in Sources */,
 				A0000000000000000000001B /* EngineAudio.swift in Sources */,
@@ -470,6 +489,7 @@
 				B00000000000000000000012 /* EngineRenderingTests.swift in Sources */,
 				B00000000000000000000013 /* EngineArchiveTests.swift in Sources */,
 				B00000000000000000000009 /* EngineFixtureTests.swift in Sources */,
+				9E7A00000000000000000003 /* EnginePreviewTests.swift in Sources */,
 				B00000000000000000000006 /* ResultStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

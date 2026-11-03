@@ -83,17 +83,27 @@ struct EngineTemporaryMemory {
   }
 }
 
+/// Play and preview give the same block IDs different meanings and access
+/// rules, so memory and host behavior follow the runtime's mode.
+enum EngineRuntimeMode: Sendable {
+  case play, preview
+}
+
 final class EngineMemory {
   private typealias Block = EnginePlayBlock
+  private typealias Preview = EnginePreviewBlock
 
   enum Callback: String, CaseIterable {
     case preprocess, spawnOrder, shouldSpawn, initialize
     case updateSequential, touch, updateParallel, terminate
+    /// Preview mode's only callback besides preprocess.
+    case render
   }
 
   // Nil is reserved for host bookkeeping and standalone interpreter tests.
   // Engine callbacks must always establish a context before evaluation.
   var callback: Callback?
+  private(set) var mode = EngineRuntimeMode.play
   private var rom = [Double]()
   private var blocks = [Int: [Int: Double]]()
   private var entityBlocks = [Int: [Int: [Int: Double]]]()
@@ -150,6 +160,40 @@ final class EngineMemory {
     for (block, count) in declared { table[block] = count }
     lengths = table
     self.entityLayout = entityLayout
+    mode = .play
+  }
+
+  /// Install the preview-mode layout after loading ROM:
+  /// https://wiki.sonolus.com/engine-specs/preview-blocks/overview
+  /// Preview has no Entity Memory; Entity Info holds index and archetype.
+  func configurePreviewBlocks(entityCount: Int, optionCount: Int,
+    entityLayout: EngineEntityLayout = .standard) throws {
+    let dataCount = entityCount.multipliedReportingOverflow(
+      by: entityLayout.data)
+    let sharedCount = entityCount.multipliedReportingOverflow(
+      by: entityLayout.sharedMemory)
+    guard [entityCount, optionCount].allSatisfy({
+      $0 >= 0 && $0 <= Int.max / 32
+    }), entityLayout.isValid, !dataCount.overflow, !sharedCount.overflow
+    else { throw EngineInterpreterError.invalidArguments("memory layout") }
+    let declared = [
+      Preview.runtimeEnvironment: 6, Preview.runtimeCanvas: 2,
+      Preview.runtimeSkinTransform: 16, Preview.runtimeUI: 18,
+      Preview.runtimeUIConfiguration: 4, Preview.previewData: 4096,
+      Preview.previewOption: optionCount, Preview.engineROM: rom.count,
+      Preview.entityData: entityLayout.data,
+      Preview.entitySharedMemory: entityLayout.sharedMemory,
+      Preview.entityInfo: 2,
+      Preview.entityDataArray: dataCount.partialValue,
+      Preview.entitySharedMemoryArray: sharedCount.partialValue,
+      Preview.entityInfoArray: entityCount * 2,
+      Preview.temporaryMemory: 4096
+    ]
+    var table = [Int](repeating: 0, count: Preview.temporaryMemory + 1)
+    for (block, count) in declared { table[block] = count }
+    lengths = table
+    self.entityLayout = entityLayout
+    mode = .preview
   }
 
   func setTouchCount(_ count: Int) throws {
@@ -168,6 +212,10 @@ final class EngineMemory {
 
   private func validate(block: Int, write: Bool) throws -> Bool {
     guard let callback else { return true }
+    if mode == .preview {
+      return try validatePreview(block: block, write: write,
+        callback: callback)
+    }
     let writable: Bool
     switch block {
     case Block.runtimeEnvironment, Block.runtimeUI,
@@ -201,6 +249,35 @@ final class EngineMemory {
         || block == Block.entityInput)
     if unavailable && !write { return false }
     guard !unavailable, !write || writable else {
+      throw EngineInterpreterError.invalidMemoryAccess(
+        block: block, callback: callback.rawValue, write: write)
+    }
+    return true
+  }
+
+  /// The preview read and write access tables. Every listed block is
+  /// readable in both callbacks; render may write only Temporary Memory.
+  private func validatePreview(block: Int, write: Bool,
+    callback: Callback) throws -> Bool {
+    let writable: Bool
+    switch block {
+    case Preview.runtimeEnvironment, Preview.runtimeCanvas,
+      Preview.runtimeSkinTransform, Preview.runtimeUI,
+      Preview.runtimeUIConfiguration, Preview.previewData,
+      Preview.entityData, Preview.entitySharedMemory,
+      Preview.entityDataArray, Preview.entitySharedMemoryArray:
+      writable = callback == .preprocess
+    case Preview.temporaryMemory:
+      writable = true
+    case Preview.previewOption, Preview.engineROM, Preview.entityInfo,
+      Preview.entityInfoArray:
+      writable = false
+    default:
+      if !write { return false }
+      throw EngineInterpreterError.invalidMemoryAccess(
+        block: block, callback: callback.rawValue, write: write)
+    }
+    guard !write || writable else {
       throw EngineInterpreterError.invalidMemoryAccess(
         block: block, callback: callback.rawValue, write: write)
     }
@@ -265,6 +342,19 @@ final class EngineMemory {
   private func arrayAddress(block: Int, index: Int) -> (Int, Int)? {
     guard let entityIndex else { return nil }
     let size: Int, array: Int
+    if mode == .preview {
+      switch block {
+      case Preview.entityData:
+        (size, array) = (entityLayout.data, Preview.entityDataArray)
+      case Preview.entitySharedMemory:
+        (size, array) = (entityLayout.sharedMemory,
+          Preview.entitySharedMemoryArray)
+      case Preview.entityInfo: (size, array) = (2, Preview.entityInfoArray)
+      default: return nil
+      }
+      guard index < size else { return nil }
+      return (array, entityIndex * size + index)
+    }
     switch block {
     case Block.entityData:
       (size, array) = (entityLayout.data, Block.entityDataArray)
@@ -290,7 +380,7 @@ final class EngineMemory {
     if let (array, offset) = arrayAddress(block: block, index: index) {
       return blocks[array]?[offset] ?? 0
     }
-    if (Block.entityMemory...Block.entityLife).contains(block),
+    if mode == .play, (Block.entityMemory...Block.entityLife).contains(block),
       let entityKey {
       return entityBlocks[entityKey]?[block]?[index] ?? 0
     }
@@ -310,7 +400,7 @@ final class EngineMemory {
       blocks[array, default: [:]][offset] = value
       return value
     }
-    if (Block.entityMemory...Block.entityLife).contains(block),
+    if mode == .play, (Block.entityMemory...Block.entityLife).contains(block),
       let entityKey {
       entityBlocks[entityKey, default: [:]][block, default: [:]][index] = value
       return value

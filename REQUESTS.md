@@ -52,7 +52,7 @@ Reopen these only with new evidence.
 ## Deferred or declined
 
 - Extra app-owned sound and animation packs and a hide-combo switch: deferred, as the owner asked. Engine-defined options and animations are separate.
-- Local level import, a level writer and validator, separating engine modes, and preview and watch modes: considered in the October 28 review and deferred.
+- Local level import, a level writer and validator, separating engine modes, and watch mode: considered in the October 28 review and deferred. Preview mode, deferred in the same review, was requested on November 3 ("scroll through a chart backwards and forwards without necessarily playing it") and is implemented; see [COMPATIBILITY.md](COMPATIBILITY.md#preview-mode).
 - Tutorial mode and online score submission: not requested.
 
 ## Settled decisions

@@ -62,6 +62,12 @@ struct SongDetailView: View {
             Label("Play", systemImage: "play.fill")
           }
           .disabled(isDownloading)
+          NavigationLink {
+            ChartPreviewView(song: song, level: selectedLevel)
+          } label: {
+            Label("Preview Chart", systemImage: "eye")
+          }
+          .disabled(isDownloading)
         }
         if !isOffline {
           Button {

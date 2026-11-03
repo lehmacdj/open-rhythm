@@ -164,7 +164,7 @@ final class EngineFixtureTests: XCTestCase {
 // MARK: - Fixtures
 
 @MainActor
-private struct Fixture {
+struct Fixture {
   enum Engine: String {
     case pjsekai, bandori
   }

@@ -51,6 +51,25 @@ struct EngineDrawCommand: Equatable, Sendable {
   var isInputVisual = false
 }
 
+/// A preview `Print`: text placed in canvas coordinates, outside the skin
+/// transform. https://wiki.sonolus.com/engine-specs/functions/print
+struct EnginePrintCommand: Equatable, Sendable {
+  let value: Double
+  let format: Double
+  /// -1 means automatic.
+  let decimalPlaces: Double
+  let anchor: EnginePoint
+  let pivot: EnginePoint
+  /// Width and height.
+  let size: EnginePoint
+  let rotation: Double
+  let color: Double
+  let alpha: Double
+  /// -1 left, 0 center, 1 right.
+  let horizontalAlign: Double
+  let background: Bool
+}
+
 struct EngineAudioCommand: Equatable, Sendable {
   let clipID: EngineResourceID
   let time: TimeInterval
@@ -113,7 +132,18 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     "StreamGetPreviousKey", "Spawn", "ExportValue", "TimeToScaledTime",
     "TimeToStartingScaledTime", "TimeToStartingTime", "TimeToTimeScale"
   ]
+  /// Preview has no audio, particles, input, life, spawning or exports. The
+  /// remaining queries are pure or report preview's empty resource families.
+  static let previewSupportedFunctions: Set<String> = [
+    "DebugLog", "DebugPause", "BeatToStartingBeat", "BeatToStartingTime",
+    "BeatToTime", "BeatToBPM", "Judge", "JudgeSimple", "HasSkinSprite",
+    "HasParticleEffect", "HasEffectClip", "Draw", "DrawCurvedB",
+    "DrawCurvedT", "DrawCurvedL", "DrawCurvedR", "DrawCurvedBT",
+    "DrawCurvedLR", "Print", "TimeToScaledTime", "TimeToStartingScaledTime",
+    "TimeToStartingTime", "TimeToTimeScale"
+  ]
   let memory: EngineMemory
+  let mode: EngineRuntimeMode
   let timeline: BPMTimeline
   let timeScale: TimeScaleTimeline
   let skinSpriteIDs: Set<EngineResourceID>
@@ -124,6 +154,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
 
   private(set) var time: TimeInterval = 0
   private(set) var draws = [EngineDrawCommand]()
+  private(set) var prints = [EnginePrintCommand]()
   private(set) var particles = [Int: EngineParticleInstance]()
   private(set) var exports = [Int: [Int: Double]]()
   private var audio = [EngineAudioCommand]()
@@ -199,9 +230,11 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     archetypeCount: Int,
     introStageSpriteIDs: Set<EngineResourceID> = [],
     streamEntryLimit: Int = 262_144,
-    playbackSpeed: Double = 1
+    playbackSpeed: Double = 1,
+    mode: EngineRuntimeMode = .play
   ) {
     self.memory = memory
+    self.mode = mode
     timeline = BPMTimeline(level: level, speed: playbackSpeed)
     timeScale = TimeScaleTimeline(level: level, bpm: timeline)
     self.skinSpriteIDs = skinSpriteIDs
@@ -210,8 +243,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     self.introStageSpriteIDs = introStageSpriteIDs
     self.archetypeCount = archetypeCount
     self.streamEntryLimit = max(0, streamEntryLimit)
-    for block in [EnginePlayBlock.runtimeSkinTransform,
-      EnginePlayBlock.runtimeParticleTransform] {
+    for block in mode == .play ? [EnginePlayBlock.runtimeSkinTransform,
+      EnginePlayBlock.runtimeParticleTransform]
+      : [EnginePreviewBlock.runtimeSkinTransform] {
       for index in 0..<16 {
         memory.set(block: block, index: index, value: index % 5 == 0 ? 1 : 0)
       }
@@ -237,6 +271,21 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     self.staticIntroDrawing = staticIntroDrawing
     self.inputDrawing = inputDrawing
     self.exportCount = exportCount
+  }
+
+  /// Preview renders the whole chart once. Draining after each entity keeps
+  /// the per-callback segment budget of one play frame for each entity.
+  func takeDrawCommands() -> [EngineDrawCommand] {
+    defer {
+      draws.removeAll(keepingCapacity: true)
+      drawSegmentCount = 0
+    }
+    return draws
+  }
+
+  func takePrintCommands() -> [EnginePrintCommand] {
+    defer { prints.removeAll(keepingCapacity: true) }
+    return prints
   }
 
   func takeAudioCommands() -> [EngineAudioCommand] {
@@ -392,10 +441,30 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
         zValues: [a[9]] + Array(a.dropFirst(required))
           + Array(repeating: 0, count: required + 3 - a.count),
         alpha: min(1, max(0, a[10])),
-        transform: transform(block: EnginePlayBlock.runtimeSkinTransform),
+        transform: transform(block: mode == .play
+          ? EnginePlayBlock.runtimeSkinTransform
+          : EnginePreviewBlock.runtimeSkinTransform),
         curve: curve, isStaticIntroDecoration: staticIntroDrawing
           && introStageSpriteIDs.contains(id), isInputVisual: inputDrawing
       ))
+      return 0
+    case "Print":
+      guard mode == .preview else {
+        throw EngineInterpreterError.unsupportedFunction(function)
+      }
+      // Like Draw, a non-finite value prints nothing rather than ending the
+      // preview; the argument count is still checked.
+      guard a.count == 14 else {
+        throw EngineInterpreterError.invalidArguments(function)
+      }
+      guard a.allSatisfy(\.isFinite) else { return 0 }
+      try checkLimit(prints.count, resource: "printed values per callback")
+      prints.append(EnginePrintCommand(value: a[0], format: a[1],
+        decimalPlaces: a[2], anchor: EnginePoint(x: a[3], y: a[4]),
+        pivot: EnginePoint(x: a[5], y: a[6]),
+        size: EnginePoint(x: a[7], y: a[8]), rotation: a[9], color: a[10],
+        alpha: min(1, max(0, a[11])), horizontalAlign: a[12],
+        background: a[13] != 0))
       return 0
     case "Play", "PlayScheduled":
       try validate(

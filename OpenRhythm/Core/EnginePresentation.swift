@@ -792,7 +792,22 @@ final class EnginePresentationAssets {
     particlePropertyCache.properties(for: particle, key: key, variables: variables)
   }
 
-  init(engine: EnginePlayData, presentation: RuntimePresentation,
+  convenience init(engine: EnginePlayData, presentation: RuntimePresentation,
+    tintByteLimit: Int = EngineTextureBudget.defaultByteLimit,
+    makeTint: @escaping @MainActor (UIImage, UIColor) throws -> UIImage = {
+      try EnginePresentationAssets.tinted($0, color: $1)
+    }
+  ) throws {
+    try self.init(skinDefinition: engine.skin,
+      particleDefinition: engine.particle, presentation: presentation,
+      tintByteLimit: tintByteLimit, makeTint: makeTint)
+  }
+
+  /// Each engine mode declares its own skin sprite IDs (and play its
+  /// particle effects) over the same skin and particle resources.
+  init(skinDefinition: EngineSkinDefinition,
+    particleDefinition: EngineParticleDefinition,
+    presentation: RuntimePresentation,
     tintByteLimit: Int = EngineTextureBudget.defaultByteLimit,
     makeTint: @escaping @MainActor (UIImage, UIColor) throws -> UIImage = {
       try EnginePresentationAssets.tinted($0, color: $1)
@@ -800,7 +815,7 @@ final class EnginePresentationAssets {
   ) throws {
     tintBudget = EngineTextureBudget(byteLimit: tintByteLimit)
     self.makeTint = makeTint
-    forcedSkinRenderMode = try engine.skin.forcedRenderMode
+    forcedSkinRenderMode = try skinDefinition.forcedRenderMode
     skinRenderMode = forcedSkinRenderMode ?? .standard
     let configuration = try CompressedJSONDecoder.decode(
       EngineConfiguration.self, from: presentation.data("configuration")
@@ -817,7 +832,7 @@ final class EnginePresentationAssets {
     }
     scoreModeOption = configuration.options.first(where: \.usesScoreModeControl)
     var sprites = [EngineResourceID: Sprite]()
-    if engine.skin.sprites.isEmpty {
+    if skinDefinition.sprites.isEmpty {
       interpolation = false
     } else {
       let skinData = try CompressedJSONDecoder.decode(
@@ -830,7 +845,7 @@ final class EnginePresentationAssets {
       // Reuse exact crops so the renderer's image-identity cache also reuses
       // their GPU texture. Keep this cache local to this atlas/preparation.
       var crops = [[Double]: (image: UIImage, region: EngineTextureRegion)]()
-      for definition in engine.skin.sprites {
+      for definition in skinDefinition.sprites {
         guard let sprite = skinData.sprites.first(where: { $0.name == definition.name })
         else { continue }
         let bounds = [sprite.x, sprite.y, sprite.w, sprite.h]
@@ -848,7 +863,7 @@ final class EnginePresentationAssets {
     skin = sprites
     // Engines can omit entire presentation families they do not use. Do not
     // require a particle texture merely because a skin or configuration exists.
-    guard !engine.particle.effects.isEmpty else {
+    guard !particleDefinition.effects.isEmpty else {
       particleInterpolation = false
       particleSprites = []
       particles = [:]
@@ -864,7 +879,7 @@ final class EnginePresentationAssets {
       throw RuntimeBundleError.missingResource("valid particle texture")
     }
     var effects = [EngineResourceID: ParticleData.Effect]()
-    for definition in engine.particle.effects {
+    for definition in particleDefinition.effects {
       guard let effect = particleData.effects.first(where: {
         $0.name == definition.name
       }) else { continue }
@@ -1259,33 +1274,7 @@ enum EngineRenderer {
     if cacheParticleRandomVariables || cacheParticleProperties {
       assets.beginParticleFrame()
     }
-    var result = [EngineRenderSprite]()
-    let ordered = host.draws.enumerated().sorted {
-      if $0.element.zValues == $1.element.zValues { return $0.offset < $1.offset }
-      return $0.element.zValues.lexicographicallyPrecedes($1.element.zValues)
-    }
-    for (_, command) in ordered {
-      guard command.alpha > 0, let sprite = assets.skin[command.spriteID] else { continue }
-      let points = EngineGeometry.transformed(command.points, by: sprite.transform)
-      if let curve = command.curve {
-        for patch in EngineGeometry.curvedPatches(points, curve: curve) {
-          result.append(EngineRenderSprite(image: sprite.image, points: patch.points,
-            matrix: command.transform, alpha: command.alpha,
-            interpolation: assets.interpolation,
-            textureRegion: sprite.textureRegion.subregion(patch.region),
-            renderMode: assets.skinRenderMode,
-            isStaticIntroDecoration: command.isStaticIntroDecoration,
-            isInputVisual: command.isInputVisual))
-        }
-      } else {
-        result.append(EngineRenderSprite(image: sprite.image, points: points,
-          matrix: command.transform, alpha: command.alpha,
-          interpolation: assets.interpolation, textureRegion: sprite.textureRegion,
-          renderMode: assets.skinRenderMode,
-          isStaticIntroDecoration: command.isStaticIntroDecoration,
-          isInputVisual: command.isInputVisual))
-      }
-    }
+    var result = sprites(draws: host.draws, assets: assets)
     // The particle transform is frame-wide. Reading its sixteen values for
     // every emitted particle duplicates thousands of VM reads on busy hits.
     let particleMatrix = host.particles.isEmpty ? []
@@ -1350,6 +1339,40 @@ enum EngineRenderer {
               textureRegion: sprite.region))
           }
         }
+      }
+    }
+    return result
+  }
+
+  /// Skin draws in z order (ties keep emission order), with curved draws
+  /// split into patches and each sprite's resource transform applied.
+  static func sprites(draws: [EngineDrawCommand],
+    assets: EnginePresentationAssets) -> [EngineRenderSprite] {
+    var result = [EngineRenderSprite]()
+    let ordered = draws.enumerated().sorted {
+      if $0.element.zValues == $1.element.zValues { return $0.offset < $1.offset }
+      return $0.element.zValues.lexicographicallyPrecedes($1.element.zValues)
+    }
+    for (_, command) in ordered {
+      guard command.alpha > 0, let sprite = assets.skin[command.spriteID] else { continue }
+      let points = EngineGeometry.transformed(command.points, by: sprite.transform)
+      if let curve = command.curve {
+        for patch in EngineGeometry.curvedPatches(points, curve: curve) {
+          result.append(EngineRenderSprite(image: sprite.image, points: patch.points,
+            matrix: command.transform, alpha: command.alpha,
+            interpolation: assets.interpolation,
+            textureRegion: sprite.textureRegion.subregion(patch.region),
+            renderMode: assets.skinRenderMode,
+            isStaticIntroDecoration: command.isStaticIntroDecoration,
+            isInputVisual: command.isInputVisual))
+        }
+      } else {
+        result.append(EngineRenderSprite(image: sprite.image, points: points,
+          matrix: command.transform, alpha: command.alpha,
+          interpolation: assets.interpolation, textureRegion: sprite.textureRegion,
+          renderMode: assets.skinRenderMode,
+          isStaticIntroDecoration: command.isStaticIntroDecoration,
+          isInputVisual: command.isInputVisual))
       }
     }
     return result
