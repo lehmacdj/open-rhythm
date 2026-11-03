@@ -2659,46 +2659,48 @@ final class RuntimeDecodingTests: XCTestCase {
   func testInputCalibrationDecodesDefaultsAndClampsInvalidValues() throws {
     let legacy = try JSONDecoder().decode(GameplayPreferences.self,
       from: Data("{}".utf8))
-    XCTAssertEqual(legacy.inputOffsetMilliseconds, 0)
-    XCTAssertEqual(legacy.visualOffsetMilliseconds, 0)
     XCTAssertFalse(legacy.engineDebugMode)
+    XCTAssertEqual(try JSONDecoder().decode(TimingCalibration.self,
+      from: Data("{}".utf8)), TimingCalibration())
     XCTAssertTrue(try JSONDecoder().decode(GameplayPreferences.self,
       from: JSONEncoder().encode(GameplayPreferences(engineDebugMode: true)))
       .engineDebugMode)
-    var settings = GameplayPreferences(inputOffsetMilliseconds: 300)
+    var settings = TimingCalibration(inputOffsetMilliseconds: 300)
     XCTAssertEqual(settings.inputOffsetMilliseconds, 250)
     settings.inputOffsetMilliseconds = -.infinity
     XCTAssertEqual(settings.inputOffsetMilliseconds, 0)
     settings.inputOffsetMilliseconds = -500
     XCTAssertEqual(settings.inputOffsetSeconds, -0.25)
-    let decoded = try JSONDecoder().decode(GameplayPreferences.self,
+    let decoded = try JSONDecoder().decode(TimingCalibration.self,
       from: Data(#"{"inputOffsetMilliseconds":900}"#.utf8))
     XCTAssertEqual(decoded.inputOffsetMilliseconds, 250)
-    var visual = GameplayPreferences(visualOffsetMilliseconds: -500)
+    var visual = TimingCalibration(visualOffsetMilliseconds: -500)
     XCTAssertEqual(visual.visualOffsetSeconds, -0.25)
     visual.visualOffsetMilliseconds = .nan
     XCTAssertEqual(visual.visualOffsetMilliseconds, 0)
     visual.visualOffsetMilliseconds = 500
     XCTAssertEqual(visual.visualOffsetMilliseconds, 250)
-    let restored = try JSONDecoder().decode(GameplayPreferences.self,
-      from: Data(#"{"visualOffsetMilliseconds":-900}"#.utf8))
+    let restored = try JSONDecoder().decode(TimingCalibration.self,
+      from: Data(#"{"visualOffsetMilliseconds":-900,"inputOffsetMilliseconds":"x"}"#.utf8))
+    XCTAssertEqual(restored.inputOffsetMilliseconds, 0,
+      "An unreadable field falls back alone")
     XCTAssertEqual(restored.visualOffsetMilliseconds, -250)
     visual.visualOffsetMilliseconds = 0
-    XCTAssertEqual(try JSONDecoder().decode(GameplayPreferences.self,
+    XCTAssertEqual(try JSONDecoder().decode(TimingCalibration.self,
       from: JSONEncoder().encode(visual)).visualOffsetSeconds, 0)
   }
 
   @MainActor
   func testCalibrationIsSnapshotForEachPlayAndReported() throws {
     let model = try gameplayModel()
-    let original = model.settings
-    defer { model.stop(); model.settings = original }
+    let original = model.timing
+    defer { model.stop(); model.timing = original }
     for visual in [-120.0, 0, 120] {
       for inputOffset in [-30.0, 0, 30] {
-        model.settings = GameplayPreferences(inputOffsetMilliseconds: inputOffset,
-          visualOffsetMilliseconds: visual)
+        model.timing = TimingCalibration(visualOffsetMilliseconds: visual,
+          inputOffsetMilliseconds: inputOffset)
         model.start()
-        model.settings = GameplayPreferences() // Applies only next play.
+        model.timing = TimingCalibration() // Applies only next play.
         XCTAssertEqual(model.playInputOffset, inputOffset / 1000)
         XCTAssertEqual(model.playAudioOffset, visual / 1000)
         // Visual timing delays the chart against the music. Input timing

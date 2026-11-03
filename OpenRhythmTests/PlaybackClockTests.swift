@@ -710,7 +710,6 @@ final class PlaybackClockTests: XCTestCase {
       XCTAssertEqual(UserDefaults.standard.data(forKey: key), stored,
         "Loading must not replace stored preferences")
       if stored == partlyUnknown {
-        XCTAssertEqual(model.settings.inputOffsetMilliseconds, -42)
         XCTAssertEqual(model.settings.judgementDisplay, .off)
         XCTAssertEqual(model.settings.skinRenderMode, .standard)
       } else {
@@ -829,13 +828,14 @@ final class PlaybackClockTests: XCTestCase {
     let renderer = try XCTUnwrap(playfield.metal)
     XCTAssertTrue(playfield.isUsingMetalDisplayLink)
     model.start()
+    // Frames draw ahead of the music, so wait for the music clock itself.
     for _ in 0..<200 {
-      if !model.isStartingPlayback && model.currentTime > 0 { break }
+      if !model.isStartingPlayback && model.playbackTime > 0 { break }
       try await Task.sleep(for: .milliseconds(5))
     }
     XCTAssertEqual(model.phase, .playing)
     XCTAssertFalse(model.isStartingPlayback)
-    XCTAssertGreaterThan(model.currentTime, 0)
+    XCTAssertGreaterThan(model.playbackTime, 0)
     let generation = model.playbackGeneration
     let runtime = try XCTUnwrap(model.engineRuntime)
     let recorder = try XCTUnwrap(model.timingRecorder)
@@ -955,6 +955,20 @@ final class PlaybackClockTests: XCTestCase {
   }
 
   @MainActor
+  func testCalibrationTapsSuggestTheirMedianAndIgnoreStrayTaps() {
+    XCTAssertNil(CalibrationMetronome.summary([]))
+    let taps = [0.010, 0.012, 0.014, 0.011, 0.013, 0.180]
+    let summary = CalibrationMetronome.summary(taps)
+    XCTAssertEqual(summary?.count, 6)
+    XCTAssertEqual(summary?.median ?? 0, 0.0125, accuracy: 1e-12)
+    XCTAssertEqual(summary?.spread ?? 0, 0.0015, accuracy: 1e-12,
+      "One stray tap must not widen the spread")
+    let metronome = CalibrationMetronome()
+    XCTAssertNil(metronome.beatOffset(at: CACurrentMediaTime(), visualOffset: 0),
+      "No clicks, no beats")
+  }
+
+  @MainActor
   func testLivePlayerAndInputClocksAgreeAcrossSpeedsAndRestarts() async throws {
     try await checkLiveClocks(nativePlayfield: false)
   }
@@ -1058,7 +1072,13 @@ final class PlaybackClockTests: XCTestCase {
       server: ServerDescriptor(id: "live-clock", name: "Fixture",
         baseURL: URL(string: "https://example.com")!), title: "Live clock fixture")
     let original = model.settings
-    defer { model.stop(); model.settings = original }
+    let originalTiming = model.timing
+    defer {
+      model.stop()
+      model.settings = original
+      model.timing = originalTiming
+    }
+    model.timing = TimingCalibration()
     model.settings = GameplayPreferences(recordTimingDiagnostics: true,
       engineDebugMode: debugPauseCheck)
     let size = CGSize(width: 800, height: 400)
@@ -1090,7 +1110,7 @@ final class PlaybackClockTests: XCTestCase {
     defer { UIApplication.shared.isIdleTimerDisabled = idleDisabled }
     for (index, speed) in [0.5, 1.0, 2.0, 1.0].enumerated() {
       let audioOffset = calibrateVisuals ? [0.125, -0.125, 0.25, -0.25][index] : 0
-      model.settings.visualOffsetMilliseconds = audioOffset * 1000
+      model.timing.visualOffsetMilliseconds = audioOffset * 1000
       model.settings.engineOptions["#SPEED"] = speed
       if model.phase == .ready { model.start() } else { model.restart() }
       let initial = BGMClockMapping(offset: 0.25, speed: speed,
@@ -1153,6 +1173,7 @@ final class PlaybackClockTests: XCTestCase {
       }
       var differences = [Double]()
       var frameSamples = Set<Double>()
+      var frameLeads = [Double]()
       let start = CACurrentMediaTime()
       let chartStart = model.playbackTime
       let startSampleEnd = CACurrentMediaTime()
@@ -1163,8 +1184,18 @@ final class PlaybackClockTests: XCTestCase {
         let after = CACurrentMediaTime()
         let frame = try XCTUnwrap(model.frameTiming)
         frameSamples.insert(frame.sampleHostTime)
-        let eventTime = model.inputTime(at: frame.sampleHostTime)
+        // A displayed frame draws the moment it reaches the screen.
+        let eventTime = model.inputTime(
+          at: frame.frameHostTime ?? frame.sampleHostTime)
         differences.append(eventTime - model.currentTime)
+        let lead = try XCTUnwrap(frame.frameHostTime) - frame.sampleHostTime
+        XCTAssertGreaterThanOrEqual(lead, 0)
+        XCTAssertLessThanOrEqual(lead, GameplayModel.displayLead + 1e-9)
+        if nativePlayfield {
+          frameLeads.append(lead)
+        } else {
+          XCTAssertEqual(lead, 0, "No display time draws the clock's own time")
+        }
         if !nativePlayfield {
           XCTAssertGreaterThanOrEqual(frame.sampleHostTime, before)
         }
@@ -1217,6 +1248,8 @@ final class PlaybackClockTests: XCTestCase {
       if nativePlayfield {
         XCTAssertGreaterThan(frameSamples.count, 2,
           "Repeatedly reading one stale frame must not pass")
+        XCTAssertGreaterThan(frameLeads.max() ?? 0, 0,
+          "Displayed frames draw the chart for their target display time")
         XCTAssertEqual(model.currentTime - frameChartStart,
           chartEnd - chartStart, accuracy: 0.075,
           "Display-driven runtime must track the player, including its stalls")

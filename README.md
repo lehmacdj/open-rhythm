@@ -139,8 +139,7 @@ Timing distributions now use continuous density curves with no data bins. Known 
 
 Native and fallback inputs map UIKit event timestamps through the audio
 timebase, retaining rate-transition history for queued touches across stalls.
-No empirical timing correction is imposed. Optional per-engine input and visual
-calibration settings preserve an explicit override for the player. Online and
+Frames are drawn for their display time, and on the speaker and wired outputs scheduled hit sounds start early by the output's reported latency; both were checked on a phone. No fixed timing correction is imposed. Input and visual calibration, shared by all engines and kept per kind of audio output, preserve an explicit override for the player. Online and
 offline prepared playback both use local music before play. Online preparation
 pins a cached download; offline playback reuses its stored file. Upfront
 preparation enables a shared PCM silence scan and audio timebase. Prepared songs

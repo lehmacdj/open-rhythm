@@ -4,12 +4,15 @@ enum PlaybackTimingMetric: String, Codable, CaseIterable, Sendable {
   case runtime = "Engine update"
   case bookkeeping = "Gameplay bookkeeping"
   case effectAudio = "Effect audio dispatch"
+  case effectCompensation = "Hit sound output-latency compensation"
   case sprites = "Sprite generation"
   case encoding = "Metal encoding"
   case drawableWait = "Drawable wait"
   case gpu = "GPU execution"
   case presentation = "Chart sample to presentation"
   case deadline = "Presentation minus display target"
+  case displayLead = "Display target minus clock sample"
+  case displayError = "Presentation minus the frame's chart moment"
   case clockRead = "Clock sampling duration"
   case clockDifference = "Event clock minus player clock"
   case inputClockDifference = "Input clock minus player clock"
@@ -175,6 +178,8 @@ final class PlaybackTimingRecorder: @unchecked Sendable {
 struct PlaybackFrameTiming: Sendable {
   let recorder: PlaybackTimingRecorder
   let sampleHostTime: Double
+  /// The host time whose chart state this frame draws.
+  var frameHostTime: Double? = nil
   var targetHostTime: Double? = nil
 
   func presented(at timestamp: Double) {
@@ -183,6 +188,8 @@ struct PlaybackFrameTiming: Sendable {
       return
     }
     recorder.record(.presentation, seconds: timestamp - sampleHostTime)
+    recorder.record(.displayError,
+      seconds: timestamp - (frameHostTime ?? sampleHostTime))
     if let targetHostTime, targetHostTime.isFinite, targetHostTime > 0 {
       recorder.record(.deadline, seconds: timestamp - targetHostTime)
     }

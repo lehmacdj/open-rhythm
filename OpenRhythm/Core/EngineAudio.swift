@@ -567,6 +567,13 @@ final class EngineAudioPlayback {
   private var nextID = 0
   private var isPaused = false
   private var pausedLoopCommands = [EngineLoopCommand]()
+  /// Seconds from scheduling a sample to hearing it. AVPlayer already
+  /// compensates the music for this, so scheduled effects start this much
+  /// earlier to land with it. Measured within 0.3 ms on the built-in speaker
+  /// (November 2026). Wireless routes report no compensation.
+  private(set) var outputCompensation = 0.0
+  var outputLatency: @MainActor () -> Double = { 0 }
+  private var outputLatencyCheckedAt = -Double.infinity
 
   convenience init(engine: EnginePlayData, presentation: RuntimePresentation) throws {
     guard !engine.effect.clips.isEmpty else {
@@ -610,9 +617,36 @@ final class EngineAudioPlayback {
     try self.init(clips: clips.filter { bank.clipIDs.contains($0.key) },
       makeVoice: { id, _ in try bank.voice(for: id) })
     nativeBank = bank
+    outputLatency = { [weak bank] in
+      guard let bank, bank.engine.isRunning else { return 0 }
+      return Self.compensatedLatency(
+        route: AVAudioSession.sharedInstance().currentRoute,
+        reported: bank.engine.outputNode.presentationLatency)
+    }
   }
 
-  func start() throws { try nativeBank?.start() }
+  /// Built-in and wired outputs report their latency accurately; wireless
+  /// ones (Bluetooth, AirPlay, CarPlay) and HDMI displays are not trusted.
+  nonisolated static func compensatedLatency(
+    route: AVAudioSessionRouteDescription, reported: Double) -> Double {
+    guard AudioRouteKind(route) == .wired, reported.isFinite,
+      (0...0.25).contains(reported) else { return 0 }
+    return reported
+  }
+
+  func start() throws {
+    try nativeBank?.start()
+    refreshOutputCompensation(force: true)
+  }
+
+  /// Re-read at most twice a second: a route can change mid-song.
+  private func refreshOutputCompensation(force: Bool = false) {
+    let now = CACurrentMediaTime()
+    guard force || now - outputLatencyCheckedAt >= 0.5 else { return }
+    outputLatencyCheckedAt = now
+    let latency = outputLatency()
+    outputCompensation = latency.isFinite ? max(0, latency) : 0
+  }
 
   /// Freeze active samples, cancel wall-clock reservations, and retain the
   /// logical schedule. Resume only once the BGM clock is advancing again.
@@ -701,7 +735,7 @@ final class EngineAudioPlayback {
         // Re-arm only after graph startup and other voices' resume work, but
         // before this voice can publish any unpaused samples.
         if loop.end <= now + 0.5 {
-          voice.stop(after: loop.end - now)
+          voice.stop(after: loop.end - now - outputCompensation)
           loops[id]?.scheduledEnd = loop.end
         }
         voice.resume()
@@ -715,7 +749,10 @@ final class EngineAudioPlayback {
       for id in Array(players.keys) { recycle(id, stop: true) }
       for id in Array(loops.keys) { releaseLoopVoice(id) }
       try nativeBank.start()
+      refreshOutputCompensation(force: true)
     }
+    refreshOutputCompensation()
+    let compensation = outputCompensation
     try updateLoops(effectiveLoopCommands, at: time, advancing: true,
       currentTime: readTime)
     var prior = lastPlayed
@@ -740,7 +777,8 @@ final class EngineAudioPlayback {
           if command.time > time { retained.append(event) }
           continue
         }
-        voice.play(after: max(0, command.time - (try readTime())), looped: false)
+        voice.play(after: max(0, command.time - (try readTime()) - compensation),
+          looped: false)
         players[event.id] = (command.clipID, voice)
       }
       // Keep the latest time so an earlier play cannot rewind the history.
@@ -795,7 +833,7 @@ final class EngineAudioPlayback {
       }
       if let voice = loop.voice, loop.end <= now + 0.5,
         loop.scheduledEnd != loop.end {
-        voice.stop(after: loop.end - now)
+        voice.stop(after: loop.end - now - outputCompensation)
         loops[id]?.scheduledEnd = loop.end
       }
       guard loop.voice == nil, loop.start <= now + 0.5,
@@ -809,10 +847,11 @@ final class EngineAudioPlayback {
         continue
       }
       loops[id]?.voice = voice
-      voice.play(after: max(0, loop.start - startTime), looped: true)
+      voice.play(after: max(0, loop.start - startTime - outputCompensation),
+        looped: true)
       let stopTime = try currentTime()
       if loop.end <= stopTime + 0.5 {
-        voice.stop(after: max(0, loop.end - stopTime))
+        voice.stop(after: max(0, loop.end - stopTime - outputCompensation))
         loops[id]?.scheduledEnd = loop.end
       }
     }

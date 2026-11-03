@@ -159,6 +159,40 @@ final class EngineAudioTests: EngineHostTestCase {
   }
 
   @MainActor
+  func testOutputLatencyStartsScheduledSoundsEarlyButNeverDelaysImmediateOnes()
+    throws {
+    var voices = [MockEffectVoice]()
+    let audio = try EngineAudioPlayback(clips: [1: Data()]) { _, _ in
+      let voice = MockEffectVoice()
+      voices.append(voice)
+      return voice
+    }
+    defer { audio.stop() }
+    audio.outputLatency = { 0.01 }
+    try audio.start()
+    XCTAssertEqual(audio.outputCompensation, 0.01)
+    try audio.update([
+      EngineAudioCommand(clipID: 1, time: 1, minimumDistance: 0),
+      EngineAudioCommand(clipID: 1, time: 1.3, minimumDistance: 0),
+      EngineAudioCommand(clipID: 1, time: 1.005, minimumDistance: 0)
+    ], at: 1, loopCommands: [
+      .start(id: 1, clipID: 1, time: 1.2), .stop(id: 1, time: 1.4)
+    ], currentTime: { 1 })
+    let delays = voices.compactMap(\.delays.first).sorted()
+    XCTAssertEqual(delays.count, 4)
+    XCTAssertEqual(delays[0], 0, accuracy: 1e-12, "Immediate stays immediate")
+    XCTAssertEqual(delays[1], 0, accuracy: 1e-12,
+      "Due within the latency: as soon as possible")
+    XCTAssertEqual(delays[2], 0.19, accuracy: 1e-12)
+    XCTAssertEqual(delays[3], 0.29, accuracy: 1e-12)
+    let loop = try XCTUnwrap(voices.first { $0.looping == [true] })
+    XCTAssertEqual(loop.stopDelays.first ?? -1, 0.39, accuracy: 1e-12)
+    audio.outputLatency = { .nan }
+    try audio.start()
+    XCTAssertEqual(audio.outputCompensation, 0)
+  }
+
+  @MainActor
   func testScheduledLoopsRecheckTimeAfterAllocationAndBeforeStop() throws {
     var now = 0.0
     var voices = [MockEffectVoice]()
@@ -783,16 +817,18 @@ final class EngineAudioTests: EngineHostTestCase {
           options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [8],
           particleEffectIDs: [], playbackSpeed: speed, audioOffset: offset)
         let effective = offset + 0.02
-        for _ in 0..<2 {
+        // A frame drawn for a later display time still plays immediate
+        // sounds now, on the music clock.
+        for audioNow in [2, 1.97] {
           XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), offset)
           XCTAssertEqual(try runtime.audioOffset, effective)
-          try runtime.update(at: 2)
+          try runtime.update(at: 2, audioNow: audioNow)
           XCTAssertEqual(runtime.host.takeAudioCommands().map(\.time),
-            [2, 3 - effective])
+            [audioNow, 3 - effective])
           XCTAssertEqual(runtime.host.takeLoopCommands(), [
-            .start(id: 1, clipID: 8, time: 2),
+            .start(id: 1, clipID: 8, time: audioNow),
             .start(id: 2, clipID: 8, time: 4 - effective),
-            .stop(id: 1, time: 2), .stop(id: 2, time: 5 - effective)])
+            .stop(id: 1, time: audioNow), .stop(id: 2, time: 5 - effective)])
           runtime.restart()
         }
         runtime.memory.set(block: 1000, index: 2, value: .nan)

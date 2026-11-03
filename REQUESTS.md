@@ -7,7 +7,7 @@ This lists the owner's requests that are still open and the directives that stil
 - **Device testing gate.** Physical-device testing waits until Sonolus API coverage is complete, then happens in one batch ([below](#physical-device-batch)). Do not ask for phone unlocks, install development builds or run device checks before then, unless the owner explicitly asks for a specific issue to be checked sooner; that exception covers only that issue. A connected or unlocked phone does not reopen testing. (In force since late September; restated October 6.)
 - **Stack functions.** Implementation and upstream clarification are deferred (September 29). Do not implement a guessed layout or post the clarification draft (`tmp/stack-contract-question.md`, ignored); posting it to the [Sonolus feedback repository](https://github.com/Sonolus/feedback) needs the owner's permission.
 - **Pushing.** Push only when asked, and at most once per calendar day (America/New_York), to stay within App Store Connect's upload limit (build 82 was rejected with error 90382, "Upload limit reached"). Batch tested commits into one release. Check the day's pushes before publishing, and assume none are left if the count can't be established. Do not get around the limit with another branch, tag or release trigger. (October 3.)
-- **No guessed timing corrections.** Do not add a calibration offset, loosen timing tolerances or infer the audio-offset convention from an early/late distribution.
+- **No guessed timing corrections.** Do not add a fixed calibration offset, loosen timing tolerances or infer the audio-offset convention from an early/late distribution. Corrections must come from values the system reports and that were checked physically (November 3: display target time; output latency on the speaker and wired outputs only, never guessed for Bluetooth). A player's own calibration result is an explicit override.
 - **Repository contents.** Do not commit third-party charts, audio, skins or diagnostic logs; scratch probes and downloads stay in the ignored `tmp/`. Do not crawl song servers beyond bounded pages; the paced stack-search crawl was a specific, now finished, authorization.
 - **Working method.** The owner asked for breadth-first triage across areas, ranked by impact, rather than perfecting one subsystem at a time, and for narrow completion claims. The full [working guidelines](docs/archive/REQUESTS-2026-10.md#audit-working-guidelines--september-30-2026) are archived.
 
@@ -27,7 +27,7 @@ Deferred under the gate above. Record the tested build and the result for each c
 
 | Check | Originating report or reason |
 | --- | --- |
-| Audio and display alignment; usability of Input Timing and Visual Timing; before/after latency of the `CAMetalDisplayLink` change (baseline: 33.76–34.12 ms sample-to-present on the old driver) | Reported audio/animation timing difference and excess Early judgments (September 25) |
+| Usability of the calibration screen; wired-headphone and Bluetooth hit-sound alignment (speaker and display were measured on November 3, see [COMPATIBILITY.md](COMPATIBILITY.md#audio-input-and-timing)) | Reported audio/animation timing difference and excess Early judgments (September 25) |
 | Close and coincident multitouch; normal and other flick variants, including a flick right after a long stationary hold; hold heads, ticks and releases | On the accumulated device-check list since September; simulator contacts are synthetic |
 | Hit-effect appearance, including the particle size fix and the new seed-mixed randomness | Reported phone hit-effect problems |
 | Dense-chart and curved-hold frame pacing and frame-time tails, especially "shake it!" Hard 18 (full MORE MORE JUMP / Kagamine Rin) | Reported curved-hold slowdown |
@@ -66,3 +66,4 @@ Don't reopen these without a new request.
 - Intro skipping may pass unchanged initial scenery (approved September 30).
 - Arcade score streak bonuses keep their current reading (October 28).
 - The Visual Timing entry in saved results records the engine-adjusted offset (intended).
+- Visual Timing and Input Timing are saved per kind of audio output (Speaker & Wired, Bluetooth & Other), shared by every engine; values saved per engine before November 3 are dropped, since they compensated for delays the app now removes (owner, November 3).

@@ -251,8 +251,14 @@ final class EngineRuntimeLifecycleTests: EngineHostTestCase {
           """#.utf8)])),
       level: level, server: server, title: "Restart")
     let originalSettings = model.settings
-    defer { model.stop(); model.settings = originalSettings }
+    let originalTiming = model.timing
+    defer {
+      model.stop()
+      model.settings = originalSettings
+      model.timing = originalTiming
+    }
     model.settings = GameplayPreferences()
+    model.timing = TimingCalibration()
     model.start()
     let size = CGSize(width: 800, height: 400)
     model.engineFrame(size: size, touches: [])
@@ -284,16 +290,19 @@ final class EngineRuntimeLifecycleTests: EngineHostTestCase {
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
     let resized = try XCTUnwrap(model.engineRuntime)
     XCTAssertFalse(resized === changedSettings)
-    model.settings.inputOffsetMilliseconds = -30
+    model.timing.inputOffsetMilliseconds = -30
     model.restart()
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
     let calibrated = try XCTUnwrap(model.engineRuntime)
     XCTAssertFalse(calibrated === resized)
-    XCTAssertEqual(calibrated.memory.value(block: 1000, index: 3), -0.03)
+    XCTAssertEqual(try calibrated.inputOffset, -0.03, accuracy: 1e-12)
+    XCTAssertEqual(calibrated.memory.value(block: 1000, index: 3),
+      -0.03 + GameplayModel.displayLead, accuracy: 1e-12,
+      "Engines wait out the display lead before closing judgment windows")
     model.restart()
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
     XCTAssertTrue(model.engineRuntime === calibrated)
-    model.settings.visualOffsetMilliseconds = 80
+    model.timing.visualOffsetMilliseconds = 80
     model.restart()
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
     let visuallyCalibrated = try XCTUnwrap(model.engineRuntime)
@@ -301,10 +310,10 @@ final class EngineRuntimeLifecycleTests: EngineHostTestCase {
     XCTAssertEqual(try visuallyCalibrated.audioOffset, 0.08)
     XCTAssertEqual(model.playAudioOffset, 0.08)
     XCTAssertEqual(model.currentTime, -0.08, accuracy: 1e-12)
-    model.settings.visualOffsetMilliseconds = -80
+    model.timing.visualOffsetMilliseconds = -80
     XCTAssertEqual(model.playAudioOffset, 0.08,
       "Changing settings must not move an active play's clock")
-    model.settings.visualOffsetMilliseconds = 80
+    model.timing.visualOffsetMilliseconds = 80
     model.restart()
     model.engineFrame(size: CGSize(width: 900, height: 400), touches: [])
     XCTAssertTrue(model.engineRuntime === visuallyCalibrated)

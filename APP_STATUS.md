@@ -71,8 +71,15 @@ Gameplay preferences are stored per engine. Available controls include:
 - Graphics preference where the engine leaves its skin render mode at default.
 - Separate Input Timing and Visual Timing adjustments, each with a ±250 ms
   range, 1 ms increments, and reset. Input Timing adjusts judgment timing;
-  Visual Timing changes chart alignment relative to the music. These are
+  Visual Timing changes chart alignment relative to the music. They are
+  shared by all engines and kept separately for Speaker & Wired and for
+  Bluetooth & Other. A calibration screen sets Visual Timing with a flash and
+  click, then suggests Input Timing from taps along to the clicks. These are
   explicit player overrides, not automatically inferred corrections.
+- The app itself draws each frame for when it reaches the screen and, on the
+  speaker and wired outputs, starts hit sounds early by the output's reported
+  latency, so no calibration should be needed there (measured on an iPhone 16
+  Pro speaker; wired headphones not yet checked).
 - Optional Record Playback Timing diagnostics. Reports stay local, are saved
   with results, and can be shared explicitly by the player.
 
@@ -140,6 +147,7 @@ Made October 27–28, 2026; not yet in a TestFlight build.
 - Engine runtime: a `Draw`/`DrawCurved*` call with a non-finite argument draws nothing instead of ending play (the CGSS engine's flick connectors divide by zero on their first frame).
 - App Store: the app now ships a privacy manifest (`PrivacyInfo.xcprivacy`): no tracking, no collected data, and reasons for its required-reason APIs: its own UserDefaults (CA92.1), timestamps of its cached files (C617.1) and system uptime for timing gameplay (35F9.1).
 - Server text uses Sonolus locale codes (`zhs`, `zht`) and falls back to the first language provided.
+- Timing (November 3): notes are drawn for when the frame reaches the screen (they were 33 ms late on a 60 Hz iPhone); hit sounds on the speaker and wired outputs are no longer late by the output latency (10 ms on an iPhone speaker); Visual and Input Timing are shared by all engines, kept per kind of audio output, reset to zero, and can be set on a new calibration screen.
 - Results and history: a failed save keeps the result and offers Retry Save; one undecodable history entry no longer blanks history or blocks saves; summary timing statistics now leave out automatic hold ticks, like the distribution.
 - Gameplay: rotating or leaving the app mid-song explains why play stopped; one unreadable gameplay setting no longer resets the others, and loading settings never overwrites the saved ones.
 - Engine runtime: a sound is dropped instead of ending play when all 256 effect voices are busy; empty effect clips are rejected; a zero minimum distance never suppresses an earlier sound; `Random` accepts reversed bounds and `RandomInteger` with an empty range returns its lower bound instead of ending play; NaN spawn order sorts last; a touch whose release was missed is ended before its ID is reused.

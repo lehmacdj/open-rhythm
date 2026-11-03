@@ -326,9 +326,10 @@ final class CatalogTests: XCTestCase {
     preferences.save(filter, for: "one")
     preferences.save(GameplayPreferences(scoreDisplay: .countDown, noteSpeed: 8,
       judgementDisplay: .off, scoreMode: 2, engineOptions: ["#MIRROR": 1],
-      skinRenderMode: .lightweight, inputOffsetMilliseconds: -35,
-      visualOffsetMilliseconds: 42),
+      skinRenderMode: .lightweight),
       for: "one")
+    preferences.save(TimingCalibration(visualOffsetMilliseconds: 42,
+      inputOffsetMilliseconds: -35), for: .wired)
     let reopened = UserPreferences(defaults: defaults)
     filter.query = ""
     XCTAssertEqual(reopened.filter(for: "one"), filter)
@@ -337,8 +338,10 @@ final class CatalogTests: XCTestCase {
     XCTAssertEqual(reopened.gameplay(for: "one").judgementDisplay, .off)
     XCTAssertEqual(reopened.gameplay(for: "one").scoreMode, 2)
     XCTAssertEqual(reopened.gameplay(for: "one").skinRenderMode, .lightweight)
-    XCTAssertEqual(reopened.gameplay(for: "one").inputOffsetSeconds, -0.035)
-    XCTAssertEqual(reopened.gameplay(for: "one").visualOffsetSeconds, 0.042)
+    XCTAssertEqual(reopened.timing(for: .wired).inputOffsetSeconds, -0.035)
+    XCTAssertEqual(reopened.timing(for: .wired).visualOffsetSeconds, 0.042)
+    XCTAssertEqual(reopened.timing(for: .wireless), TimingCalibration(),
+      "Each route kind keeps its own timing")
     XCTAssertEqual(reopened.gameplay(for: "one").engineOptions, ["#MIRROR": 1])
     XCTAssertEqual(reopened.gameplay(for: "two"), GameplayPreferences())
     XCTAssertEqual(ScoreDisplayMode.countDown.score(judgements: [:],

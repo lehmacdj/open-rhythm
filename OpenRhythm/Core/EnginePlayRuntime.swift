@@ -294,6 +294,8 @@ final class EnginePlayRuntime {
   private(set) var accuracyScore = EngineAccuracyScore()
   private(set) var life = EngineLife(configuration: [0, 0, 0, 0, 0, 0, 1000, 1000])
   private let engine: EnginePlayData
+  /// How far frame time may run ahead of the newest touch, in seconds.
+  let displayLead: Double
   private(set) var resultBuckets = [EngineResultBucket]()
   private let staticIntroArchetypes: Set<Int>
   private let interpreter: EngineInterpreter
@@ -322,6 +324,7 @@ final class EnginePlayRuntime {
     safeArea: [Double]? = nil,
     playbackSpeed: Double = 1,
     inputOffset: Double = 0,
+    displayLead: Double = 0,
     audioOffset: Double = 0,
     debugMode: Bool = false,
     backgroundQuad: [Double]? = nil,
@@ -331,6 +334,7 @@ final class EnginePlayRuntime {
     guard aspectRatio.isFinite, aspectRatio > 0,
       playbackSpeed.isFinite, (0.05...4).contains(playbackSpeed),
       inputOffset.isFinite, audioOffset.isFinite,
+      displayLead.isFinite, displayLead >= 0,
       level.entities.count <= 100_000,
       uiConfiguration.count == 10, uiConfiguration.allSatisfy(\.isFinite),
       backgroundQuad == nil || (backgroundQuad?.count == 8
@@ -340,6 +344,7 @@ final class EnginePlayRuntime {
       throw EngineInterpreterError.invalidArguments("runtime environment")
     }
     self.engine = engine
+    self.displayLead = displayLead
     staticIntroArchetypes = engine.staticIntroArchetypes
     let missing = try engine.unsupportedFunctions()
     guard missing.isEmpty else {
@@ -382,7 +387,11 @@ final class EnginePlayRuntime {
       value: debugMode ? 1 : 0)
     memory.set(block: Block.runtimeEnvironment, index: 1, value: aspectRatio)
     memory.set(block: Block.runtimeEnvironment, index: 2, value: audioOffset)
-    memory.set(block: Block.runtimeEnvironment, index: 3, value: inputOffset)
+    // Frames run up to `displayLead` ahead of the newest touch. Engines
+    // close a judgment window when the frame time passes its end plus this
+    // offset, so it includes the lead; touch times have it added back.
+    memory.set(block: Block.runtimeEnvironment, index: 3,
+      value: inputOffset + displayLead)
     for (index, value) in (backgroundQuad ??
       [-aspectRatio, -1, -aspectRatio, 1, aspectRatio, 1, aspectRatio, -1]).enumerated() {
       memory.set(block: Block.runtimeBackground, index: index, value: value)
@@ -523,16 +532,29 @@ final class EnginePlayRuntime {
     }
   }
 
-  func update(at time: TimeInterval, touches: [EngineTouch] = []) throws {
+  /// The engine's input offset without the display lead: what touch times
+  /// are corrected by.
+  var inputOffset: Double {
+    get throws {
+      let offset = memory.value(block: Block.runtimeEnvironment, index: 3)
+        - displayLead
+      guard offset.isFinite else {
+        throw EngineInterpreterError.invalidArguments("input offset")
+      }
+      return offset
+    }
+  }
+
+  /// `time` is when this frame reaches the screen; `audioNow` is the music
+  /// clock now, at most `displayLead` earlier.
+  func update(at time: TimeInterval, audioNow: TimeInterval? = nil,
+    touches: [EngineTouch] = []) throws {
     _ = try audioOffset
     // RuntimeEnvironment is writable in preprocess. Use the engine's resulting
     // value, and adjust only event times, not frame time or measured velocity.
-    let inputOffset = memory.value(block: Block.runtimeEnvironment, index: 3)
-    guard inputOffset.isFinite else {
-      throw EngineInterpreterError.invalidArguments("input offset")
-    }
+    let inputOffset = try inputOffset
     let spawned = host.takeSpawnCommands()
-    try host.beginFrame(at: time)
+    try host.beginFrame(at: time, audioNow: audioNow)
     for amount in host.takeScheduledLife(at: time) { life.add(amount) }
     judgments.removeAll(keepingCapacity: true)
     let delta = max(0, time - previousTime)

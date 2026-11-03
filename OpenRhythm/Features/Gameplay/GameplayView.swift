@@ -56,6 +56,7 @@ private struct GameplayScreen: View {
     .persistentSystemOverlays(model.phase == .playing ? .hidden : .automatic)
     .sheet(isPresented: $showsSettings) {
       GameplaySettingsPanel(settings: $model.settings,
+        timing: $model.timing, timingRoute: model.timingRoute,
         noteSpeed: model.presentationAssets?.noteSpeedOption,
         scoreMode: model.presentationAssets?.scoreModeOption,
         options: model.presentationAssets?.configuration.options ?? [],
@@ -97,6 +98,7 @@ private struct GameplayScreen: View {
       .buttonStyle(.borderedProminent)
       .disabled(!model.areAudioServicesAvailable)
       Button("Gameplay Settings", systemImage: "slider.horizontal.3") {
+        model.refreshTimingRoute()
         showsSettings = true
       }
     }
@@ -278,6 +280,8 @@ private struct GameplayScreen: View {
 
 private struct GameplaySettingsPanel: View {
   @Binding var settings: GameplayPreferences
+  @Binding var timing: TimingCalibration
+  var timingRoute = AudioRouteKind.wired
   let noteSpeed: EngineConfiguration.Option?
   let scoreMode: EngineConfiguration.Option?
   let options: [EngineConfiguration.Option]
@@ -314,30 +318,7 @@ private struct GameplaySettingsPanel: View {
           Text("Early/Late uses the engine’s timing-display threshold, including qualifying PERFECT judgements.")
             .font(.footnote).foregroundStyle(.secondary)
         }
-        Section("Visual Timing") {
-          LabeledContent("Offset",
-            value: String(format: "%+.0f ms", settings.visualOffsetMilliseconds))
-          Slider(value: $settings.visualOffsetMilliseconds,
-            in: -250...250, step: 1)
-            .accessibilityLabel("Visual Timing Offset in milliseconds")
-          Stepper("Adjust by 1 ms", value: $settings.visualOffsetMilliseconds,
-            in: -250...250, step: 1)
-          Text("Positive values show notes later relative to music; negative values show them earlier. Input timing follows the notes. Music is not trimmed, and judgment-window sizes are unchanged. Applies on the next play.")
-            .font(.footnote).foregroundStyle(.secondary)
-          Button("Reset Visual Timing") { settings.visualOffsetMilliseconds = 0 }
-        }
-        Section("Input Timing") {
-          LabeledContent("Offset",
-            value: String(format: "%+.0f ms", settings.inputOffsetMilliseconds))
-          Slider(value: $settings.inputOffsetMilliseconds,
-            in: -250...250, step: 1)
-            .accessibilityLabel("Input Timing Offset in milliseconds")
-          Stepper("Adjust by 1 ms", value: $settings.inputOffsetMilliseconds,
-            in: -250...250, step: 1)
-          Text("Negative values compensate for early inputs; positive values compensate for late inputs. This does not change music timing or judgment-window sizes.")
-            .font(.footnote).foregroundStyle(.secondary)
-          Button("Reset Input Timing") { settings.inputOffsetMilliseconds = 0 }
-        }
+        TimingSettingsSections(timing: $timing, route: timingRoute)
         Section("Diagnostics") {
           Toggle("Engine Debug Mode", isOn: $settings.engineDebugMode)
           Text("Allow the engine to display debug values and pause playback. Applies on the next play.")
@@ -724,11 +705,13 @@ private struct EngineAnchorLayout: Layout {
      "values":["Normal","Strict"]}]}
     """#.utf8))
   GameplaySettingsPanel(settings: .constant(GameplayPreferences()),
+    timing: .constant(TimingCalibration()),
     noteSpeed: nil, scoreMode: nil, options: configuration.options)
 }
 
 #Preview("Engine Forced Render Mode") {
   GameplaySettingsPanel(settings: .constant(GameplayPreferences()),
+    timing: .constant(TimingCalibration()),
     noteSpeed: nil, scoreMode: nil, options: [],
     forcedSkinRenderMode: .lightweight)
 }
@@ -937,7 +920,8 @@ final class EnginePlayfieldView: UIView, CAMetalDisplayLinkDelegate {
       inputGeneration: model.inputGeneration)
     let sampleTime = model.playbackTime
     if model.engineFrame(size: bounds.size,
-      touches: touchPool.touches, safeAreaInsets: safeAreaInsets) {
+      touches: touchPool.touches, safeAreaInsets: safeAreaInsets,
+      displayHostTime: targetHostTime) {
       touchPool.nextFrame(at: sampleTime)
     }
     guard !model.isStartingPlayback || model.isDebugPaused else { return }

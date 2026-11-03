@@ -288,6 +288,25 @@ final class GameplayModel {
       }
     }
   }
+  /// Visual and Input Timing for the current audio output, shared by every
+  /// engine.
+  var timing = TimingCalibration() {
+    didSet {
+      if timingLoaded { UserPreferences.shared.save(timing, for: timingRoute) }
+    }
+  }
+  private(set) var timingRoute = AudioRouteKind.wired
+  private var timingLoaded = false
+
+  /// Follow the current audio output: each kind keeps its own timing.
+  func refreshTimingRoute() {
+    let route = AudioRouteKind.current
+    guard !timingLoaded || route != timingRoute else { return }
+    timingLoaded = false
+    timingRoute = route
+    timing = UserPreferences.shared.timing(for: route)
+    timingLoaded = true
+  }
 
   var displayedScore: Int {
     if let engineScore {
@@ -488,6 +507,7 @@ final class GameplayModel {
     let key = level.engineKey(server: server)
     settings = UserPreferences.shared.gameplay(for: key)
     preferenceKey = key
+    refreshTimingRoute()
     bgmOffset = bundle.level.bgmOffset
     resultLevel = level
     resultServer = server
@@ -548,8 +568,9 @@ final class GameplayModel {
       return
     }
     playbackSpeed = speed
-    playInputOffset = settings.inputOffsetSeconds
-    requestedAudioOffset = settings.visualOffsetSeconds
+    refreshTimingRoute()
+    playInputOffset = timing.inputOffsetSeconds
+    requestedAudioOffset = timing.visualOffsetSeconds
     playAudioOffset = requestedAudioOffset
     timingRecorder = settings.recordTimingDiagnostics ? PlaybackTimingRecorder() : nil
     playbackTiming = nil
@@ -890,9 +911,18 @@ final class GameplayModel {
     )
   }
 
+  /// The most a frame's chart time runs ahead of the music clock: the
+  /// display link targets a vsync one or two 60 Hz refreshes after its
+  /// callback (`preferredFrameLatency` 1). A longer wait is drawn late by
+  /// the excess rather than delaying judgment further.
+  static let displayLead = 2.0 / 60
+
+  /// `displayHostTime` is when this frame is expected on screen (host
+  /// seconds); nil draws the chart at the music clock's current time.
   @discardableResult
   func engineFrame(size: CGSize, touches: [EngineTouch],
-    safeAreaInsets: UIEdgeInsets = .zero) -> Bool {
+    safeAreaInsets: UIEdgeInsets = .zero,
+    displayHostTime: Double? = nil) -> Bool {
     frameTiming = nil
     guard phase == .playing, !isDebugPaused,
       size.width > 0, size.height > 0,
@@ -933,6 +963,7 @@ final class GameplayModel {
               ?? Array(repeating: 1, count: 10),
             safeArea: safeArea, playbackSpeed: playbackSpeed,
             inputOffset: playInputOffset,
+            displayLead: Self.displayLead,
             audioOffset: requestedAudioOffset,
             debugMode: settings.engineDebugMode,
             backgroundQuad: try assets.background?.initialQuad(screenAspect: aspect)
@@ -972,28 +1003,40 @@ final class GameplayModel {
         engineAudio?.pause(at: playbackTime)
         return false
       }
-      let sampleStart = timingRecorder.map { _ in CACurrentMediaTime() }
-      currentTime = playbackTime
-      if let recorder = timingRecorder, let sampleStart {
-        let sampleEnd = CACurrentMediaTime()
-        let midpoint = sampleStart + (sampleEnd - sampleStart) / 2
+      let sampleStart = CACurrentMediaTime()
+      let audioNow = playbackTime
+      let sampleEnd = CACurrentMediaTime()
+      let sampleHostTime = sampleStart + (sampleEnd - sampleStart) / 2
+      // Draw the chart as it should look when this frame reaches the screen.
+      // Chart seconds are wall-clock seconds at every playback speed.
+      let lead = displayHostTime.map {
+        min(Self.displayLead, max(0, $0 - sampleHostTime))
+      } ?? 0
+      // A shorter lead than the last frame's must not step time backwards.
+      currentTime = max(audioNow + lead,
+        min(currentTime, audioNow + Self.displayLead))
+      if let recorder = timingRecorder {
         recorder.record(.clockRead, seconds: sampleEnd - sampleStart)
+        if let displayHostTime {
+          recorder.record(.displayLead, seconds: displayHostTime - sampleHostTime)
+        }
         frameTiming = PlaybackFrameTiming(recorder: recorder,
-          sampleHostTime: midpoint)
+          sampleHostTime: sampleHostTime,
+          frameHostTime: sampleHostTime + currentTime - audioNow)
         if tailStart == nil, player?.timeControlStatus == .playing,
-          let mediaTime = eventClock?.mediaTime(at: midpoint) {
+          let mediaTime = eventClock?.mediaTime(at: sampleHostTime) {
           recorder.record(.clockDifference,
-            seconds: clockMapping.chartTime(mediaTime: mediaTime) - currentTime)
+            seconds: clockMapping.chartTime(mediaTime: mediaTime) - audioNow)
           // A scheduled player start can anchor the moving timebase in the
           // future. Keep its raw extrapolation visible, but separately compare
           // the same seek-floor clamp actually used for input timestamps.
           recorder.record(.inputClockDifference,
             seconds: clockMapping.inputChartTime(mediaTime: mediaTime,
-              minimumMediaTime: skippedIntroDuration) - currentTime)
+              minimumMediaTime: skippedIntroDuration) - audioNow)
         }
       }
       let runtimeStart = timingRecorder.map { _ in CACurrentMediaTime() }
-      try runtime.update(at: currentTime, touches: touches)
+      try runtime.update(at: currentTime, audioNow: audioNow, touches: touches)
       if let runtimeStart {
         timingRecorder?.record(.runtime,
           seconds: CACurrentMediaTime() - runtimeStart)
@@ -1016,9 +1059,11 @@ final class GameplayModel {
         advancing: tailStart != nil || player?.timeControlStatus == .playing,
         loopCommands: runtime.host.takeLoopCommands(),
         currentTime: { self.playbackTime })
-      if let audioStart {
+      if let audioStart, let engineAudio {
         timingRecorder?.record(.effectAudio,
           seconds: CACurrentMediaTime() - audioStart)
+        timingRecorder?.record(.effectCompensation,
+          seconds: engineAudio.outputCompensation)
       }
       finishIfReady()
       return true

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 enum ScoreDisplayMode: String, Codable, CaseIterable, Identifiable {
@@ -39,30 +40,12 @@ struct GameplayPreferences: Codable, Equatable {
   var skinRenderMode = EngineSkinRenderMode.standard
   var recordTimingDiagnostics = false
   var engineDebugMode = false
-  var visualOffsetMilliseconds: Double = 0 {
-    didSet {
-      visualOffsetMilliseconds = Self.clampedInputOffset(visualOffsetMilliseconds)
-    }
-  }
-  var inputOffsetMilliseconds: Double = 0 {
-    didSet {
-      inputOffsetMilliseconds = Self.clampedInputOffset(inputOffsetMilliseconds)
-    }
-  }
-
-  static func clampedInputOffset(_ value: Double) -> Double {
-    value.isFinite ? min(250, max(-250, value)) : 0
-  }
-
-  var inputOffsetSeconds: Double { inputOffsetMilliseconds / 1000 }
-  var visualOffsetSeconds: Double { visualOffsetMilliseconds / 1000 }
 
   init(scoreDisplay: ScoreDisplayMode = .countUp, noteSpeed: Double? = nil,
     judgementDisplay: JudgementDisplayMode = .timing, scoreMode: Int? = nil,
     engineOptions: [String: Double] = [:],
     skinRenderMode: EngineSkinRenderMode = .standard,
-    inputOffsetMilliseconds: Double = 0, recordTimingDiagnostics: Bool = false,
-    visualOffsetMilliseconds: Double = 0, engineDebugMode: Bool = false) {
+    recordTimingDiagnostics: Bool = false, engineDebugMode: Bool = false) {
     self.scoreDisplay = scoreDisplay
     self.noteSpeed = noteSpeed
     self.judgementDisplay = judgementDisplay
@@ -71,15 +54,11 @@ struct GameplayPreferences: Codable, Equatable {
     self.skinRenderMode = skinRenderMode
     self.recordTimingDiagnostics = recordTimingDiagnostics
     self.engineDebugMode = engineDebugMode
-    self.inputOffsetMilliseconds = Self.clampedInputOffset(inputOffsetMilliseconds)
-    self.visualOffsetMilliseconds = Self.clampedInputOffset(visualOffsetMilliseconds)
   }
 
   private enum CodingKeys: String, CodingKey {
     case scoreDisplay, noteSpeed, judgementDisplay, scoreMode, engineOptions
-    case skinRenderMode, inputOffsetMilliseconds, recordTimingDiagnostics
-    case visualOffsetMilliseconds
-    case engineDebugMode
+    case skinRenderMode, recordTimingDiagnostics, engineDebugMode
   }
 
   // Each field falls back alone: a value this build cannot read (such as a
@@ -100,10 +79,71 @@ struct GameplayPreferences: Codable, Equatable {
       forKey: .recordTimingDiagnostics) ?? false
     engineDebugMode = values.lenient(Bool.self,
       forKey: .engineDebugMode) ?? false
-    inputOffsetMilliseconds = Self.clampedInputOffset(
-      values.lenient(Double.self, forKey: .inputOffsetMilliseconds) ?? 0)
-    visualOffsetMilliseconds = Self.clampedInputOffset(
-      values.lenient(Double.self, forKey: .visualOffsetMilliseconds) ?? 0)
+  }
+}
+
+/// The audio outputs a timing calibration belongs to. Latency comes from the
+/// device and its output, not from the engine, so all engines share one.
+enum AudioRouteKind: String, Codable, CaseIterable, Sendable {
+  /// The built-in speaker or receiver and wired outputs, whose reported
+  /// latency hit sounds are compensated for automatically.
+  case wired
+  /// Bluetooth, AirPlay, CarPlay and HDMI: left to the player's calibration.
+  case wireless
+
+  init(_ route: AVAudioSessionRouteDescription) {
+    let wired: Set<AVAudioSession.Port> = [.builtInSpeaker, .builtInReceiver,
+      .headphones, .usbAudio, .lineOut]
+    self = !route.outputs.isEmpty
+      && route.outputs.allSatisfy({ wired.contains($0.portType) })
+      ? .wired : .wireless
+  }
+
+  static var current: AudioRouteKind {
+    AudioRouteKind(AVAudioSession.sharedInstance().currentRoute)
+  }
+
+  var title: String {
+    switch self {
+    case .wired: "Speaker & Wired"
+    case .wireless: "Bluetooth & Other"
+    }
+  }
+}
+
+/// The player's Visual Timing and Input Timing for one kind of audio route.
+struct TimingCalibration: Codable, Equatable, Sendable {
+  static let range = -250.0...250.0
+  var visualOffsetMilliseconds = 0.0 {
+    didSet { visualOffsetMilliseconds = Self.clamped(visualOffsetMilliseconds) }
+  }
+  var inputOffsetMilliseconds = 0.0 {
+    didSet { inputOffsetMilliseconds = Self.clamped(inputOffsetMilliseconds) }
+  }
+
+  var visualOffsetSeconds: Double { visualOffsetMilliseconds / 1000 }
+  var inputOffsetSeconds: Double { inputOffsetMilliseconds / 1000 }
+
+  init(visualOffsetMilliseconds: Double = 0, inputOffsetMilliseconds: Double = 0) {
+    self.visualOffsetMilliseconds = Self.clamped(visualOffsetMilliseconds)
+    self.inputOffsetMilliseconds = Self.clamped(inputOffsetMilliseconds)
+  }
+
+  static func clamped(_ value: Double) -> Double {
+    value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : 0
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case visualOffsetMilliseconds, inputOffsetMilliseconds
+  }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      visualOffsetMilliseconds: values.lenient(Double.self,
+        forKey: .visualOffsetMilliseconds) ?? 0,
+      inputOffsetMilliseconds: values.lenient(Double.self,
+        forKey: .inputOffsetMilliseconds) ?? 0)
   }
 }
 
@@ -151,6 +191,18 @@ final class UserPreferences {
 
   func save(_ gameplay: GameplayPreferences, for engine: String) {
     write(gameplay, key: "gameplay:\(engine)")
+  }
+
+  /// Timing for a route kind. Values saved per engine before November 2026
+  /// compensated for display and hit-sound delays the app now removes
+  /// itself, so they are deliberately not carried over.
+  func timing(for route: AudioRouteKind) -> TimingCalibration {
+    read(TimingCalibration.self, key: "timing:\(route.rawValue)")
+      ?? TimingCalibration()
+  }
+
+  func save(_ timing: TimingCalibration, for route: AudioRouteKind) {
+    write(timing, key: "timing:\(route.rawValue)")
   }
 
   private func read<T: Decodable>(_ type: T.Type, key: String) -> T? {

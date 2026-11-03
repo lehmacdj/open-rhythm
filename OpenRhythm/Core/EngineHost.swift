@@ -153,6 +153,9 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
   let archetypeCount: Int
 
   private(set) var time: TimeInterval = 0
+  /// The music clock now. A frame's time is when it reaches the screen,
+  /// which is later; immediate sounds use this so they are never delayed.
+  private(set) var audioNow: TimeInterval = 0
   private(set) var draws = [EngineDrawCommand]()
   private(set) var prints = [EnginePrintCommand]()
   private(set) var particles = [Int: EngineParticleInstance]()
@@ -252,11 +255,12 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
     }
   }
 
-  func beginFrame(at time: TimeInterval) throws {
-    guard time.isFinite else {
+  func beginFrame(at time: TimeInterval, audioNow: TimeInterval? = nil) throws {
+    guard time.isFinite, audioNow?.isFinite ?? true else {
       throw EngineInterpreterError.invalidArguments("frame time")
     }
     self.time = time
+    self.audioNow = min(time, audioNow ?? time)
     loopStops = loopStops.filter { $0.value > time }
     draws.removeAll(keepingCapacity: true)
     drawSegmentCount = 0
@@ -474,7 +478,7 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       guard effectClipIDs.contains(id) else { return 0 }
       try checkLimit(audio.count + loopAudio.count, resource: "audio commands per frame")
       audio.append(EngineAudioCommand(
-        clipID: id, time: function == "Play" ? time : try audioTime(a[1]),
+        clipID: id, time: function == "Play" ? audioNow : try audioTime(a[1]),
         minimumDistance: max(0, a.last!)
       ))
       return 0
@@ -493,13 +497,13 @@ final class CommandEngineRuntimeHost: EngineRuntimeHost {
       nextLoopID += 1
       loopStops[id] = .infinity
       loopAudio.append(.start(id: id, clipID: clipID,
-        time: function == "PlayLooped" ? time : try audioTime(a[1])))
+        time: function == "PlayLooped" ? audioNow : try audioTime(a[1])))
       return Double(id)
     case "StopLooped", "StopLoopedScheduled":
       try validate(a, count: function == "StopLooped" ? 1 : 2, function: function)
       let id = try identifier(a[0], function: function)
       guard let existing = loopStops[id] else { return 0 }
-      let end = function == "StopLooped" ? time : try audioTime(a[1])
+      let end = function == "StopLooped" ? audioNow : try audioTime(a[1])
       guard end < existing else { return 0 }
       try checkLimit(audio.count + loopAudio.count, resource: "audio commands per frame")
       loopAudio.append(.stop(id: id, time: end))

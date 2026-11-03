@@ -70,6 +70,8 @@
 		B00000000000000000000013 /* EngineArchiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* EngineArchiveTests.swift */; };
 		B00000000000000000000008 /* PlaybackClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* PlaybackClockTests.swift */; };
 		B00000000000000000000009 /* EngineFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* EngineFixtureTests.swift */; };
+		B00000000000000000000014 /* AcousticLatencyProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* AcousticLatencyProbeTests.swift */; };
+		A00000000000000000000030 /* TimingCalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000030 /* TimingCalibrationView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -150,6 +152,8 @@
 		B10000000000000000000009 /* EngineFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineFixtureTests.swift; sourceTree = "<group>"; };
 		D00000000000000000000001 /* OpenRhythm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OpenRhythm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D00000000000000000000002 /* OpenRhythmTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OpenRhythmTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000014 /* AcousticLatencyProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcousticLatencyProbeTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000030 /* TimingCalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimingCalibrationView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -263,6 +267,7 @@
 		F10000000000000000000007 /* OpenRhythmTests */ = {
 			isa = PBXGroup;
 			children = (
+				B10000000000000000000014 /* AcousticLatencyProbeTests.swift */,
 				B10000000000000000000001 /* LocalizedTextTests.swift */,
 				B10000000000000000000002 /* CatalogTests.swift */,
 				B10000000000000000000008 /* PlaybackClockTests.swift */,
@@ -309,6 +314,7 @@
 		F1000000000000000000000A /* Gameplay */ = {
 			isa = PBXGroup;
 			children = (
+				A10000000000000000000030 /* TimingCalibrationView.swift */,
 				A10000000000000000000014 /* GameplayModel.swift */,
 				A10000000000000000000015 /* GameplayView.swift */,
 				A1000000000000000000001F /* ResultStatisticsView.swift */,
@@ -425,6 +431,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A00000000000000000000030 /* TimingCalibrationView.swift in Sources */,
 				A00000000000000000000001 /* OpenRhythmApp.swift in Sources */,
 				A00000000000000000000002 /* ContentView.swift in Sources */,
 				0349A4343069704C009BC642 /* EnginePCMVoice.m in Sources */,
@@ -469,6 +476,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B00000000000000000000014 /* AcousticLatencyProbeTests.swift in Sources */,
 				B00000000000000000000001 /* LocalizedTextTests.swift in Sources */,
 				0349A43130663AAB009BC642 /* PlaybackTimingDiagnosticsTests.swift in Sources */,
 				B00000000000000000000002 /* CatalogTests.swift in Sources */,
@@ -516,6 +524,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = OpenRhythm;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Debug builds only: the acoustic latency test records the speaker to measure audio timing.";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

@@ -107,15 +107,20 @@ final class EngineInputTests: EngineHostTestCase {
       "preprocess": ["index": preprocess], "touch": ["index": touch]]])
     let level = LevelData(bgmOffset: 0, entities: [
       LevelEntity(archetype: "Note", name: nil, data: [])])
-    for speed in [0.5, 1, 2] {
+    for (speed, lead) in [(0.5, 0), (1, 0), (2, 0), (1, 0.03)] {
       for offset in [-0.25, 0, 0.25] {
         let runtime = try EnginePlayRuntime(engine: engine, level: level,
           options: [], aspectRatio: 1, skinSpriteIDs: [], effectClipIDs: [],
-          particleEffectIDs: [], playbackSpeed: speed, inputOffset: offset)
+          particleEffectIDs: [], playbackSpeed: speed, inputOffset: offset,
+          displayLead: lead)
+        // Engines see the display lead in the offset, so they hold judgment
+        // windows open for touches not yet delivered; touches never see it.
         let effective = offset + 0.02
-        XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), offset)
+        XCTAssertEqual(runtime.memory.value(block: 2000, index: 0), offset + lead)
+        XCTAssertEqual(try runtime.inputOffset, effective, accuracy: 1e-12)
         for _ in 0..<2 {
-          XCTAssertEqual(runtime.memory.value(block: 1000, index: 3), effective)
+          XCTAssertEqual(runtime.memory.value(block: 1000, index: 3),
+            effective + lead, accuracy: 1e-12)
           try runtime.update(at: 2, touches: [EngineTouch(id: 1,
             started: true, ended: true, time: 1.1 + effective,
             startTime: 1 + effective, position: EnginePoint(x: 0.2, y: 0.4),
