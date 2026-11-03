@@ -2991,7 +2991,8 @@ final class RuntimeDecodingTests: XCTestCase {
 // tap side by side at the same time), `007.gz` (two held flicks on one
 // slide), `108.gz` and `062.gz` (fast slides into flicks), EXPERT `001-4.gz`
 // (slides under 0.2 s, a fast slide into an end flick), `003-4.gz` (flick
-// sweeps) and NORMAL `024-2.gz` (ticks right after slide heads).
+// sweeps), MASTER `005.gz`, `017.gz` and `192.gz` (human-like cases) and
+// NORMAL `024-2.gz` (ticks right after slide heads).
 @MainActor
 extension CachedEngineIntegrationTests {
   func testSFPAmbeveMasterLifecycleAndRestart() async throws {
@@ -3012,7 +3013,7 @@ extension CachedEngineIntegrationTests {
 
   /// Scripted contacts that press, hold, follow and flick every note on time
   /// must judge every input once, all Perfect, except flicks deliberately
-  /// flicked against their arrow, which are REVERSE: one grade lower (Great).
+  /// flicked against their arrow, which do not hit and miss.
   /// Free flicks are often flicked by a finger already down (resting after a
   /// tap) and streams of flicks by one finger without lifting.
   /// Slide fingers move with their slide and flick held flicks themselves,
@@ -3064,20 +3065,42 @@ extension CachedEngineIntegrationTests {
 
   /// Fingers that move like a person's rather than the engine's model:
   /// taps pressed 50 ms late and off centre, two hands on close taps landing
-  /// 30 ms apart (the later note's first, towards the other note), and runs
-  /// of same-way flicks swept by one finger at constant speed from before
-  /// the first to after the last (003 EXPERT at 67.06 s). Nothing misses.
+  /// 30 ms apart (the later note's first, towards the other note), runs of
+  /// same-way flicks swept by one finger at constant speed from before the
+  /// first to after the last (003 EXPERT at 67.06 s), flicks in slides
+  /// flicked 30 ms late while following the slide (001 MASTER at 47.97 s,
+  /// where the slide starts moving), end flicks 110 ms early with the finger
+  /// lifting at once (017 MASTER at 72.32 s, with a tick at 72.21 s), and
+  /// fingers coming back between sideways flicks (005 MASTER at 108.71 s).
+  /// Nothing misses.
   func testSFPScriptedHumanPlay() throws {
     _ = try sfpChart("003-4.gz")
     var sweeps = 0, pairs = 0
     for chart in ["003-4.gz", "004.gz", "001.gz", "110.gz", "189.gz", "002.gz",
-      "108.gz", "062.gz", "001-4.gz"] {
+      "108.gz", "062.gz", "001-4.gz", "005.gz", "017.gz", "192.gz"] {
       let counts = try checkSFPScriptedPlay(chart, .human)
       sweeps += counts.sweeps
       pairs += counts.pairs
     }
     XCTAssertGreaterThan(sweeps, 0, "No flick sweep")
     XCTAssertGreaterThan(pairs, 0, "No two-handed tap pair")
+  }
+
+  /// Human play with sweeps 24 ms early and 1.5 times as fast, including
+  /// six flicks 19 ms apart (192 MASTER at 96.19 s): nothing misses. The
+  /// fast sweeps run at 120 Hz (as on ProMotion displays): at 60 Hz that run
+  /// passes 2.6 lanes a frame over flicks 2 lanes apart, and a finger hits
+  /// at most one flick a frame.
+  func testSFPScriptedHumanSweeps() throws {
+    _ = try sfpChart("192.gz")
+    for sweep in [SFPScript.Sweep.early, .fast] {
+      var sweeps = 0
+      for chart in ["192.gz", "003-4.gz", "110.gz", "062.gz"] {
+        sweeps += try checkSFPScriptedPlay(chart, .human, sweep: sweep,
+          fps: sweep == .fast ? 120 : 60).sweeps
+      }
+      XCTAssertGreaterThan(sweeps, 0, "No flick sweep (\(sweep))")
+    }
   }
 
   private func sfpChart(_ chart: String) throws -> String {
@@ -3091,7 +3114,8 @@ extension CachedEngineIntegrationTests {
   }
 
   @discardableResult
-  private func checkSFPScriptedPlay(_ chart: String, _ mode: SFPScript.Mode)
+  private func checkSFPScriptedPlay(_ chart: String, _ mode: SFPScript.Mode,
+    sweep: SFPScript.Sweep = .onTime, fps: Double = 60)
     throws -> (resting: Int, streams: Int, sweeps: Int, pairs: Int) {
     let cache = try XCTUnwrap(FileManager.default.urls(
       for: .cachesDirectory, in: .userDomainMask).first)
@@ -3117,8 +3141,9 @@ extension CachedEngineIntegrationTests {
       particleEffectIDs: Set(assets.particles.keys))
     let start = BGMClockMapping(offset: level.bgmOffset).initialChartTime
     let script = SFPScript(level: level, aspectRatio: aspectRatio, start: start,
-      mode: mode, reverseEvery: mode == .onTime ? 5 : 0)
-    let label = "\(chart) (\(mode))"
+      mode: mode, reverseEvery: mode == .onTime ? 5 : 0, sweep: sweep, fps: fps)
+    let label = "\(chart) (\(mode)\(sweep == .onTime ? "" : ", \(sweep) sweeps")"
+      + "\(fps == 60 ? "" : ", \(Int(fps)) fps"))"
     var seen = Set<Int>()
     var grades = [Int: Int]()
     var failures = [String: Int]()
@@ -3126,14 +3151,14 @@ extension CachedEngineIntegrationTests {
     var uncontrolled = [Int: Int]()
     var frame = 0
     var recent = [String]()
-    while runtime.resolvedInputCount < runtime.inputCount, frame < 30000 {
-      let time = start + Double(frame) / 60
+    while runtime.resolvedInputCount < runtime.inputCount, frame < 60000 {
+      let time = start + Double(frame) / script.fps
       let touches = script.touches(frame: frame, time: time)
-      recent.append(touches.map { t in
+      recent.append(String(format: "%.3f ", time) + touches.map { t in
         "\(t.id)\(t.started ? "s" : "")\(t.ended ? "e" : "")@"
           + String(format: "%.2f v%.1f,%.1f", (t.position.x / script.halfWidth + 1) * 6,
             t.velocity?.x ?? .nan, t.velocity?.y ?? .nan) }.joined(separator: " "))
-      if recent.count > 8 { recent.removeFirst() }
+      if recent.count > 150 { recent.removeFirst() }
       try runtime.update(at: time, touches: touches)
       for judgment in runtime.judgments {
         XCTAssertTrue(seen.insert(judgment.entityIndex).inserted,
@@ -3141,8 +3166,8 @@ extension CachedEngineIntegrationTests {
         grades[judgment.grade, default: 0] += 1
         if script.reversed.contains(judgment.entityIndex) {
           reversed[judgment.grade, default: 0] += 1
-          if judgment.grade != 2 {
-            print("SFP REVERSE NOT GREAT \(label) grade \(judgment.grade) "
+          if judgment.grade != 0 {
+            print("SFP REVERSED NOT MISSED \(label) grade \(judgment.grade) "
               + "accuracy \(judgment.accuracy) at \(time): "
               + level.entities[judgment.entityIndex].data
                 .map { "\($0.name)=\($0.value ?? .nan)" }.joined(separator: " "))
@@ -3169,8 +3194,17 @@ extension CachedEngineIntegrationTests {
               + "\(judgment.grade) accuracy \(judgment.accuracy) at \(time): "
               + entity.data.map { "\($0.name)=\($0.value ?? .nan)" }
                 .joined(separator: " "))
-            print("  touches (lane, velocity), last frames: "
-              + recent.joined(separator: " | "))
+            var due = entity.data.first { $0.name == "#BEAT" }?.value ?? 0
+            // For a slide end, around its first note.
+            if entity.archetype == "SlideEndNote",
+              let head = entity.data.first(where: { $0.name == "head" })?.value,
+              head >= 0 {
+              due = level.entities[Int(head)].data
+                .first { $0.name == "#BEAT" }?.value ?? due
+            }
+            print("  touches (lane, velocity) near it: " + recent.filter {
+              let t = Double($0.prefix(while: { $0 != " " })) ?? 0
+              return t >= due - 0.15 && t <= due + 0.03 }.joined(separator: " | "))
           }
         }
       }
@@ -3186,9 +3220,9 @@ extension CachedEngineIntegrationTests {
     XCTAssertEqual(runtime.resolvedInputCount, runtime.inputCount, label)
     XCTAssertEqual(seen.count, runtime.inputCount, label)
     XCTAssertEqual(failures, [:], label)
-    // Reverse flicks are one grade below their (perfect) timing: Great.
+    // Flicks against the arrow do not hit.
     XCTAssertEqual(reversed, script.reversed.isEmpty ? [:]
-      : [2: script.reversed.count], label)
+      : [0: script.reversed.count], label)
     return (script.restingFlicks, script.flickStreams, script.sweeps.count,
       script.pairs)
   }
@@ -3201,6 +3235,9 @@ extension CachedEngineIntegrationTests {
 /// `reverseEvery` flicks every n-th directional flick against its arrow.
 private struct SFPScript {
   enum Mode { case onTime, loose, lateHeads, edgePresses, human }
+  /// Human mode sweeps: on time, 24 ms early, or 1.5 times as fast (centred
+  /// on the run's middle).
+  enum Sweep { case onTime, early, fast }
 
   private struct Segment {
     let head: Double, tail: Double
@@ -3245,6 +3282,11 @@ private struct SFPScript {
   /// Flicks inside or at the end of a slide, made by the finger tracing it:
   /// (time, direction) per chain.
   private var heldFlicks = [Int: [(time: Double, direction: Double)]]()
+  /// Human mode: chains whose end flick is flicked early, with the time
+  /// their finger lifts.
+  private var earlyLifts = [Int: Double]()
+  /// The lane each chain's finger lands on (over the note pressing it).
+  private var chainLanding = [Int: Double]()
   /// Entity indices of the notes pressed to start each slide.
   private(set) var lateHeads = Set<Int>()
   /// Inputs whose grade the script does not control (still judged once):
@@ -3275,8 +3317,14 @@ private struct SFPScript {
   private let start: Double
   private let mode: Mode
 
+  private let sweepStyle: Sweep
+  /// Frames (and touch samples) per second.
+  let fps: Double
+
   init(level: LevelData, aspectRatio: Double, start: Double, mode: Mode,
-    reverseEvery: Int) {
+    reverseEvery: Int, sweep: Sweep = .onTime, fps: Double = 60) {
+    sweepStyle = sweep
+    self.fps = fps
     halfWidth = min(2 * aspectRatio * 0.42, 1.9)
     self.start = start
     self.mode = mode
@@ -3284,17 +3332,27 @@ private struct SFPScript {
       entity.data.first { $0.name == name }?.value ?? 0
     }
     var directional = 0
+    var reverseCandidates = Set<Int>()
     // The note pressing a segment's slide, as its notes record it.
     let slideNotes = level.entities.filter { value($0, "head") >= 0
-      && ["SlideTickNote", "SlideEndNote", "FlickNote"].contains($0.archetype) }
+      && ["SlideTickNote", "SlideEndNote"].contains($0.archetype) }
     let pressNotes = level.entities.enumerated().filter {
       $0.element.archetype == "TapNote" || $0.element.archetype == "KimeNote" }
+    // A flick in or at the end of a slide: a line arrives there.
+    let tails = level.entities.filter { $0.archetype == "SlideConnector" }
+      .map { (head: value($0, "headBeat"), time: value($0, "tailBeat"),
+        l: value($0, "tailL"), w: value($0, "tailW")) }
+    func held(_ flick: LevelEntity) -> Bool {
+      let t = value(flick, "#BEAT"), l = value(flick, "l"), w = value(flick, "w")
+      return tails.contains { abs($0.time - t) < 1e-3 && $0.head < t
+        && $0.l < l + max(w, 1) && l < $0.l + max($0.w, 1) }
+    }
     let flickSpots = level.entities.filter { $0.archetype == "FlickNote" }
       .map { (time: value($0, "#BEAT"), lane: value($0, "l") + value($0, "w") / 2) }
     // Slides start at presses: taps, kime notes and flicks that are not held.
     let starts = level.entities.filter {
       $0.archetype == "TapNote" || $0.archetype == "KimeNote"
-        || ($0.archetype == "FlickNote" && value($0, "held") == 0)
+        || ($0.archetype == "FlickNote" && !held($0))
     }.map { (time: value($0, "#BEAT"), l: value($0, "l"), w: value($0, "w"),
       flick: $0.archetype == "FlickNote") }
     for (index, entity) in level.entities.enumerated() {
@@ -3324,12 +3382,11 @@ private struct SFPScript {
             spot.time != time && abs(spot.time - time) <= 0.2
               && abs(spot.lane - lane) <= 3 }
           if reverseEvery > 0 && directional % reverseEvery == 0 && alone {
-            direction = -direction
-            reversed.insert(index)
+            reverseCandidates.insert(index)
           }
         }
         presses.append(Press(time: time, lane: center, direction: direction,
-          flick: true, held: value(entity, "held") != 0, l: value(entity, "l"),
+          flick: true, held: held(entity), l: value(entity, "l"),
           w: value(entity, "w"), entity: index))
       case "SlideConnector":
         var segment = Segment(head: value(entity, "headBeat"),
@@ -3403,13 +3460,37 @@ private struct SFPScript {
         for segment in chain where segment.head - 1e-6 <= flick.time
           && flick.time <= segment.tail + 1e-6 {
           let distance = abs(segment.center(at: flick.time) - flick.lane)
-          if distance <= flick.w / 2 + 1.5, distance < (best?.distance ?? .infinity) {
-            best = (index, distance)
+          // The slide arriving there before one leaving it.
+          let leaving = abs(segment.head - flick.time) < 1e-6 ? 10.0 : 0
+          if distance <= flick.w / 2 + 1.5,
+            distance + leaving < (best?.distance ?? .infinity) {
+            best = (index, distance + leaving)
           }
         }
       }
       if let best {
-        heldFlicks[best.chain, default: []].append((flick.time, flick.direction))
+        // Human mode: an end flick 110 ms early where the slide is already
+        // over it then, lifting right after; other held flicks 30 ms late,
+        // following the slide.
+        var time = flick.time
+        if mode == .human {
+          let chain = chains[best.chain]
+          let early = flick.time - 0.11
+          // Where the slide stops (no segment goes on from there).
+          let ends = abs(chain.last!.tail - flick.time) < 1e-6
+            && !chains.joined().contains { abs($0.head - flick.time) < 1e-6
+              && $0.headL < flick.l + flick.w && flick.l < $0.headL + $0.headW }
+          let segment = chain.first { early <= $0.tail } ?? chain.last!
+          let c = segment.center(at: early)
+          if ends, c >= flick.l - 0.5, c <= flick.l + flick.w + 0.5,
+            chain.first!.head < early - 0.05 {
+            time = early
+            earlyLifts[best.chain] = early + 3 / fps
+          } else {
+            time += 0.03
+          }
+        }
+        heldFlicks[best.chain, default: []].append((time, flick.direction))
         presses.remove(at: press)
       }
     }
@@ -3420,9 +3501,47 @@ private struct SFPScript {
         && abs($0.time - head.head) < 1e-6
         && $0.l < head.headL + head.headW && head.headL < $0.l + $0.w }) {
         if presses[press].flick { chainFlicks[index] = presses[press].direction }
+        // Where the finger lands: over that note, within the band.
+        let p = presses[press]
+        var landing = min(max(head.center(at: head.head), p.l + 0.25),
+          p.l + p.w - 0.25)
+        // A flick's finger lands off any tap due within 150 ms (that press
+        // would be the tap's).
+        if p.flick {
+          let taps = pressNotes.filter {
+            abs(value($0.element, "#BEAT") - p.time) <= 0.15 }
+          func free(_ u: Double) -> Bool {
+            !taps.contains { u >= value($0.element, "l") - 0.5
+              && u <= value($0.element, "l") + value($0.element, "w") + 0.5 }
+          }
+          if !free(landing), let spot = stride(from: p.l, through: p.l + p.w,
+            by: 0.25).filter(free).min(by: {
+              abs($0 - landing) < abs($1 - landing) }) {
+            landing = spot
+          }
+        }
+        chainLanding[index] = landing
         lateHeads.insert(presses[press].entity)
         presses.remove(at: press)
+      } else if let tap = pressNotes.first(where: {
+        abs(value($0.element, "#BEAT") - head.head) < 1e-6
+          && value($0.element, "l") < head.headL + head.headW
+          && head.headL < value($0.element, "l") + value($0.element, "w") }) {
+        // A slide-start tap: land on it.
+        let l = value(tap.element, "l"), w = value(tap.element, "w")
+        chainLanding[index] = min(max(head.center(at: head.head), l + 0.25),
+          l + w - 0.25)
       }
+    }
+    // Free flicks outside slides are flicked against their arrow (a slide's
+    // finger tracing the arrow's way would hit its flicks anyway).
+    for index in presses.indices
+      where reverseCandidates.contains(presses[index].entity) {
+      presses[index] = Press(time: presses[index].time, lane: presses[index].lane,
+        direction: -presses[index].direction, flick: true,
+        held: presses[index].held, l: presses[index].l, w: presses[index].w,
+        entity: presses[index].entity)
+      reversed.insert(presses[index].entity)
     }
     avoidTaps()
     if mode == .human { humanizeTaps() }
@@ -3432,8 +3551,8 @@ private struct SFPScript {
     let flickNotes = level.entities.enumerated().filter {
       $0.element.archetype == "FlickNote" }.map { (index: $0.offset,
         time: value($0.element, "#BEAT"), l: value($0.element, "l"),
-        w: value($0.element, "w"), held: value($0.element, "held")) }
-    for flick in flickNotes where flick.held == 0 {
+        w: value($0.element, "w"), held: held($0.element)) }
+    for flick in flickNotes where !flick.held {
       let crossed = chains.joined().contains { segment in
         (Array(stride(from: flick.time - 0.12, through: flick.time + 0.12,
           by: 0.01)) + [segment.head]).contains { t in
@@ -3519,7 +3638,7 @@ private struct SFPScript {
 
   /// Strokes of two or more free flicks the same way, each further along
   /// than the last, are swept at constant speed from 60 ms before the first
-  /// to 60 ms after the last.
+  /// to 60 ms after the last (see `Sweep` for variants).
   private mutating func findSweeps() {
     for (index, stroke) in strokes.enumerated() where stroke.count >= 2 {
       let direction = stroke[0].direction
@@ -3531,8 +3650,16 @@ private struct SFPScript {
       let speed = (last.lane - first.lane) / (last.time - first.time)
       // Fast enough to be a flick on screen.
       guard abs(speed) / 6 * halfWidth >= 2 else { continue }
-      sweeps[index] = (first.time - 0.06, first.lane - speed * 0.06, speed,
-        last.time + 0.06)
+      // From 60 ms before the run to 60 ms after, or for fast sweeps a
+      // shorter span around its middle.
+      let middle = (first.time + last.time) / 2 - (sweepStyle == .early ? 0.024 : 0)
+      let lane = (first.lane + last.lane) / 2
+      let factor = sweepStyle == .fast ? 1.5 : 1
+      // (The same run-up in lanes: a fast sweep starts where a normal one
+      // does.)
+      let half = ((last.time - first.time) / 2 + 0.06) / factor
+      sweeps[index] = (middle - half, lane - speed * factor * half,
+        speed * factor, middle + half)
     }
   }
 
@@ -3580,11 +3707,11 @@ private struct SFPScript {
 
   func nearChainStart(_ time: Double) -> Bool {
     chains.contains { time >= $0.first!.head - 1e-6
-      && time <= $0.first!.head + 2.0 / 60 + 1e-6 }
+      && time <= $0.first!.head + 2 / fps + 1e-6 }
   }
 
   func touches(frame: Int, time: Double) -> [EngineTouch] {
-    let dt = 1.0 / 60
+    let dt = 1 / fps
     var result = [EngineTouch]()
     for (index, chain) in chains.enumerated() {
       // On time: press on the first frame at or after the head and release
@@ -3598,7 +3725,12 @@ private struct SFPScript {
       // Only a slide end allows an early release.
       let endsInEnd = slideEnds.contains { abs($0.time - last) < 1e-6
         && abs($0.lane - chain.last!.center(at: last)) <= 1.5 }
-      let release = mode == .loose && endsInEnd ? last - 0.1 : last + dt
+      var release = mode == .loose && endsInEnd ? last - 0.1 : last + dt
+      // Human mode: lift after an early end flick, or after a late one.
+      if let lift = earlyLifts[index] { release = lift }
+      else if let latest = flicks.map(\.time).max() {
+        release = max(release, latest + 3 * dt)
+      }
       let firstFrameTime = start + ((first - start) / dt - 1e-9).rounded(.up) * dt
       // Frame times carry rounding error; compare with a small tolerance so
       // the release frame always delivers an ended touch.
@@ -3611,8 +3743,9 @@ private struct SFPScript {
       // The finger traces the slide (a late press lands where it starts),
       // moving at the slide's speed while on it; a flick adds a quick motion.
       let started = time - dt < firstFrameTime - 1e-9
-      let point = EnginePoint(
-        x: position(at: started ? chain.first!.head : time), y: -0.6)
+      var point = EnginePoint(x: started
+        ? x(chainLanding[index] ?? chain.first!.center(at: chain.first!.head))
+        : position(at: time), y: -0.6)
       // The slide's speed as the engine reads it: from the segment under
       // way (head <= t < tail), differenced backwards within it.
       let h = 1e-3
@@ -3621,7 +3754,8 @@ private struct SFPScript {
         let t1 = max(time, segment.head + h)
         band = (x(segment.center(at: t1)) - x(segment.center(at: t1 - h))) / h
       }
-      var velocity = EnginePoint(x: band, y: 0)
+      // A finger at rest the frame it lands.
+      var velocity = EnginePoint(x: started ? 0 : band, y: 0)
       if let direction = chainFlicks[index], time < firstFrameTime + 3 * dt {
         // A slide that starts with a (free) flick: flick first.
         velocity = direction == 0 ? EnginePoint(x: 0, y: 8)
@@ -3635,6 +3769,10 @@ private struct SFPScript {
         velocity = flick.direction == 0
           ? EnginePoint(x: band, y: speed)
           : EnginePoint(x: band + speed * flick.direction, y: 0)
+        // The flick carries the finger off the band the arrow's way (onto a
+        // flick beside the slide's end, 108 MASTER at 76.74 s).
+        point = EnginePoint(
+          x: point.x + speed * flick.direction * (time - flick.time), y: point.y)
       }
       result.append(EngineTouch(id: 1 + index,
         started: started, ended: time >= release - 1e-9,
@@ -3664,7 +3802,14 @@ private struct SFPScript {
       // The latest note reached; a flick moves for two frames after it.
       let note = stroke.last { $0.time <= time + 1e-9 }!
       let moving = note.flick && time < note.time + 2 * dt - 1e-9
-      let speed = moving ? 3.0 : 0
+      // Human mode: a finger that flicked sideways comes back for the next
+      // flick at least 100 ms later, as fast (005 MASTER at 108.71 s).
+      let after = stroke.first { $0.time > note.time + 1e-9 }
+      let returning = mode == .human && note.flick && !moving
+        && note.direction != 0
+        && time < note.time + 4 * dt - 1e-9
+        && (after.map { $0.time - note.time >= 0.1 } ?? false)
+      let speed = moving ? 3.0 : returning ? -3.0 : 0
       let vx = note.direction == 0 ? 0 : speed * note.direction
       let vy = note.direction == 0 ? speed : 0
       let position = EnginePoint(x: x(note.lane), y: -0.6)
