@@ -693,6 +693,8 @@ final class CachedEnginePreviewTests: XCTestCase {
   func testLLSIFPreview() throws { try check("llsif") }
   func testSekaiPreview() throws { try check("sekai") }
   func testCGSSPreview() throws { try check("cgss") }
+  // The rhythm-lab `sfp` engine (sonolus-sfp-engine scripts/openrhythm-fixture.ts).
+  func testSFPPreview() throws { try check("sfp") }
 
   private func check(_ name: String) throws {
     let root = try XCTUnwrap(FileManager.default.urls(
