@@ -3094,10 +3094,21 @@ extension CachedEngineIntegrationTests {
       swipes += counts.swipes
       edges += counts.edges
     }
-    // Eight left flicks 88 ms apart, each a lane further: a swipe for one
-    // that passes over the next does not decide that one early.
+    // Staircases: eight left flicks 88 ms apart, each a lane further (005
+    // EXPERT), and runs of four 114 ms apart (015 EXPERT, the first swipe
+    // 30 ms late): a swipe for one that passes over the next does not decide
+    // that one; each is Perfect from its own swipe, also at 120 Hz with 60
+    // Hz samples.
     _ = try sfpChart("005-4.gz")
-    try checkSFPScriptedPlay("005-4.gz", .human, ownSwipes: 38.1...38.75)
+    let stairs: [(String, [ClosedRange<Double>])] = [
+      ("005-4.gz", [38.1...38.75]),
+      ("015-4.gz", [16.0...16.4, 23.3...23.75, 107.6...108.0, 114.9...115.35]),
+    ]
+    for (chart, ranges) in stairs {
+      try checkSFPScriptedPlay(chart, .human, ownSwipes: ranges)
+      try checkSFPScriptedPlay(chart, .human, fps: 120, samples: 60,
+        ownSwipes: ranges)
+    }
     // 120 Hz frames with 60 Hz touch samples: every other frame has none.
     for chart in ["023.gz", "003-4.gz", "110.gz", "062.gz"] {
       try checkSFPScriptedPlay(chart, .human, fps: 120, samples: 60)
@@ -3124,6 +3135,18 @@ extension CachedEngineIntegrationTests {
     }
   }
 
+  /// Taps followed within 200 ms by a tap in the adjacent lanes pressed
+  /// 10 ms late, 0.1 lanes into the next one (013 MASTER at 92.5 s): each
+  /// goes to its own note, Perfect.
+  func testSFPScriptedEdgeTrills() throws {
+    _ = try sfpChart("013.gz")
+    var trills = 0
+    for chart in ["013.gz", "189.gz", "110.gz", "004.gz"] {
+      trills += try checkSFPScriptedPlay(chart, .edgeTrill).pairs
+    }
+    XCTAssertGreaterThan(trills, 0, "No adjacent trill")
+  }
+
   /// Every third slide starting at a tap is pressed 200 ms late: its first
   /// note misses, and so do its ticks until the finger is down, including
   /// those that came due while the note waited; the rest of it is hit.
@@ -3137,7 +3160,7 @@ extension CachedEngineIntegrationTests {
   }
 
   /// Single free flicks swiped 80-130 ms early with the finger lifting at
-  /// once are Great or Good, decided at the lift (before their time).
+  /// once are Great or Good, decided at their time.
   func testSFPScriptedEarlyLifts() throws {
     _ = try sfpChart("001.gz")
     var expected = 0
@@ -3160,7 +3183,7 @@ extension CachedEngineIntegrationTests {
   @discardableResult
   private func checkSFPScriptedPlay(_ chart: String, _ mode: SFPScript.Mode,
     sweep: SFPScript.Sweep = .onTime, fps: Double = 60, samples: Double? = nil,
-    ownSwipes: ClosedRange<Double>? = nil)
+    ownSwipes: [ClosedRange<Double>] = [])
     throws -> (resting: Int, streams: Int, sweeps: Int, pairs: Int,
       swipes: Int, edges: Int, expected: Int, reversedBeside: Int) {
     let cache = try XCTUnwrap(FileManager.default.urls(
@@ -3252,11 +3275,11 @@ extension CachedEngineIntegrationTests {
         // Loose slides may miss ticks in their first two frames, before the
         // late finger is down; late slide heads are Great.
         // Human play is judged only for misses.
-        // Flicks each swiped on time by their own swipe (not decided early by
-        // another's) are Perfect or Great.
-        if let range = ownSwipes, entity.archetype == "FlickNote",
-          range.contains(entity.data.first { $0.name == "#BEAT" }?.value ?? 0),
-          ![1, 2].contains(judgment.grade) {
+        // Flicks each swiped within 30 ms by their own swipe are Perfect
+        // (not decided early by another's).
+        if entity.archetype == "FlickNote", ownSwipes.contains(where: {
+          $0.contains(entity.data.first { $0.name == "#BEAT" }?.value ?? 0) }),
+          judgment.grade != 1 {
           failures["own swipe: FlickNote", default: 0] += 1
           print("SFP NOT FROM ITS OWN SWIPE \(label) grade \(judgment.grade) "
             + "accuracy \(judgment.accuracy) at \(time)")
@@ -3270,8 +3293,8 @@ extension CachedEngineIntegrationTests {
               + entity.data.map { "\($0.name)=\($0.value ?? .nan)" }
                 .joined(separator: " "))
           }
-          if let before = script.decidedBefore[judgment.entityIndex], time >= before {
-            failures["decided late: \(entity.archetype)", default: 0] += 1
+          if let from = script.decidedFrom[judgment.entityIndex], time < from - 1e-9 {
+            failures["decided early: \(entity.archetype)", default: 0] += 1
           }
           checked += 1
           continue
@@ -3338,7 +3361,7 @@ extension CachedEngineIntegrationTests {
 /// `reverseEvery` flicks every n-th directional flick against its arrow.
 private struct SFPScript {
   enum Mode { case onTime, loose, lateHeads, edgePresses, human, missedHeads,
-    earlyLifts }
+    earlyLifts, edgeTrill }
   /// Human mode sweeps: on time, 24 ms early, or 1.5 times as fast (centred
   /// on the run's middle).
   enum Sweep { case onTime, early, fast }
@@ -3452,9 +3475,9 @@ private struct SFPScript {
   /// Reversed flicks with a same-time flick beside them.
   private(set) var reversedBeside = 0
   /// Grades the mode makes some notes get (missed heads and their waiting
-  /// ticks; early flicks that lift), and times those must be decided before.
+  /// ticks; early flicks that lift), and times those are decided from.
   private(set) var expectedGrades = [Int: Int]()
-  private(set) var decidedBefore = [Int: Double]()
+  private(set) var decidedFrom = [Int: Double]()
   /// Missed-heads mode: chains whose finger lands 200 ms late.
   private var missedChains = Set<Int>()
   /// Human mode: each stroke's finger path (see `Plan`).
@@ -3716,6 +3739,7 @@ private struct SFPScript {
     }
     avoidTaps()
     if mode == .human { humanizeTaps() }
+    if mode == .edgeTrill { edgeTrill() }
     buildStrokes()
     if mode == .human { findSweeps() }
     if mode == .human || mode == .earlyLifts { planStrokes() }
@@ -3776,6 +3800,23 @@ private struct SFPScript {
       if let spot = spots.min(by: { abs($0 - flick.lane) < abs($1 - flick.lane) }) {
         presses[index].lane = spot
       }
+    }
+  }
+
+  /// Edge-trill mode: a tap followed within 200 ms by a tap in the
+  /// adjacent lanes is pressed 10 ms late, 0.1 lanes past their shared edge
+  /// (inside the next note: 013 MASTER at 92.5 s).
+  private mutating func edgeTrill() {
+    let taps = presses.filter { !$0.flick }
+    for index in presses.indices where !presses[index].flick {
+      let a = presses[index]
+      guard let b = taps.first(where: { $0.time > a.time + 1e-6
+        && $0.time - a.time <= 0.2
+        && (abs($0.l - (a.l + a.w)) < 1e-6 || abs($0.l + $0.w - a.l) < 1e-6) })
+      else { continue }
+      presses[index].lane = b.l > a.l ? a.l + a.w + 0.1 : a.l - 0.1
+      presses[index].time += 0.01
+      pairs += 1
     }
   }
 
@@ -3849,8 +3890,8 @@ private struct SFPScript {
   /// moves back between swipes as needed. A flick beside a same-time flick
   /// the arrow's way is swiped from its edge into the other (two hands side
   /// by side). Early-lifts mode: single free flicks are swiped 80-130 ms
-  /// early and the finger lifts at once; they are Great or Good, decided
-  /// before their time.
+  /// early and the finger lifts at once; they are Great or Good, decided at
+  /// their time.
   private mutating func planStrokes() {
     let offsets = [-0.03, 0.015, -0.015, 0.03, 0.0]
     let durations = [0.05, 0.065, 0.08]
@@ -3875,7 +3916,7 @@ private struct SFPScript {
         plan.lift = t0 + 0.05
         plans[index] = plan
         expectedGrades[f.entity] = -1 // Great or Good
-        decidedBefore[f.entity] = f.time
+        decidedFrom[f.entity] = f.time
         continue
       }
       // Runs: flicks the same way under 50 ms apart.
@@ -3889,6 +3930,13 @@ private struct SFPScript {
           groups.append([note])
         }
       }
+      // A staircase (flicks the same way 60-130 ms apart, each a lane
+      // further): the first swipe 30 ms late, the rest on time.
+      let stair = stroke.count >= 3 && stroke.allSatisfy {
+        $0.flick && $0.direction != 0 && $0.direction == stroke[0].direction }
+        && zip(stroke, stroke.dropFirst()).allSatisfy {
+          $1.time - $0.time >= 0.06 && $1.time - $0.time <= 0.13
+            && ($1.lane - $0.lane) * $0.direction > 0 }
       var plan = Plan(land: (stroke[0].time, stroke[0].lane))
       var cur = stroke[0].lane, free = stroke[0].time
       for (n, group) in groups.enumerated() {
@@ -3896,7 +3944,8 @@ private struct SFPScript {
         guard first.flick else { cur = first.lane; free = first.time; continue }
         let dir = first.direction
         let d = durations[k % 3] + (last.time - first.time)
-        let middle = (first.time + last.time) / 2 + offsets[k % 5]
+        let middle = (first.time + last.time) / 2
+          + (stair ? (n == 0 ? 0.03 : 0) : offsets[k % 5])
         k += 1
         quickSwipes += 1
         var u0 = first.lane - dir, u1 = last.lane + dir
@@ -4117,7 +4166,7 @@ private struct SFPScript {
         started: time - dt < first - 1e-9,
         ended: time >= last + 3 * dt - 1e-9, time: time,
         // A person's press keeps its own time, delivered at the next frame.
-        startTime: mode == .human ? first
+        startTime: [.human, .edgeTrill].contains(mode) ? first
           : start + ((first - start) / dt - 1e-9).rounded(.up) * dt,
         position: position, startPosition: startPosition,
         delta: EnginePoint(x: vx * dt, y: vy * dt),
