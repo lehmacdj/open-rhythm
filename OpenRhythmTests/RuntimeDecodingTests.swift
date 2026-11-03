@@ -2981,3 +2981,207 @@ final class RuntimeDecodingTests: XCTestCase {
     )
   }
 }
+
+// The rhythm-lab `sfp` engine (Shiny Colors Song for Prism). Its fixtures are
+// optional within an installed fixture root: an `sfp` folder holding the
+// engine files and converted charts `001.gz`, `110.gz` and `189.gz`.
+@MainActor
+extension CachedEngineIntegrationTests {
+  func testSFPAmbeveMasterLifecycleAndRestart() async throws {
+    try await checkChart(engineFolder: "sfp", chart: try sfpChart("001.gz"))
+  }
+
+  func testSFPMellowMasterLifecycleAndRestart() async throws {
+    try await checkChart(engineFolder: "sfp", chart: try sfpChart("110.gz"))
+  }
+
+  func testSFPTokyoMasterLifecycleAndRestart() async throws {
+    try await checkChart(engineFolder: "sfp", chart: try sfpChart("189.gz"))
+  }
+
+  /// Scripted contacts that press, hold, follow and flick every note on time
+  /// must judge every input once, all Perfect.
+  func testSFPScriptedPerfectPlay() throws {
+    _ = try sfpChart("001.gz")
+    for chart in ["001.gz", "110.gz", "189.gz"] {
+      try checkSFPScriptedPlay(chart)
+    }
+  }
+
+  private func sfpChart(_ chart: String) throws -> String {
+    let folder = try XCTUnwrap(FileManager.default.urls(
+      for: .cachesDirectory, in: .userDomainMask).first)
+      .appendingPathComponent("OpenRhythmIntegrationFixtures/sfp")
+    guard FileManager.default.fileExists(atPath: folder.path) else {
+      throw XCTSkip("Optional cached SfP fixtures are not installed.")
+    }
+    return "sfp/\(chart)"
+  }
+
+  private func checkSFPScriptedPlay(_ chart: String) throws {
+    let cache = try XCTUnwrap(FileManager.default.urls(
+      for: .cachesDirectory, in: .userDomainMask).first)
+      .appendingPathComponent("OpenRhythmIntegrationFixtures")
+    let root = cache.appendingPathComponent("sfp")
+    let engine = try CompressedJSONDecoder.decode(EnginePlayData.self,
+      from: Data(contentsOf: root.appendingPathComponent("engine.gz")))
+    let level = try CompressedJSONDecoder.decode(LevelData.self,
+      from: Data(contentsOf: root.appendingPathComponent(chart)))
+    var resources = [String: Data]()
+    for key in ["configuration", "skinData", "skinTexture", "particleData",
+      "particleTexture", "effectData", "effectAudio"] {
+      resources[key] = try Data(contentsOf: root.appendingPathComponent(key))
+    }
+    let presentation = RuntimePresentation(resources: resources)
+    let assets = try EnginePresentationAssets(engine: engine,
+      presentation: presentation)
+    let audio = try EngineAudioPlayback(engine: engine, presentation: presentation)
+    let aspectRatio = 1.8
+    let runtime = try EnginePlayRuntime(engine: engine, level: level,
+      options: assets.configuration.options.map(\.def), aspectRatio: aspectRatio,
+      skinSpriteIDs: Set(assets.skin.keys), effectClipIDs: audio.clipIDs,
+      particleEffectIDs: Set(assets.particles.keys))
+    let start = BGMClockMapping(offset: level.bgmOffset).initialChartTime
+    let script = SFPScript(level: level, aspectRatio: aspectRatio, start: start)
+    var seen = Set<Int>()
+    var grades = [Int: Int]()
+    var failures = [String: Int]()
+    var frame = 0
+    while runtime.resolvedInputCount < runtime.inputCount, frame < 30000 {
+      let time = start + Double(frame) / 60
+      try runtime.update(at: time, touches: script.touches(frame: frame, time: time))
+      for judgment in runtime.judgments {
+        XCTAssertTrue(seen.insert(judgment.entityIndex).inserted,
+          "Duplicate input resolution in \(chart): \(judgment.entityIndex)")
+        grades[judgment.grade, default: 0] += 1
+        if judgment.grade != 1 {
+          let entity = level.entities[judgment.entityIndex]
+          failures[entity.archetype, default: 0] += 1
+          if failures.values.reduce(0, +) <= 20 {
+            print("SFP NOT PERFECT \(chart) \(entity.archetype) grade "
+              + "\(judgment.grade) accuracy \(judgment.accuracy) at \(time): "
+              + entity.data.map { "\($0.name)=\($0.value ?? .nan)" }
+                .joined(separator: " "))
+          }
+        }
+      }
+      frame += 1
+    }
+    print("SFP SCRIPTED \(chart): \(seen.count)/\(runtime.inputCount) inputs, "
+      + "grades \(grades.sorted { $0.key < $1.key }), not perfect \(failures)")
+    XCTAssertEqual(runtime.resolvedInputCount, runtime.inputCount, chart)
+    XCTAssertEqual(seen.count, runtime.inputCount, chart)
+    XCTAssertEqual(grades[1, default: 0], runtime.inputCount,
+      "\(chart): every input Perfect; not perfect: \(failures)")
+  }
+}
+
+/// Contacts that play an `sfp` level perfectly: one finger per slide chain
+/// following its band, and a short press or flick for every other note. The
+/// engine's lane geometry is mirrored here (half width min(0.42 w, 1.9)).
+private struct SFPScript {
+  private struct Segment {
+    let head: Double, tail: Double
+    let headL: Double, headW: Double, tailL: Double, tailW: Double
+    let curve: Double, c1: Double, c2: Double
+
+    func center(at time: Double) -> Double {
+      let q = min(max((time - head) / (tail - head), 0), 1)
+      let r = 1 - q
+      let e: Double = switch curve {
+      case 1: q * q
+      case 2: 1 - r * r
+      case 3: c2 >= 128 ? sin(q * .pi / 2) : 1 - cos(q * .pi / 2)
+      default: q
+      }
+      let l = headL + (tailL - headL) * e
+      let right = headL + headW + (tailL + tailW - headL - headW) * e
+      return (l + right) / 2
+    }
+  }
+
+  private struct Press {
+    let time: Double, lane: Double, direction: Double, flick: Bool
+  }
+
+  private var chains = [[Segment]]()
+  private var presses = [Press]()
+  private let halfWidth: Double
+  private let start: Double
+
+  init(level: LevelData, aspectRatio: Double, start: Double) {
+    halfWidth = min(2 * aspectRatio * 0.42, 1.9)
+    self.start = start
+    func value(_ entity: LevelEntity, _ name: String) -> Double {
+      entity.data.first { $0.name == name }?.value ?? 0
+    }
+    for entity in level.entities {
+      let center = value(entity, "l") + value(entity, "w") / 2
+      let time = value(entity, "#BEAT")
+      switch entity.archetype {
+      case "TapNote" where value(entity, "kind") != 1:
+        presses.append(Press(time: time, lane: center, direction: 0, flick: false))
+      case "FlickNote":
+        presses.append(Press(time: time, lane: center,
+          direction: value(entity, "dir"), flick: true))
+      case "SlideConnector":
+        let segment = Segment(head: value(entity, "headBeat"),
+          tail: value(entity, "tailBeat"), headL: value(entity, "headL"),
+          headW: value(entity, "headW"), tailL: value(entity, "tailL"),
+          tailW: value(entity, "tailW"), curve: value(entity, "curve"),
+          c1: value(entity, "c1"), c2: value(entity, "c2"))
+        // Continue a chain whose last segment ends where this one starts
+        // (same time, overlapping bands); otherwise start a new finger.
+        if let index = chains.firstIndex(where: { chain in
+          let last = chain.last!
+          return abs(last.tail - segment.head) < 1e-6
+            && last.tailL < segment.headL + segment.headW
+            && segment.headL < last.tailL + last.tailW
+        }) {
+          chains[index].append(segment)
+        } else {
+          chains.append([segment])
+        }
+      default:
+        break
+      }
+    }
+  }
+
+  private func x(_ lane: Double) -> Double { (lane / 6 - 1) * halfWidth }
+
+  func touches(frame: Int, time: Double) -> [EngineTouch] {
+    let dt = 1.0 / 60
+    var result = [EngineTouch]()
+    for (index, chain) in chains.enumerated() {
+      let first = chain.first!.head, last = chain.last!.tail
+      // Press on the first frame at or after the head; release one frame
+      // after the tail.
+      guard time >= first, time - dt <= last + dt else { continue }
+      let segment = chain.first { time <= $0.tail } ?? chain.last!
+      let point = EnginePoint(x: x(segment.center(at: time)), y: -0.6)
+      let startTime = start + ((first - start) / dt).rounded(.up) * dt
+      result.append(EngineTouch(id: 1 + index, started: time - dt < first,
+        ended: time - dt > last, time: time, startTime: startTime,
+        position: point, startPosition: point, delta: EnginePoint(x: 0, y: 0),
+        velocity: EnginePoint(x: 0, y: 0)))
+    }
+    for (index, press) in presses.enumerated() {
+      let phase = Int(((time - press.time) / dt + 1e-9).rounded(.down))
+      guard (0...3).contains(phase), time >= press.time else { continue }
+      let firstTime = time - Double(phase) * dt
+      let speed = press.flick ? 3.0 : 0
+      let vx = press.direction == 0 ? 0 : speed * press.direction
+      let vy = press.direction == 0 ? speed : 0
+      let position = EnginePoint(x: x(press.lane) + vx * Double(phase) * dt,
+        y: -0.6 + vy * Double(phase) * dt)
+      let startPosition = EnginePoint(x: x(press.lane), y: -0.6)
+      result.append(EngineTouch(id: 100_000 + index, started: phase == 0,
+        ended: phase == 3, time: time, startTime: firstTime,
+        position: position, startPosition: startPosition,
+        delta: EnginePoint(x: vx * dt, y: vy * dt),
+        velocity: EnginePoint(x: vx, y: vy)))
+    }
+    return result
+  }
+}
