@@ -3081,7 +3081,8 @@ extension CachedEngineIntegrationTests {
   /// up to 30 ms early or late, one per run of flicks under 50 ms apart
   /// (023 MASTER at 105.77 s), from a flick's edge into a same-time
   /// neighbour the arrow's way where there is one; some charts again with
-  /// 120 Hz frames and 60 Hz touch samples. Nothing misses.
+  /// 120 Hz frames and 60 Hz touch samples, with 60 Hz frames and 240 Hz
+  /// samples, and with a ±50 ms input offset. Nothing misses.
   func testSFPScriptedHumanPlay() throws {
     _ = try sfpChart("003-4.gz")
     var sweeps = 0, pairs = 0
@@ -3110,8 +3111,18 @@ extension CachedEngineIntegrationTests {
         ownSwipes: ranges)
     }
     // 120 Hz frames with 60 Hz touch samples: every other frame has none.
+    // And 60 Hz frames with 240 Hz samples (the usual iPhone case), velocity
+    // measured between the last two.
     for chart in ["023.gz", "003-4.gz", "110.gz", "062.gz"] {
       try checkSFPScriptedPlay(chart, .human, fps: 120, samples: 60)
+      try checkSFPScriptedPlay(chart, .human, samples: 240)
+    }
+    // A player with 50 ms of input lag (or touches 50 ms early) and the
+    // input offset set to match.
+    for chart in ["023.gz", "110.gz", "005-4.gz", "004.gz"] {
+      for offset in [0.05, -0.05] {
+        try checkSFPScriptedPlay(chart, .human, inputOffset: offset)
+      }
     }
     XCTAssertGreaterThan(swipes, 0, "No quick swipe")
     XCTAssertGreaterThan(edges, 0, "No flick swiped into its neighbour")
@@ -3120,16 +3131,19 @@ extension CachedEngineIntegrationTests {
   }
 
   /// Human play with sweeps 24 ms early and 1.5 times as fast, including
-  /// six flicks 19 ms apart (192 MASTER at 96.19 s), at 60 Hz, and fast
-  /// ones again with 120 Hz frames and 60 Hz samples: nothing misses. (One
-  /// finger may hit several flicks in a frame.)
+  /// six flicks 19 ms apart (192 MASTER at 96.19 s), at 60 Hz, and again
+  /// with 120 Hz frames and 60 Hz samples and with 60 Hz frames and 240 Hz
+  /// samples: nothing misses. (One finger may hit several flicks in a
+  /// frame.)
   func testSFPScriptedHumanSweeps() throws {
     _ = try sfpChart("192.gz")
-    for (sweep, fps) in [(SFPScript.Sweep.early, 60.0), (.fast, 60), (.fast, 120)] {
+    for (sweep, fps, samples) in [(SFPScript.Sweep.early, 60.0, nil),
+      (.fast, 60, nil), (.fast, 120, 60), (.fast, 60, 240), (.early, 60, 240)]
+      as [(SFPScript.Sweep, Double, Double?)] {
       var sweeps = 0
       for chart in ["192.gz", "003-4.gz", "110.gz", "062.gz"] {
         sweeps += try checkSFPScriptedPlay(chart, .human, sweep: sweep,
-          fps: fps, samples: fps == 120 ? 60 : nil).sweeps
+          fps: fps, samples: samples).sweeps
       }
       XCTAssertGreaterThan(sweeps, 0, "No flick sweep (\(sweep))")
     }
@@ -3183,7 +3197,7 @@ extension CachedEngineIntegrationTests {
   @discardableResult
   private func checkSFPScriptedPlay(_ chart: String, _ mode: SFPScript.Mode,
     sweep: SFPScript.Sweep = .onTime, fps: Double = 60, samples: Double? = nil,
-    ownSwipes: [ClosedRange<Double>] = [])
+    ownSwipes: [ClosedRange<Double>] = [], inputOffset: Double = 0)
     throws -> (resting: Int, streams: Int, sweeps: Int, pairs: Int,
       swipes: Int, edges: Int, expected: Int, reversedBeside: Int) {
     let cache = try XCTUnwrap(FileManager.default.urls(
@@ -3207,14 +3221,15 @@ extension CachedEngineIntegrationTests {
     let runtime = try EnginePlayRuntime(engine: engine, level: level,
       options: assets.configuration.options.map(\.def), aspectRatio: aspectRatio,
       skinSpriteIDs: Set(assets.skin.keys), effectClipIDs: audio.clipIDs,
-      particleEffectIDs: Set(assets.particles.keys))
+      particleEffectIDs: Set(assets.particles.keys), inputOffset: inputOffset)
     let start = BGMClockMapping(offset: level.bgmOffset).initialChartTime
     let script = SFPScript(level: level, aspectRatio: aspectRatio, start: start,
       mode: mode, reverseEvery: mode == .onTime ? 5 : 0, sweep: sweep,
-      fps: samples ?? fps)
+      fps: min(samples ?? fps, fps))
     let label = "\(chart) (\(mode)\(sweep == .onTime ? "" : ", \(sweep) sweeps")"
       + "\(fps == 60 ? "" : ", \(Int(fps)) fps")"
-      + "\(samples.map { ", \(Int($0)) Hz samples" } ?? ""))"
+      + "\(samples.map { ", \(Int($0)) Hz samples" } ?? "")"
+      + "\(inputOffset == 0 ? "" : ", input offset \(Int(inputOffset * 1000)) ms"))"
     var seen = Set<Int>()
     var grades = [Int: Int]()
     var failures = [String: Int]()
@@ -3225,15 +3240,43 @@ extension CachedEngineIntegrationTests {
     var recent = [String]()
     // Touch samples come every `every` frames; between them a finger reports
     // no motion (as OpenRhythm's runtime does), at its last sample.
+    // Or several samples a frame: a finger's velocity is then its motion
+    // between the last two (as OpenRhythm measures it), not the script's.
     let every = max(1, Int((fps / (samples ?? fps)).rounded()))
+    let perFrame = max(1, Int(((samples ?? fps) / fps).rounded()))
     var held = [EngineTouch]()
     var lastPosition = [Int: EnginePoint]()
+    // A player with input lag X (and input offset X) touches X late; the
+    // runtime takes X off the touch times.
+    func sampled(_ frame: Int, _ time: Double) -> [EngineTouch] {
+      let shifted = { (t: EngineTouch) in EngineTouch(id: t.id, started: t.started,
+        ended: t.ended, time: t.time + inputOffset,
+        startTime: t.startTime + inputOffset, position: t.position,
+        startPosition: t.startPosition, delta: t.delta, velocity: t.velocity) }
+      let now = script.touches(frame: frame, time: time - inputOffset).map(shifted)
+      guard perFrame > 1 else { return now }
+      let step = 1 / (samples ?? fps)
+      let before = script.touches(frame: frame, time: time - inputOffset - step)
+      return now.map { t in
+        guard let b = before.first(where: { $0.id == t.id }), !t.started else {
+          return EngineTouch(id: t.id, started: t.started, ended: t.ended,
+            time: t.time, startTime: t.startTime, position: t.position,
+            startPosition: t.startPosition, delta: t.delta,
+            velocity: EnginePoint(x: 0, y: 0))
+        }
+        return EngineTouch(id: t.id, started: t.started, ended: t.ended,
+          time: t.time, startTime: t.startTime, position: t.position,
+          startPosition: t.startPosition, delta: t.delta,
+          velocity: EnginePoint(x: (t.position.x - b.position.x) / step,
+            y: (t.position.y - b.position.y) / step))
+      }
+    }
     while runtime.resolvedInputCount < runtime.inputCount, frame < 60000 {
       let time = start + Double(frame) / fps
       var touches: [EngineTouch]
       if frame % every == 0 {
         // Each frame's delta is the motion since the last one.
-        touches = script.touches(frame: frame / every, time: time).map { t in
+        touches = sampled(frame / every, time).map { t in
           let last = t.started ? t.position : lastPosition[t.id] ?? t.position
           return EngineTouch(id: t.id, started: t.started, ended: t.ended,
             time: t.time, startTime: t.startTime, position: t.position,
@@ -4094,9 +4137,14 @@ private struct SFPScript {
       // A finger at rest the frame it lands.
       var velocity = EnginePoint(x: started ? 0 : band, y: 0)
       if let direction = chainFlicks[index], time < firstFrameTime + 3 * dt {
-        // A slide that starts with a (free) flick: flick first.
+        // A slide that starts with a (free) flick: flick first, from where
+        // it lands.
         velocity = direction == 0 ? EnginePoint(x: 0, y: 8)
           : EnginePoint(x: 8 * direction, y: 0)
+        let moved = 8 * (time - firstFrameTime)
+        let landing = x(chainLanding[index] ?? chain.first!.center(at: chain.first!.head))
+        point = direction == 0 ? EnginePoint(x: landing, y: -0.6 + moved)
+          : EnginePoint(x: landing + moved * direction, y: -0.6)
       }
       if let flick = flicks.first(where: {
         time >= $0.time - 1e-9 && time < $0.time + 3 * dt }) {
