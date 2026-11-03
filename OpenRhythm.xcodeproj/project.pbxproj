@@ -52,6 +52,7 @@
 		B00000000000000000000003 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* XCTest.framework */; };
 		B00000000000000000000004 /* OfflineStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000004 /* OfflineStoreTests.swift */; };
 		B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* RuntimeDecodingTests.swift */; };
+		B000000000000000000004D1 /* MLTDEngineIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000004D1 /* MLTDEngineIntegrationTests.swift */; };
 		B00000000000000000000006 /* ResultStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ResultStoreTests.swift */; };
 		B00000000000000000000007 /* EngineHostTestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* EngineHostTestSupport.swift */; };
 		B0000000000000000000000A /* EngineInterpreterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000000A /* EngineInterpreterTests.swift */; };
@@ -126,6 +127,7 @@
 		B10000000000000000000003 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		B10000000000000000000004 /* OfflineStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineStoreTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* RuntimeDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeDecodingTests.swift; sourceTree = "<group>"; };
+		B100000000000000000004D1 /* MLTDEngineIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLTDEngineIntegrationTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000006 /* ResultStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultStoreTests.swift; sourceTree = "<group>"; };
 		B10000000000000000000007 /* EngineHostTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineHostTestSupport.swift; sourceTree = "<group>"; };
 		B1000000000000000000000A /* EngineInterpreterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineInterpreterTests.swift; sourceTree = "<group>"; };
@@ -258,6 +260,7 @@
 				B10000000000000000000008 /* PlaybackClockTests.swift */,
 				B10000000000000000000004 /* OfflineStoreTests.swift */,
 				B10000000000000000000005 /* RuntimeDecodingTests.swift */,
+				B100000000000000000004D1 /* MLTDEngineIntegrationTests.swift */,
 				B10000000000000000000007 /* EngineHostTestSupport.swift */,
 				B1000000000000000000000A /* EngineInterpreterTests.swift */,
 				B1000000000000000000000B /* EngineRuntimeLifecycleTests.swift */,
@@ -453,6 +456,7 @@
 				B00000000000000000000008 /* PlaybackClockTests.swift in Sources */,
 				B00000000000000000000004 /* OfflineStoreTests.swift in Sources */,
 				B00000000000000000000005 /* RuntimeDecodingTests.swift in Sources */,
+				B000000000000000000004D1 /* MLTDEngineIntegrationTests.swift in Sources */,
 				0349A437306972F8009BC642 /* EnginePCMKernelTests.m in Sources */,
 				B00000000000000000000007 /* EngineHostTestSupport.swift in Sources */,
 				B0000000000000000000000A /* EngineInterpreterTests.swift in Sources */,
