@@ -2985,8 +2985,9 @@ final class RuntimeDecodingTests: XCTestCase {
 // The rhythm-lab `sfp` engine (Shiny Colors Song for Prism). Its fixtures are
 // optional within an installed fixture root: an `sfp` folder holding the
 // engine files and converted charts: MASTER `001.gz`, `110.gz`, `189.gz`,
-// `041.gz` (speed changes, including a scroll stop) and EXPERT `001-4.gz`
-// (slides under 0.2 s).
+// `041.gz` (speed changes, including a scroll stop), `004.gz` and `102.gz`
+// (slides moving against their end flick's arrow) and EXPERT `001-4.gz`
+// (slides under 0.2 s, a fast slide into an end flick).
 @MainActor
 extension CachedEngineIntegrationTests {
   func testSFPAmbeveMasterLifecycleAndRestart() async throws {
@@ -3008,19 +3009,24 @@ extension CachedEngineIntegrationTests {
   /// Scripted contacts that press, hold, follow and flick every note on time
   /// must judge every input once, all Perfect, except flicks deliberately
   /// flicked against their arrow, which are REVERSE: one grade lower (Great).
+  /// Slide fingers move with their slide and flick held flicks themselves,
+  /// so fast slides into end flicks (001 EXPERT at 74.41 s) and slides moving
+  /// against their end flick's arrow (004 and 102 MASTER) are covered.
   func testSFPScriptedPerfectPlay() throws {
     _ = try sfpChart("001.gz")
-    for chart in ["001.gz", "110.gz", "189.gz", "041.gz", "001-4.gz"] {
+    for chart in ["001.gz", "110.gz", "189.gz", "041.gz", "001-4.gz", "004.gz",
+      "102.gz"] {
       try checkSFPScriptedPlay(chart, sloppy: false)
     }
   }
 
-  /// Slides pressed a frame late and released a frame early, including
-  /// slides shorter than 0.2 s: the game does not judge release timing, so
-  /// every slide end, tap and flick is still Perfect.
+  /// Slides pressed a frame late and released 100 ms early, including slides
+  /// shorter than 0.2 s: the game does not judge release timing, so every
+  /// slide end, tap, flick and every tick inside the end's grace is still
+  /// Perfect.
   func testSFPScriptedLooseSlides() throws {
     _ = try sfpChart("001-4.gz")
-    for chart in ["001-4.gz", "001.gz", "110.gz"] {
+    for chart in ["001-4.gz", "001.gz", "110.gz", "004.gz"] {
       try checkSFPScriptedPlay(chart, sloppy: true)
     }
   }
@@ -3076,12 +3082,21 @@ extension CachedEngineIntegrationTests {
         grades[judgment.grade, default: 0] += 1
         if script.reversed.contains(judgment.entityIndex) {
           reversed[judgment.grade, default: 0] += 1
+          if judgment.grade != 2 {
+            print("SFP REVERSE NOT GREAT \(label) grade \(judgment.grade) "
+              + "accuracy \(judgment.accuracy) at \(time): "
+              + level.entities[judgment.entityIndex].data
+                .map { "\($0.name)=\($0.value ?? .nan)" }.joined(separator: " "))
+          }
           continue
         }
         let entity = level.entities[judgment.entityIndex]
-        // Loose slides may miss ticks at the very start or end of a slide.
+        // Loose slides may miss ticks in their first two frames, before the
+        // late finger is down.
         if judgment.grade != 1
-          && !(sloppy && entity.archetype == "SlideTickNote") {
+          && !(sloppy && entity.archetype == "SlideTickNote"
+            && script.nearChainStart(entity.data.first { $0.name == "#BEAT" }?
+              .value ?? 0)) {
           failures[entity.archetype, default: 0] += 1
           if failures.values.reduce(0, +) <= 20 {
             print("SFP NOT PERFECT \(label) \(entity.archetype) grade "
@@ -3140,6 +3155,8 @@ private struct SFPScript {
     let time: Double, lane: Double, direction: Double, flick: Bool
     var held = false
     var l = 0.0, w = 0.0
+    /// A held flick's slide centre every 30 ms from -120 ms (s0..s6).
+    var samples = [Double]()
   }
 
   private var chains = [[Segment]]()
@@ -3147,6 +3164,10 @@ private struct SFPScript {
   /// starts with a flick: that finger flicks and keeps holding. Other
   /// presses that start a slide are made by the slide's finger too.
   private var chainFlicks = [Int: Double]()
+  /// Flicks inside or at the end of a slide, made by the finger tracing it:
+  /// (time, direction) per chain.
+  private var heldFlicks = [Int: [(time: Double, direction: Double,
+    samples: [Double])]]()
   private var presses = [Press]()
   /// Entity indices of flicks flicked against their arrow.
   private(set) var reversed = Set<Int>()
@@ -3187,7 +3208,8 @@ private struct SFPScript {
         }
         presses.append(Press(time: time, lane: center, direction: direction,
           flick: true, held: value(entity, "held") != 0, l: value(entity, "l"),
-          w: value(entity, "w")))
+          w: value(entity, "w"),
+          samples: (0..<7).map { value(entity, "s\($0)") }))
       case "SlideConnector":
         let segment = Segment(head: value(entity, "headBeat"),
           tail: value(entity, "tailBeat"), headL: value(entity, "headL"),
@@ -3221,6 +3243,26 @@ private struct SFPScript {
         break
       }
     }
+    // Held flicks are flicked by the finger of the nearest slide through
+    // them.
+    for press in presses.indices.reversed() where presses[press].held {
+      let flick = presses[press]
+      var best: (chain: Int, distance: Double)?
+      for (index, chain) in chains.enumerated() {
+        for segment in chain where segment.head - 1e-6 <= flick.time
+          && flick.time <= segment.tail + 1e-6 {
+          let distance = abs(segment.center(at: flick.time) - flick.lane)
+          if distance <= flick.w / 2 + 1.5, distance < (best?.distance ?? .infinity) {
+            best = (index, distance)
+          }
+        }
+      }
+      if let best {
+        heldFlicks[best.chain, default: []].append((flick.time, flick.direction,
+          flick.samples))
+        presses.remove(at: press)
+      }
+    }
     for (index, chain) in chains.enumerated() {
       let head = chain.first!
       // The note that starts the slide is pressed by the slide's finger.
@@ -3235,31 +3277,69 @@ private struct SFPScript {
 
   private func x(_ lane: Double) -> Double { (lane / 6 - 1) * halfWidth }
 
+  func nearChainStart(_ time: Double) -> Bool {
+    chains.contains { time >= $0.first!.head - 1e-6
+      && time <= $0.first!.head + 2.0 / 60 + 1e-6 }
+  }
+
   func touches(frame: Int, time: Double) -> [EngineTouch] {
     let dt = 1.0 / 60
     var result = [EngineTouch]()
     for (index, chain) in chains.enumerated() {
       // On time: press on the first frame at or after the head and release
-      // one frame after the tail. Loose: press a frame later and release on
-      // the first frame within a frame of the tail.
+      // one frame after the tail. Loose: press a frame later and release
+      // 100 ms before the tail, within the end's grace; a chain that ends in
+      // a flick keeps its finger down to flick.
       let first = chain.first!.head + (sloppy ? dt : 0)
       let last = chain.last!.tail
-      let release = sloppy ? last - dt : last + dt
+      let flicks = heldFlicks[index] ?? []
+      let endsInFlick = flicks.contains { abs($0.time - last) < 1e-6 }
+      let release = sloppy && !endsInFlick ? last - 0.1 : last + dt
       let firstFrameTime = start + ((first - start) / dt - 1e-9).rounded(.up) * dt
       // Frame times carry rounding error; compare with a small tolerance so
       // the release frame always delivers an ended touch.
       guard time >= firstFrameTime - 1e-9, time - dt < release - 1e-9
       else { continue }
-      let segment = chain.first { time <= $0.tail } ?? chain.last!
-      let point = EnginePoint(x: x(segment.center(at: time)), y: -0.6)
-      // A slide that starts with a flick: flick for the first frames.
-      var velocity = EnginePoint(x: 0, y: 0)
+      func position(at time: Double) -> Double {
+        let segment = chain.first { time <= $0.tail } ?? chain.last!
+        return x(segment.center(at: time))
+      }
+      // A late press still lands where the slide starts.
+      let started = time - dt < firstFrameTime - 1e-9
+      let point = EnginePoint(
+        x: position(at: started ? chain.first!.head : time), y: -0.6)
+      // The finger traces the slide exactly in position; a flick adds a
+      // quick motion on top.
+      // Near a held flick the finger moves as the engine models the slide:
+      // its centre samples, standing still above 40 lanes/s.
+      func modelSpeed(at time: Double, flick: (time: Double, direction: Double,
+        samples: [Double])) -> Double {
+        let k = min(max(Int(((time - flick.time) / 0.03).rounded(.down)) + 4, 0), 5)
+        let v = (flick.samples[k + 1] - flick.samples[k]) / 0.03
+        return (abs(v) > 40 ? 0 : v) * halfWidth / 6
+      }
+      let h = 1e-3
+      var velocity = EnginePoint(x: time + h <= last
+        ? (position(at: time + h) - position(at: time)) / h : 0, y: 0)
+      if let near = flicks.first(where: {
+        time >= $0.time - 0.13 && time < $0.time + 0.07 }) {
+        velocity = EnginePoint(x: modelSpeed(at: time, flick: near), y: 0)
+      }
       if let direction = chainFlicks[index], time < firstFrameTime + 3 * dt {
         velocity = direction == 0 ? EnginePoint(x: 0, y: 3)
           : EnginePoint(x: 3 * direction, y: 0)
       }
+      if let flick = flicks.first(where: {
+        time >= $0.time - 1e-9 && time < $0.time + 3 * dt }) {
+        // 8 screen units/s on top of the slide's motion: fast enough to
+        // read as a flick even against a slide moving the other way.
+        let band = modelSpeed(at: time, flick: flick)
+        velocity = flick.direction == 0
+          ? EnginePoint(x: band, y: 8)
+          : EnginePoint(x: band + 8 * flick.direction, y: 0)
+      }
       result.append(EngineTouch(id: 1 + index,
-        started: time - dt < firstFrameTime - 1e-9, ended: time >= release - 1e-9,
+        started: started, ended: time >= release - 1e-9,
         time: time, startTime: firstFrameTime,
         position: point, startPosition: point, delta: EnginePoint(x: 0, y: 0),
         velocity: velocity))
