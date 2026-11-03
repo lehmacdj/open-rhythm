@@ -695,6 +695,8 @@ final class CachedEnginePreviewTests: XCTestCase {
   func testCGSSPreview() throws { try check("cgss") }
   // The rhythm-lab `sfp` engine (sonolus-sfp-engine scripts/openrhythm-fixture.ts).
   func testSFPPreview() throws { try check("sfp") }
+  // The rhythm-lab `mltd` engine (sonolus-mltd-engine scripts/fixtures.ts).
+  func testMLTDPreview() throws { try check("mltd") }
 
   private func check(_ name: String) throws {
     let root = try XCTUnwrap(FileManager.default.urls(
