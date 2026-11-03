@@ -2991,8 +2991,8 @@ final class RuntimeDecodingTests: XCTestCase {
 // tap side by side at the same time), `007.gz` (two held flicks on one
 // slide), `108.gz` and `062.gz` (fast slides into flicks), EXPERT `001-4.gz`
 // (slides under 0.2 s, a fast slide into an end flick), `003-4.gz` (flick
-// sweeps), MASTER `005.gz`, `017.gz`, `192.gz` and `023.gz` (human-like
-// cases) and
+// sweeps), MASTER `005.gz`, `017.gz`, `192.gz` and `023.gz` and EXPERT
+// `005-4.gz` (human-like cases) and
 // NORMAL `024-2.gz` (ticks right after slide heads).
 @MainActor
 extension CachedEngineIntegrationTests {
@@ -3068,7 +3068,7 @@ extension CachedEngineIntegrationTests {
   }
 
   /// Fingers that move like a person's rather than the engine's model:
-  /// taps pressed 50 ms late and off centre, two hands on close taps landing
+  /// taps pressed 20-70 ms late and off centre, two hands on close taps landing
   /// 30 ms apart (the later note's first, towards the other note), runs of
   /// same-way flicks swept by one finger at constant speed from before the
   /// first to after the last (003 EXPERT at 67.06 s), flicks in slides
@@ -3076,6 +3076,7 @@ extension CachedEngineIntegrationTests {
   /// where the slide starts moving), end flicks 110 ms early with the finger
   /// lifting at once (017 MASTER at 72.32 s, with a tick at 72.21 s), and
   /// fingers coming back between sideways flicks (005 MASTER at 108.71 s).
+  /// Slides are traced 20 ms behind and 0.3 lanes off the band.
   /// Free flicks are quick (50-80 ms) accelerating and decelerating swipes,
   /// up to 30 ms early or late, one per run of flicks under 50 ms apart
   /// (023 MASTER at 105.77 s), from a flick's edge into a same-time
@@ -3093,6 +3094,10 @@ extension CachedEngineIntegrationTests {
       swipes += counts.swipes
       edges += counts.edges
     }
+    // Eight left flicks 88 ms apart, each a lane further: a swipe for one
+    // that passes over the next does not decide that one early.
+    _ = try sfpChart("005-4.gz")
+    try checkSFPScriptedPlay("005-4.gz", .human, ownSwipes: 38.1...38.75)
     // 120 Hz frames with 60 Hz touch samples: every other frame has none.
     for chart in ["023.gz", "003-4.gz", "110.gz", "062.gz"] {
       try checkSFPScriptedPlay(chart, .human, fps: 120, samples: 60)
@@ -3154,7 +3159,8 @@ extension CachedEngineIntegrationTests {
 
   @discardableResult
   private func checkSFPScriptedPlay(_ chart: String, _ mode: SFPScript.Mode,
-    sweep: SFPScript.Sweep = .onTime, fps: Double = 60, samples: Double? = nil)
+    sweep: SFPScript.Sweep = .onTime, fps: Double = 60, samples: Double? = nil,
+    ownSwipes: ClosedRange<Double>? = nil)
     throws -> (resting: Int, streams: Int, sweeps: Int, pairs: Int,
       swipes: Int, edges: Int, expected: Int, reversedBeside: Int) {
     let cache = try XCTUnwrap(FileManager.default.urls(
@@ -3246,6 +3252,15 @@ extension CachedEngineIntegrationTests {
         // Loose slides may miss ticks in their first two frames, before the
         // late finger is down; late slide heads are Great.
         // Human play is judged only for misses.
+        // Flicks each swiped on time by their own swipe (not decided early by
+        // another's) are Perfect or Great.
+        if let range = ownSwipes, entity.archetype == "FlickNote",
+          range.contains(entity.data.first { $0.name == "#BEAT" }?.value ?? 0),
+          ![1, 2].contains(judgment.grade) {
+          failures["own swipe: FlickNote", default: 0] += 1
+          print("SFP NOT FROM ITS OWN SWIPE \(label) grade \(judgment.grade) "
+            + "accuracy \(judgment.accuracy) at \(time)")
+        }
         // Notes the mode makes miss or Good, some decided before a time.
         if let grade = script.expectedGrades[judgment.entityIndex] {
           if grade < 0 ? ![2, 3].contains(judgment.grade) : judgment.grade != grade {
@@ -3622,7 +3637,11 @@ private struct SFPScript {
             time = early
             earlyLifts[best.chain] = early + 3 / fps
           } else {
-            time += 0.03
+            // 30 ms late, where the (trailing) finger is still over it then.
+            let late = flick.time + 0.03
+            let at = chain.first { late - 0.02 <= $0.tail } ?? chain.last!
+            let u = at.center(at: late - 0.02) + 0.3
+            if u >= flick.l - 0.3, u <= flick.l + flick.w + 0.3 { time = late }
           }
         }
         heldFlicks[best.chain, default: []].append((time, flick.direction))
@@ -3760,18 +3779,21 @@ private struct SFPScript {
     }
   }
 
-  /// Free taps are pressed 50 ms late, at their centre, except that of two
-  /// taps within 40 ms and 4 lanes of each other, the later (or right) one's
-  /// hand lands 30 ms before the other's, both 0.35 of their width towards
-  /// each other.
+  /// Free taps are pressed 20-70 ms late, at their centre, except that of
+  /// two taps within 40 ms and 4 lanes of each other, the later (or right)
+  /// one's hand lands 30 ms before the other's, both 0.35 of their width
+  /// towards each other.
   private mutating func humanizeTaps() {
     let taps = presses.indices.filter { !presses[$0].flick }
       .sorted { (presses[$0].time, presses[$0].lane)
         < (presses[$1].time, presses[$1].lane) }
     var paired = Set<Int>()
     var shifted = presses
-    for a in taps {
-      shifted[a].time = presses[a].time + 0.05
+    // 20-70 ms late (52 ms on 004 MASTER at 84.32 s, taps 100 ms apart).
+    let lateness = [0.02, 0.035, 0.052, 0.06, 0.07]
+    for (n, a) in taps.enumerated() {
+      shifted[a].time = presses[a].time + (abs(presses[a].time - 84.324) < 1e-3
+        ? 0.052 : lateness[n % lateness.count])
     }
     for (n, a) in taps.enumerated() where !paired.contains(a) {
       guard let b = taps[(n + 1)...].first(where: { b in
@@ -3799,6 +3821,10 @@ private struct SFPScript {
         && $0.direction == direction }) else { continue }
       guard zip(stroke, stroke.dropFirst()).allSatisfy({
         ($1.lane - $0.lane) * direction > 0 }) else { continue }
+      // Only dense runs (flicks up to 70 ms apart) are swept; others are
+      // swiped one by one (005 EXPERT at 38.12 s, 88 ms apart).
+      guard zip(stroke, stroke.dropFirst()).allSatisfy({ $1.time - $0.time <= 0.07 })
+      else { continue }
       let first = stroke.first!, last = stroke.last!
       let speed = (last.lane - first.lane) / (last.time - first.time)
       // Fast enough to be a flick on screen.
@@ -3994,22 +4020,26 @@ private struct SFPScript {
       // the release frame always delivers an ended touch.
       guard time >= firstFrameTime - 1e-9, time - dt < release - 1e-9
       else { continue }
+      // Human mode: the finger trails the band by 20 ms, 0.3 lanes off its
+      // centre.
+      let lag = mode == .human ? 0.02 : 0, off = mode == .human ? 0.3 : 0
+      let trace = time - lag
       func position(at time: Double) -> Double {
         let segment = chain.first { time <= $0.tail } ?? chain.last!
-        return x(segment.center(at: time))
+        return x(segment.center(at: time) + off)
       }
       // The finger traces the slide (a late press lands where it starts),
       // moving at the slide's speed while on it; a flick adds a quick motion.
       let started = time - dt < firstFrameTime - 1e-9
       var point = EnginePoint(x: started
         ? x(chainLanding[index] ?? chain.first!.center(at: chain.first!.head))
-        : position(at: time), y: -0.6)
+        : position(at: trace), y: -0.6)
       // The slide's speed as the engine reads it: from the segment under
       // way (head <= t < tail), differenced backwards within it.
       let h = 1e-3
       var band = 0.0
-      if let segment = chain.first(where: { $0.head <= time && time < $0.tail }) {
-        let t1 = max(time, segment.head + h)
+      if let segment = chain.first(where: { $0.head <= trace && trace < $0.tail }) {
+        let t1 = max(trace, segment.head + h)
         band = (x(segment.center(at: t1)) - x(segment.center(at: t1 - h))) / h
       }
       // A finger at rest the frame it lands.
