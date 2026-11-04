@@ -2991,7 +2991,8 @@ final class RuntimeDecodingTests: XCTestCase {
 // tap side by side at the same time), `007.gz` (two held flicks on one
 // slide), `108.gz` and `062.gz` (fast slides into flicks), EXPERT `001-4.gz`
 // (slides under 0.2 s, a fast slide into an end flick), `003-4.gz` (flick
-// sweeps), MASTER `005.gz`, `017.gz`, `192.gz` and `023.gz` and EXPERT
+// sweeps), MASTER `005.gz`, `017.gz`, `192.gz`, `023.gz`, `107.gz`,
+// `112.gz` and `131.gz` and EXPERT
 // `005-4.gz` (human-like cases) and
 // NORMAL `024-2.gz` (ticks right after slide heads).
 @MainActor
@@ -3117,6 +3118,14 @@ extension CachedEngineIntegrationTests {
       try checkSFPScriptedPlay(chart, .human, fps: 120, samples: 60)
       try checkSFPScriptedPlay(chart, .human, samples: 240)
     }
+    // Another finger swipes over a free flick 100 ms early (as a slide's
+    // finger crossing it might) and the player's own flick comes 15 ms
+    // late: Perfect (107, 112 and 131 MASTER).
+    for (chart, stray) in [("107.gz", (103.022, 6.0)), ("112.gz", (147.938, 1.0)),
+      ("131.gz", (100.378, 6.0))] {
+      let counts = try checkSFPScriptedPlay(chart, .human, strays: [stray])
+      XCTAssertEqual(counts.expected, 1, "\(chart): stray flick not set up")
+    }
     // A player with 50 ms of input lag (or touches 50 ms early) and the
     // input offset set to match.
     for chart in ["023.gz", "110.gz", "005-4.gz", "004.gz"] {
@@ -3174,7 +3183,7 @@ extension CachedEngineIntegrationTests {
   }
 
   /// Single free flicks swiped 80-130 ms early with the finger lifting at
-  /// once are Great or Good, decided at their time.
+  /// once are Great or Good, decided that long after their time.
   func testSFPScriptedEarlyLifts() throws {
     _ = try sfpChart("001.gz")
     var expected = 0
@@ -3197,7 +3206,8 @@ extension CachedEngineIntegrationTests {
   @discardableResult
   private func checkSFPScriptedPlay(_ chart: String, _ mode: SFPScript.Mode,
     sweep: SFPScript.Sweep = .onTime, fps: Double = 60, samples: Double? = nil,
-    ownSwipes: [ClosedRange<Double>] = [], inputOffset: Double = 0)
+    ownSwipes: [ClosedRange<Double>] = [], inputOffset: Double = 0,
+    strays: [(time: Double, l: Double)] = [])
     throws -> (resting: Int, streams: Int, sweeps: Int, pairs: Int,
       swipes: Int, edges: Int, expected: Int, reversedBeside: Int) {
     let cache = try XCTUnwrap(FileManager.default.urls(
@@ -3225,7 +3235,7 @@ extension CachedEngineIntegrationTests {
     let start = BGMClockMapping(offset: level.bgmOffset).initialChartTime
     let script = SFPScript(level: level, aspectRatio: aspectRatio, start: start,
       mode: mode, reverseEvery: mode == .onTime ? 5 : 0, sweep: sweep,
-      fps: min(samples ?? fps, fps))
+      fps: min(samples ?? fps, fps), strays: strays)
     let label = "\(chart) (\(mode)\(sweep == .onTime ? "" : ", \(sweep) sweeps")"
       + "\(fps == 60 ? "" : ", \(Int(fps)) fps")"
       + "\(samples.map { ", \(Int($0)) Hz samples" } ?? "")"
@@ -3535,8 +3545,14 @@ private struct SFPScript {
   /// Frames (and touch samples) per second.
   let fps: Double
 
+  /// Human mode: free flicks (time, left lane) that another finger swipes
+  /// over 100 ms early, the arrow's way, before their own swipe 15 ms late.
+  private let strays: [(time: Double, l: Double)]
+
   init(level: LevelData, aspectRatio: Double, start: Double, mode: Mode,
-    reverseEvery: Int, sweep: Sweep = .onTime, fps: Double = 60) {
+    reverseEvery: Int, sweep: Sweep = .onTime, fps: Double = 60,
+    strays: [(time: Double, l: Double)] = []) {
+    self.strays = strays
     sweepStyle = sweep
     self.fps = fps
     halfWidth = min(2 * aspectRatio * 0.42, 1.9)
@@ -3786,6 +3802,18 @@ private struct SFPScript {
     buildStrokes()
     if mode == .human { findSweeps() }
     if mode == .human || mode == .earlyLifts { planStrokes() }
+    // The stray swipes, each by its own finger, lifting at once.
+    for (n, stray) in strays.enumerated() {
+      guard let f = presses.first(where: { $0.flick
+        && abs($0.time - stray.time) < 1e-3 && abs($0.l - stray.l) < 1e-3 })
+      else { continue }
+      let t0 = f.time - 0.1 - 0.03
+      var plan = Plan(land: (t0 - 0.02, f.lane - f.direction))
+      plan.moves.append(.init(t0: t0, t1: t0 + 0.06, u0: f.lane - f.direction,
+        u1: f.lane + f.direction, vertical: false))
+      plan.lift = t0 + 0.06
+      plans[1_000_000 + n] = plan
+    }
 
     let flickNotes = level.entities.enumerated().filter {
       $0.element.archetype == "FlickNote" }.map { (index: $0.offset,
@@ -3933,8 +3961,8 @@ private struct SFPScript {
   /// moves back between swipes as needed. A flick beside a same-time flick
   /// the arrow's way is swiped from its edge into the other (two hands side
   /// by side). Early-lifts mode: single free flicks are swiped 80-130 ms
-  /// early and the finger lifts at once; they are Great or Good, decided at
-  /// their time.
+  /// early and the finger lifts at once; they are Great or Good, decided
+  /// that long after their time.
   private mutating func planStrokes() {
     let offsets = [-0.03, 0.015, -0.015, 0.03, 0.0]
     let durations = [0.05, 0.065, 0.08]
@@ -3959,7 +3987,8 @@ private struct SFPScript {
         plan.lift = t0 + 0.05
         plans[index] = plan
         expectedGrades[f.entity] = -1 // Great or Good
-        decidedFrom[f.entity] = f.time
+        // Decided once no later moment could be nearer: 60 ms or more after.
+        decidedFrom[f.entity] = f.time + 0.06
         continue
       }
       // Runs: flicks the same way under 50 ms apart.
@@ -3987,8 +4016,11 @@ private struct SFPScript {
         guard first.flick else { cur = first.lane; free = first.time; continue }
         let dir = first.direction
         let d = durations[k % 3] + (last.time - first.time)
+        let stray = strays.contains { abs($0.time - first.time) < 1e-3
+          && abs($0.l - first.l) < 1e-3 }
         let middle = (first.time + last.time) / 2
-          + (stair ? (n == 0 ? 0.03 : 0) : offsets[k % 5])
+          + (stray ? 0.015 : stair ? (n == 0 ? 0.03 : 0) : offsets[k % 5])
+        if stray, group.count == 1 { expectedGrades[first.entity] = 1 }
         k += 1
         quickSwipes += 1
         var u0 = first.lane - dir, u1 = last.lane + dir
