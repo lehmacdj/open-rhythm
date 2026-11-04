@@ -3128,6 +3128,13 @@ extension CachedEngineIntegrationTests {
       let counts = try checkSFPScriptedPlay(chart, .human, strays: [stray])
       XCTAssertEqual(counts.expected, 1, "\(chart): stray flick not set up")
     }
+    // Two same-lane flicks 177 ms apart (005 MASTER 108.88 and 109.06): the
+    // first swiped 80 ms early, the second 110 ms early, so its swipe
+    // crosses the first after that one's time but before it is decided.
+    // The second still hits (it is not gated by the first).
+    let early = try checkSFPScriptedPlay("005.gz", .human,
+      swipeOffsets: [(108.882, 6, -0.08), (109.059, 6, -0.11)])
+    XCTAssertEqual(early.expected, 1, "005: early swipes not set up")
     // A player with 50 ms of input lag (or touches 50 ms early) and the
     // input offset set to match.
     for chart in ["023.gz", "110.gz", "005-4.gz", "004.gz"] {
@@ -3209,7 +3216,8 @@ extension CachedEngineIntegrationTests {
   private func checkSFPScriptedPlay(_ chart: String, _ mode: SFPScript.Mode,
     sweep: SFPScript.Sweep = .onTime, fps: Double = 60, samples: Double? = nil,
     ownSwipes: [ClosedRange<Double>] = [], inputOffset: Double = 0,
-    strays: [(time: Double, l: Double)] = [])
+    strays: [(time: Double, l: Double)] = [],
+    swipeOffsets: [(time: Double, l: Double, offset: Double)] = [])
     throws -> (resting: Int, streams: Int, sweeps: Int, pairs: Int,
       swipes: Int, edges: Int, expected: Int, reversedBeside: Int) {
     let cache = try XCTUnwrap(FileManager.default.urls(
@@ -3237,7 +3245,7 @@ extension CachedEngineIntegrationTests {
     let start = BGMClockMapping(offset: level.bgmOffset).initialChartTime
     let script = SFPScript(level: level, aspectRatio: aspectRatio, start: start,
       mode: mode, reverseEvery: mode == .onTime ? 5 : 0, sweep: sweep,
-      fps: min(samples ?? fps, fps), strays: strays)
+      fps: min(samples ?? fps, fps), strays: strays, swipeOffsets: swipeOffsets)
     let label = "\(chart) (\(mode)\(sweep == .onTime ? "" : ", \(sweep) sweeps")"
       + "\(fps == 60 ? "" : ", \(Int(fps)) fps")"
       + "\(samples.map { ", \(Int($0)) Hz samples" } ?? "")"
@@ -3550,11 +3558,16 @@ private struct SFPScript {
   /// Human mode: free flicks (time, left lane) that another finger swipes
   /// over 100 ms early, the arrow's way, before their own swipe 15 ms late.
   private let strays: [(time: Double, l: Double)]
+  /// Human mode: free flicks (time, left lane) swiped this much early or
+  /// late; those 100 ms or more off must then be Great or Good (hit).
+  private let swipeOffsets: [(time: Double, l: Double, offset: Double)]
 
   init(level: LevelData, aspectRatio: Double, start: Double, mode: Mode,
     reverseEvery: Int, sweep: Sweep = .onTime, fps: Double = 60,
-    strays: [(time: Double, l: Double)] = []) {
+    strays: [(time: Double, l: Double)] = [],
+    swipeOffsets: [(time: Double, l: Double, offset: Double)] = []) {
     self.strays = strays
+    self.swipeOffsets = swipeOffsets
     sweepStyle = sweep
     self.fps = fps
     halfWidth = min(2 * aspectRatio * 0.42, 1.9)
@@ -4020,8 +4033,14 @@ private struct SFPScript {
         let d = durations[k % 3] + (last.time - first.time)
         let stray = strays.contains { abs($0.time - first.time) < 1e-3
           && abs($0.l - first.l) < 1e-3 }
-        let middle = (first.time + last.time) / 2
-          + (stray ? 0.015 : stair ? (n == 0 ? 0.03 : 0) : offsets[k % 5])
+        let given = swipeOffsets.first { abs($0.time - first.time) < 1e-3
+          && abs($0.l - first.l) < 1e-3 }
+        let middle = (first.time + last.time) / 2 + (given?.offset
+          ?? (stray ? 0.015 : stair ? (n == 0 ? 0.03 : 0) : offsets[k % 5]))
+        // (Only those 100 ms or more off are sure to be Great or Good.)
+        if let given, abs(given.offset) >= 0.1, group.count == 1 {
+          expectedGrades[first.entity] = -1
+        }
         if stray, group.count == 1 { expectedGrades[first.entity] = 1 }
         k += 1
         quickSwipes += 1
